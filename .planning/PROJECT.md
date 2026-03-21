@@ -12,7 +12,12 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by OpenShel
 
 ### Validated
 
-(None yet — ship to validate)
+- ✓ Rust project with edition 2024, Cargo workspace, devenv — Phase 1
+- ✓ Agent directory structure follows OpenClaw conventions — Phase 1
+- ✓ Agent discovery and validation (IDENTITY.md + policy.yaml required) — Phase 1
+- ✓ Per-agent agent.yaml config with deny_unknown_fields — Phase 1
+- ✓ `rightclaw init` creates ~/.rightclaw/ + default agent — Phase 1
+- ✓ `rightclaw list` shows discovered agents — Phase 1
 
 ### Active
 
@@ -97,4 +102,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-21 after initialization*
+*Last updated: 2026-03-21 after Phase 1 completion*
