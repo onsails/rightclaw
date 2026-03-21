@@ -109,17 +109,41 @@ Job'ы живут в сессии. Auto-expire через 3 дня. Макс 50 
 ```yaml
 # crons/deploy-check.yaml
 schedule: "*/5 * * * *"
+lock_ttl: 10m
 prompt: "Check CI status for all open PRs, post comment if broken"
 ```
 
 ```yaml
 # crons/morning-briefing.yaml
 schedule: "0 9 * * 1-5"
+lock_ttl: 30m
 prompt: "Gather open PRs, failing tests, pending reviews. Post summary to Slack."
 ```
 
-`schedule` — стандартное 5-field cron expression (то, что CronCreate принимает).
-Для простых интервалов — cron-синтаксис: `*/5 * * * *` (каждые 5 мин), `0 */2 * * *` (каждые 2 часа).
+- `schedule` — стандартное 5-field cron expression (то, что CronCreate принимает). Для простых интервалов — cron-синтаксис: `*/5 * * * *` (каждые 5 мин), `0 */2 * * *` (каждые 2 часа).
+- `lock_ttl` — максимальное время жизни lock'а (default: 30m). После этого lock считается stale.
+
+### Concurrency Control
+
+Проблема: cron стреляет каждые 5 минут, но предыдущий запуск может ещё работать. Нативного "is agent X still running?" в Claude Code нет.
+
+Решение — **lock-файлы с heartbeat**. CronSync оборачивает промпт каждого крона guard-логикой:
+
+1. Проверить `crons/.locks/{name}.json`
+   - Есть и `heartbeat` < `lock_ttl` назад → **skip**, предыдущий запуск ещё работает
+   - Есть и `heartbeat` > `lock_ttl` назад → **stale lock**, удалить
+   - Нет → продолжить
+2. Создать lock-файл с текущим heartbeat
+3. Выполнить prompt из спеки
+4. Периодически обновлять heartbeat в lock-файле
+5. По завершении — удалить lock-файл
+
+Lock-файл:
+```json
+{"heartbeat": "2026-03-21T10:05:00Z"}
+```
+
+Все таймстампы строго **UTC ISO 8601** (суффикс `Z`).
 
 ### State
 
@@ -155,7 +179,10 @@ crons/
 ├── deploy-check.yaml
 ├── morning-briefing.yaml
 ├── dependency-audit.yaml
-└── state.json              # gitignore — session-specific
+├── state.json              # gitignore — session-specific
+└── .locks/                 # gitignore — runtime lock files
+    ├── deploy-check.json
+    └── morning-briefing.json
 ```
 
 ## Skill Packs (v1 — MVP)
