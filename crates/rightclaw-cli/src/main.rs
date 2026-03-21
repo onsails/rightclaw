@@ -41,17 +41,50 @@ fn main() -> miette::Result<()> {
         )
         .init();
 
-    let _home = rightclaw::config::resolve_home(
+    let home = rightclaw::config::resolve_home(
         cli.home.as_deref(),
         std::env::var("RIGHTCLAW_HOME").ok().as_deref(),
     )?;
 
     match cli.command {
         Commands::Init => {
-            todo!("rightclaw init not yet implemented")
+            rightclaw::init::init_rightclaw_home(&home)?;
+            println!("Initialized RightClaw at {}", home.display());
+            println!(
+                "Default agent 'right' created at {}/agents/right/",
+                home.display()
+            );
+            Ok(())
         }
         Commands::List => {
-            todo!("rightclaw list not yet implemented")
+            let agents_dir = home.join("agents");
+            if !agents_dir.exists() {
+                println!("No agents directory found. Run `rightclaw init` first.");
+                return Ok(());
+            }
+
+            let agents = rightclaw::agent::discover_agents(&agents_dir)?;
+            if agents.is_empty() {
+                println!("No agents found in {}", agents_dir.display());
+            } else {
+                println!("Discovered {} agent(s):", agents.len());
+                for agent in &agents {
+                    let config_status = if agent.config.is_some() { "yes" } else { "no" };
+                    let mcp_status = if agent.mcp_config_path.is_some() {
+                        "yes"
+                    } else {
+                        "no"
+                    };
+                    println!(
+                        "  {:<20} {}    config: {}    mcp: {}",
+                        agent.name,
+                        agent.path.display(),
+                        config_status,
+                        mcp_status,
+                    );
+                }
+            }
+            Ok(())
         }
     }
 }
