@@ -213,6 +213,37 @@ crons/
 * Subagent: создаёт структуру, конфиги, CI/CD pipeline
 * Включает шаблон OpenShell policy для нового проекта
 
+## Запуск
+
+```bash
+./start.sh ~/my-project
+```
+
+`start.sh` запускает Claude Code с:
+- `--append-system-prompt-file identity/IDENTITY.md` — RightClaw identity, не dev CLAUDE.md репы
+- `--dangerously-skip-permissions` — для автономной работы (TODO: заменить на granular permissions)
+- `-p <workspace>` — рабочая директория пользователя
+
+Репозиторий rightclaw имеет свой CLAUDE.md для разработки самого rightclaw. `start.sh` запускает Claude в режиме продукта — он читает `identity/IDENTITY.md` вместо dev-инструкций.
+
+TODO: обернуть в `openshell sandbox create --policy ...` когда OpenShell будет доступен.
+
+### Структура репозитория
+
+```
+rightclaw/
+├── start.sh                # точка входа — запуск RightClaw
+├── identity/
+│   └── IDENTITY.md         # system prompt для продукта
+├── skills/
+│   └── clawhub/
+│       └── SKILL.md        # /clawhub — менеджер скиллов
+├── crons/                  # спеки scheduled tasks
+│   └── ...
+├── CLAUDE.md               # dev-инструкции (для разработки самого rightclaw)
+└── seed.md                 # этот документ
+```
+
 ## Что поставляется
 
 Каждый skill pack — это директория, которая копируется в `.claude/skills/` или `~/.claude/skills/`:
