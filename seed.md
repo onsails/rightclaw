@@ -192,7 +192,7 @@ agents/ops/crons/
 
 ## Agents (v1 — MVP)
 
-Каждый agent — отдельная Claude Code сессия со своим identity, памятью и набором skills/tools. Агент запускается через `start.sh <agent-name> <workspace>`.
+Каждый agent — отдельная Claude Code сессия со своим identity, памятью и набором skills/tools. Агенты запускаются через `rightclaw up`.
 
 ### 1. watchdog — Мониторинг и алерты
 * Автономная сессия с scheduled tasks: проверяет деплой / CI / сервисы
@@ -222,24 +222,90 @@ agents/ops/crons/
 * Создаёт структуру, конфиги, CI/CD pipeline
 * Включает шаблон OpenShell policy для нового проекта
 
-## Запуск
+## Запуск — CLI + process-compose
+
+RightClaw CLI — тонкая обёртка над [process-compose](https://github.com/F1bonacc1/process-compose). CLI читает `agents/`, генерирует `process-compose.yaml` в `/tmp/rightclaw/`, запускает process-compose. Для юзера — одна команда.
+
+### UX
 
 ```bash
-# Запуск конкретного агента
-./start.sh watchdog ~/my-project
+# Запуск всех агентов (TUI открывается сразу)
+rightclaw up ~/my-project
 
-# Запуск всех агентов
-./start.sh all ~/my-project
+# Только конкретные агенты
+rightclaw up ~/my-project --agents watchdog,reviewer
+
+# В фоне (без TUI)
+rightclaw up ~/my-project -d
+
+# Подключиться к TUI запущенных агентов
+rightclaw attach
+
+# Статус
+rightclaw status
+
+# Рестарт одного агента
+rightclaw restart reviewer
+
+# Остановить всё
+rightclaw down
 ```
 
-`start.sh` для каждого агента запускает отдельную Claude Code сессию с:
-- `--append-system-prompt-file agents/<agent>/IDENTITY.md` — identity конкретного агента
-- `--dangerously-skip-permissions` — для автономной работы (TODO: заменить на granular permissions)
-- `-p <workspace>` — рабочая директория пользователя
+### Что делает `rightclaw up`
 
-Каждый агент при старте читает свой `MEMORY.md` для восстановления контекста из прошлых сессий.
+1. Сканирует `agents/` — каждая поддиректория с `IDENTITY.md` = агент
+2. Генерирует `/tmp/rightclaw/<hash>/process-compose.yaml`:
 
-Репозиторий rightclaw имеет свой CLAUDE.md для разработки самого rightclaw. `start.sh` запускает агентов в режиме продукта — они читают свои identity-файлы вместо dev-инструкций.
+```yaml
+# Генерируется автоматически, не редактировать
+version: "0.5"
+
+processes:
+  watchdog:
+    command: >
+      claude --dangerously-skip-permissions
+        --append-system-prompt-file /path/to/rightclaw/agents/watchdog/IDENTITY.md
+        -p /home/user/my-project
+        --prompt "You are starting. Read your MEMORY.md and crons/ to restore context."
+    working_dir: /home/user/my-project
+    availability:
+      restart: "on_failure"
+      max_restarts: 5
+      backoff_seconds: 10
+
+  reviewer:
+    command: >
+      claude --dangerously-skip-permissions
+        --append-system-prompt-file /path/to/rightclaw/agents/reviewer/IDENTITY.md
+        -p /home/user/my-project
+        --prompt "You are starting. Read your MEMORY.md and crons/ to restore context."
+    working_dir: /home/user/my-project
+    availability:
+      restart: "on_failure"
+      max_restarts: 5
+      backoff_seconds: 10
+```
+
+3. Запускает `process-compose up -f /tmp/rightclaw/<hash>/process-compose.yaml`
+4. TUI process-compose показывает все агенты, логи, статусы
+
+### Конфигурация агентов
+
+Каждый агент может иметь опциональный `agent.yaml` для настроек, специфичных для process-compose:
+
+```yaml
+# agents/watchdog/agent.yaml
+restart: "always"          # default: "on_failure"
+max_restarts: 0            # default: 5 (0 = unlimited)
+backoff_seconds: 30        # default: 10
+start_prompt: "Custom startup prompt for this agent"
+```
+
+Если `agent.yaml` нет — используются дефолты.
+
+### Реализация CLI
+
+Простой bash-скрипт или Go binary (TBD). MVP — bash. Зависимости: `process-compose`, `claude` (Claude Code CLI).
 
 TODO: обернуть в `openshell sandbox create --policy ...` когда OpenShell будет доступен.
 
@@ -247,17 +313,19 @@ TODO: обернуть в `openshell sandbox create --policy ...` когда Ope
 
 ```
 rightclaw/
-├── start.sh                # точка входа — запуск агентов
+├── rightclaw              # CLI (bash-скрипт)
 ├── agents/                 # определения агентов
 │   ├── watchdog/
 │   │   ├── IDENTITY.md     # identity агента (system prompt)
 │   │   ├── MEMORY.md       # персистентная память агента
+│   │   ├── agent.yaml      # опционально: restart policy, backoff, etc.
 │   │   ├── skills/         # skills этого агента
 │   │   ├── crons/          # scheduled tasks этого агента
 │   │   └── .mcp.json       # MCP-серверы этого агента
 │   ├── reviewer/
 │   │   ├── IDENTITY.md
 │   │   ├── MEMORY.md
+│   │   ├── agent.yaml
 │   │   ├── skills/
 │   │   ├── crons/
 │   │   └── .mcp.json
@@ -290,6 +358,7 @@ rightclaw/
 │   ├── watchdog/
 │   │   ├── IDENTITY.md         # кто этот агент, как себя ведёт
 │   │   ├── MEMORY.md           # персистентная память
+│   │   ├── agent.yaml          # restart policy, backoff, start prompt
 │   │   ├── skills/             # skills этого агента
 │   │   │   └── log-analyzer/
 │   │   │       └── SKILL.md
