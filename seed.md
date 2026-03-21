@@ -241,34 +241,41 @@ rightclaw/
 
 ## Установка (целевой UX)
 
-```bash
-# Внутри OpenShell sandbox
-openshell sandbox create -- claude
+Никакого CLI. Всё через промпты — пользователь пишет в Telegram-канал или напрямую в Claude Code:
 
-# Установка всех packs через ClawHub
-clawhub install onsails/rightclaw
-
-# Или отдельный pack
-clawhub install onsails/rightclaw-reviewer
-
-# Или напрямую из git (без ClawHub)
-git clone https://github.com/onsails/rightclaw ~/.claude/skills/rightclaw
-
-# Применить OpenShell policy для pack'а
-openshell policy set <sandbox> --policy ~/.claude/skills/rightclaw/reviewer/policies/reviewer.yaml
-
-# Установить любой skill из ClawHub в RightClaw-окружение
-# Policy gate автоматически проверит его перед активацией
-clawhub install TheSethRose/agent-browser
-# → RightClaw policy gate: "agent-browser requires network access to *.
-#    Generate restrictive OpenShell policy? [Y/n]"
+```
+установи скилл onsails/rightclaw-reviewer
 ```
 
-## Совместимость с ClawHub
+Claude вызывает skill `/clawhub` → ищет в каталоге → клонит → кладёт в `.claude/skills/` → проверяет через policy gate.
 
-**RightClaw → ClawHub (публикация).** Каждый RightClaw skill pack публикуется в ClawHub как стандартный AgentSkills bundle (SKILL.md с YAML frontmatter, semver, changelogs). Любой пользователь OpenClaw или другого агента может установить RightClaw skills через `clawhub install`. OpenShell policies поставляются как дополнительные файлы — они игнорируются вне OpenShell, но активируются автоматически внутри sandbox.
+Или напрямую из git (без ClawHub):
+```
+склонируй https://github.com/onsails/rightclaw в ~/.claude/skills/rightclaw
+```
 
-**ClawHub → RightClaw (импорт с аудитом).** Любой из 3000+ skills ClawHub можно установить в RightClaw-окружение. Разница: перед активацией skill проходит через policy gate — встроенный subagent, который анализирует SKILL.md frontmatter (required binaries, env vars, network access) и генерирует минимально необходимую OpenShell policy. Подозрительные паттерны (exfiltration, broad filesystem access, неизвестные бинарники) блокируются или требуют явного подтверждения.
+## ClawHub
+
+ClawHub — веб-каталог скиллов для Claude Code (3000+ skills, semver, vector search). Не CLI, не пакетный менеджер — реестр с API.
+
+Для работы с ClawHub в RightClaw есть **встроенный skill `/clawhub`** (см. `skills/clawhub/SKILL.md`). Claude вызывает его когда пользователь хочет:
+- Найти скилл: `найди скилл для код-ревью`
+- Установить: `установи TheSethRose/agent-browser`
+- Удалить: `удали скилл agent-browser`
+- Список установленных: `какие скиллы установлены?`
+
+### Что делает `/clawhub install`
+
+1. Ищет скилл в каталоге ClawHub (по имени или vector search по описанию)
+2. Клонит git-репо скилла в `.claude/skills/{name}/`
+3. **Policy gate** — анализирует SKILL.md frontmatter (required binaries, env vars, network access) и генерирует минимально необходимую OpenShell policy. Подозрительные паттерны (exfiltration, broad filesystem access, неизвестные бинарники) блокируются или требуют подтверждения пользователя.
+4. Регистрирует скилл в `skills/installed.json`
+
+### Совместимость
+
+**RightClaw → ClawHub.** RightClaw skill packs публикуются в ClawHub как стандартные AgentSkills bundle (SKILL.md + YAML frontmatter). OpenShell policies поставляются как доп. файлы — игнорируются вне OpenShell, активируются автоматически внутри sandbox.
+
+**ClawHub → RightClaw.** Любой ClawHub skill устанавливается через `/clawhub install`. Разница с обычной установкой — policy gate перед активацией.
 
 **Формат.** RightClaw skills используют стандартный ClawHub SKILL.md формат + расширение `openshell` в metadata frontmatter:
 
@@ -286,7 +293,7 @@ metadata:
 ---
 ```
 
-Это расширение прозрачно для ClawHub (хранится как opaque metadata), но распознаётся RightClaw для автоматической настройки sandbox.
+Расширение `openshell` прозрачно для ClawHub (opaque metadata), но распознаётся RightClaw для автоматической настройки sandbox.
 
 ## Позиционирование
 
