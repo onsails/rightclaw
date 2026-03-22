@@ -21,9 +21,15 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize RightClaw home directory with default agent
-    Init,
+    Init {
+        /// Telegram bot token for channel setup (skip with Enter if interactive)
+        #[arg(long)]
+        telegram_token: Option<String>,
+    },
     /// List discovered agents and their status
     List,
+    /// Validate dependencies and agent configuration
+    Doctor,
     /// Launch agents with process-compose
     Up {
         /// Only launch specific agents (comma-separated)
@@ -74,8 +80,9 @@ async fn main() -> miette::Result<()> {
     )?;
 
     match cli.command {
-        Commands::Init => cmd_init(&home),
+        Commands::Init { telegram_token } => cmd_init(&home, telegram_token.as_deref()),
         Commands::List => cmd_list(&home),
+        Commands::Doctor => cmd_doctor(&home),
         Commands::Up {
             agents,
             detach,
@@ -88,13 +95,54 @@ async fn main() -> miette::Result<()> {
     }
 }
 
-fn cmd_init(home: &Path) -> miette::Result<()> {
-    rightclaw::init::init_rightclaw_home(home, None, None)?;
+fn cmd_init(home: &Path, telegram_token: Option<&str>) -> miette::Result<()> {
+    // If --telegram-token flag provided, validate it upfront.
+    // Otherwise prompt interactively (per D-06, D-07).
+    let token = match telegram_token {
+        Some(t) => {
+            rightclaw::init::validate_telegram_token(t)?;
+            Some(t.to_string())
+        }
+        None => rightclaw::init::prompt_telegram_token()?,
+    };
+
+    rightclaw::init::init_rightclaw_home(home, token.as_deref(), None)?;
+
     println!("Initialized RightClaw at {}", home.display());
     println!(
         "Default agent 'right' created at {}/agents/right/",
         home.display()
     );
+    if token.is_some() {
+        println!("Telegram channel configured. Install the plugin in Claude Code:");
+        println!("  /plugin install telegram@claude-plugins-official");
+    }
+    Ok(())
+}
+
+fn cmd_doctor(home: &Path) -> miette::Result<()> {
+    let checks = rightclaw::doctor::run_doctor(home);
+    let mut has_failure = false;
+
+    for check in &checks {
+        if matches!(check.status, rightclaw::doctor::CheckStatus::Fail) {
+            has_failure = true;
+        }
+        println!("{check}");
+    }
+
+    let pass_count = checks
+        .iter()
+        .filter(|c| matches!(c.status, rightclaw::doctor::CheckStatus::Pass))
+        .count();
+    let total = checks.len();
+    println!("\n  {pass_count}/{total} checks passed");
+
+    if has_failure {
+        return Err(miette::miette!(
+            "Some checks failed. See above for fix instructions."
+        ));
+    }
     Ok(())
 }
 
