@@ -47,7 +47,7 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Workspace deps, minijinja templates, codegen module (shell wrapper + process-compose.yaml generation)
+- [x] 02-01-PLAN.md — Workspace deps, minijinja templates, codegen module (shell wrapper + process-compose.yaml generation)
 - [ ] 02-02-PLAN.md — Runtime module (process-compose REST API client, sandbox tracking/cleanup, dependency verification)
 - [ ] 02-03-PLAN.md — Wire CLI subcommands (up, down, status, restart, attach) and integration tests
 
