@@ -245,7 +245,7 @@ async fn cmd_up(
 
     // Generate shell wrappers for each agent.
     for agent in &agents {
-        let wrapper_content = rightclaw::codegen::generate_wrapper(agent, no_sandbox)?;
+        let wrapper_content = rightclaw::codegen::generate_wrapper(agent, no_sandbox, None)?;
         let wrapper_path = run_dir.join(format!("{}.sh", agent.name));
         std::fs::write(&wrapper_path, &wrapper_content)
             .map_err(|e| miette::miette!("failed to write wrapper for '{}': {e:#}", agent.name))?;

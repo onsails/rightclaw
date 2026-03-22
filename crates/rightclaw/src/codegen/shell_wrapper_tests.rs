@@ -64,7 +64,7 @@ fn make_agent_no_config(name: &str) -> AgentDef {
 #[test]
 fn wrapper_with_sandbox_contains_openshell() {
     let agent = make_agent("testbot", Some("Do the thing"));
-    let output = generate_wrapper(&agent, false).unwrap();
+    let output = generate_wrapper(&agent, false, None).unwrap();
 
     assert!(
         output.contains("openshell sandbox create"),
@@ -83,7 +83,7 @@ fn wrapper_with_sandbox_contains_openshell() {
 #[test]
 fn wrapper_with_sandbox_contains_identity_and_permissions() {
     let agent = make_agent("testbot", Some("Do the thing"));
-    let output = generate_wrapper(&agent, false).unwrap();
+    let output = generate_wrapper(&agent, false, None).unwrap();
 
     assert!(
         output.contains("--append-system-prompt-file"),
@@ -102,7 +102,7 @@ fn wrapper_with_sandbox_contains_identity_and_permissions() {
 #[test]
 fn wrapper_no_sandbox_runs_claude_directly() {
     let agent = make_agent("testbot", Some("Do the thing"));
-    let output = generate_wrapper(&agent, true).unwrap();
+    let output = generate_wrapper(&agent, true, None).unwrap();
 
     assert!(
         output.contains("exec claude"),
@@ -117,7 +117,7 @@ fn wrapper_no_sandbox_runs_claude_directly() {
 #[test]
 fn wrapper_with_custom_start_prompt() {
     let agent = make_agent("testbot", Some("Custom prompt here"));
-    let output = generate_wrapper(&agent, false).unwrap();
+    let output = generate_wrapper(&agent, false, None).unwrap();
 
     assert!(
         output.contains("Custom prompt here"),
@@ -128,7 +128,7 @@ fn wrapper_with_custom_start_prompt() {
 #[test]
 fn wrapper_with_default_start_prompt() {
     let agent = make_agent_no_config("testbot");
-    let output = generate_wrapper(&agent, false).unwrap();
+    let output = generate_wrapper(&agent, false, None).unwrap();
 
     assert!(
         output.contains("You are starting. Read your MEMORY.md to restore context."),
@@ -139,7 +139,7 @@ fn wrapper_with_default_start_prompt() {
 #[test]
 fn wrapper_starts_with_shebang() {
     let agent = make_agent("testbot", Some("Hello"));
-    let output = generate_wrapper(&agent, false).unwrap();
+    let output = generate_wrapper(&agent, false, None).unwrap();
 
     assert!(
         output.starts_with("#!/usr/bin/env bash"),
@@ -150,7 +150,7 @@ fn wrapper_starts_with_shebang() {
 #[test]
 fn wrapper_default_prompt_when_config_has_none() {
     let agent = make_agent("testbot", None);
-    let output = generate_wrapper(&agent, false).unwrap();
+    let output = generate_wrapper(&agent, false, None).unwrap();
 
     assert!(
         output.contains("You are starting. Read your MEMORY.md to restore context."),
@@ -161,7 +161,7 @@ fn wrapper_default_prompt_when_config_has_none() {
 #[test]
 fn wrapper_with_mcp_includes_channels_flag_sandbox() {
     let agent = make_agent_with_mcp("testbot", Some("Go"));
-    let output = generate_wrapper(&agent, false).unwrap();
+    let output = generate_wrapper(&agent, false, None).unwrap();
 
     assert!(
         output.contains("--channels plugin:telegram@claude-plugins-official"),
@@ -172,7 +172,7 @@ fn wrapper_with_mcp_includes_channels_flag_sandbox() {
 #[test]
 fn wrapper_with_mcp_includes_channels_flag_no_sandbox() {
     let agent = make_agent_with_mcp("testbot", Some("Go"));
-    let output = generate_wrapper(&agent, true).unwrap();
+    let output = generate_wrapper(&agent, true, None).unwrap();
 
     assert!(
         output.contains("--channels plugin:telegram@claude-plugins-official"),
@@ -183,7 +183,7 @@ fn wrapper_with_mcp_includes_channels_flag_no_sandbox() {
 #[test]
 fn wrapper_without_mcp_omits_channels_flag() {
     let agent = make_agent("testbot", Some("Go"));
-    let output = generate_wrapper(&agent, false).unwrap();
+    let output = generate_wrapper(&agent, false, None).unwrap();
 
     assert!(
         !output.contains("--channels"),
@@ -194,10 +194,57 @@ fn wrapper_without_mcp_omits_channels_flag() {
 #[test]
 fn wrapper_without_mcp_omits_channels_flag_no_sandbox() {
     let agent = make_agent("testbot", Some("Go"));
-    let output = generate_wrapper(&agent, true).unwrap();
+    let output = generate_wrapper(&agent, true, None).unwrap();
 
     assert!(
         !output.contains("--channels"),
         "should NOT contain --channels in no-sandbox without mcp:\n{output}"
+    );
+}
+
+#[test]
+fn wrapper_with_system_prompt_sandbox() {
+    let agent = make_agent("testbot", Some("Go"));
+    let output =
+        generate_wrapper(&agent, false, Some("/tmp/run/testbot-system.md")).unwrap();
+
+    // Should have two --append-system-prompt-file flags: identity + system prompt.
+    let count = output.matches("--append-system-prompt-file").count();
+    assert_eq!(
+        count, 2,
+        "expected 2 --append-system-prompt-file flags in sandbox mode, got {count}:\n{output}"
+    );
+    assert!(
+        output.contains("testbot-system.md"),
+        "expected system prompt path in:\n{output}"
+    );
+}
+
+#[test]
+fn wrapper_with_system_prompt_no_sandbox() {
+    let agent = make_agent("testbot", Some("Go"));
+    let output =
+        generate_wrapper(&agent, true, Some("/tmp/run/testbot-system.md")).unwrap();
+
+    let count = output.matches("--append-system-prompt-file").count();
+    assert_eq!(
+        count, 2,
+        "expected 2 --append-system-prompt-file flags in no-sandbox mode, got {count}:\n{output}"
+    );
+    assert!(
+        output.contains("testbot-system.md"),
+        "expected system prompt path in:\n{output}"
+    );
+}
+
+#[test]
+fn wrapper_without_system_prompt_has_single_append() {
+    let agent = make_agent("testbot", Some("Go"));
+    let output = generate_wrapper(&agent, false, None).unwrap();
+
+    let count = output.matches("--append-system-prompt-file").count();
+    assert_eq!(
+        count, 1,
+        "expected exactly 1 --append-system-prompt-file when no system prompt, got {count}:\n{output}"
     );
 }
