@@ -95,10 +95,10 @@ Plans:
   1. `rightclaw pair <agent>` launches Claude Code interactively in the foreground with the agent's identity — user can complete Telegram pairing and BOOTSTRAP.md onboarding
   2. After pairing/onboarding, `rightclaw up` runs agents in background via process-compose as before
   3. `rightclaw pair` without agent name defaults to the "right" agent
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 03.2-01: TBD
+- [ ] 03.2-01-PLAN.md — Add `rightclaw pair` subcommand for interactive Claude Code sessions
 
 ### Phase 4: Skills and Automation
 **Goal**: Agents can safely install ClawHub skills and run scheduled tasks autonomously
