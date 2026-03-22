@@ -9,14 +9,16 @@ exec openshell sandbox create \
   --name "rightclaw-{{ agent_name }}" \
   -- claude \
     --append-system-prompt-file "{{ identity_path }}" \
-    --dangerously-skip-permissions \
+    {% if system_prompt_path %}--append-system-prompt-file "{{ system_prompt_path }}" \
+    {% endif %}--dangerously-skip-permissions \
     {% if channels %}--channels {{ channels }} \
     {% endif %}--prompt "{{ start_prompt }}"
 {% else %}
 # WARNING: Running without sandbox (--no-sandbox mode)
 exec claude \
   --append-system-prompt-file "{{ identity_path }}" \
-  --dangerously-skip-permissions \
+  {% if system_prompt_path %}--append-system-prompt-file "{{ system_prompt_path }}" \
+  {% endif %}--dangerously-skip-permissions \
   {% if channels %}--channels {{ channels }} \
   {% endif %}--prompt "{{ start_prompt }}"
 {% endif %}
