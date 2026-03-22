@@ -1,5 +1,13 @@
-# OpenShell sandbox policy for the Right agent
-# =============================================
+# OpenShell sandbox policy for the Right agent (Telegram-enabled variant)
+# ========================================================================
+#
+# This is the Telegram-enabled variant of policy.yaml. The only differences
+# from the base policy are:
+#   1. telegram_api network policy is UNCOMMENTED
+#   2. ~/.bun and ~/.claude read_only entries are UNCOMMENTED
+#
+# This variant is used when the user provides a Telegram bot token during
+# `rightclaw init`. For the base policy, see policy.yaml.
 #
 # This file defines what the agent can access. OpenShell enforces these
 # restrictions at the kernel level using Landlock LSM and seccomp BPF.
@@ -51,8 +59,8 @@ filesystem_policy:
     - /proc          # Process information
     - /dev/urandom   # Random number generator
     - /dev/null      # Null device
-    # - ~/.bun       # Uncomment if using Telegram channel (Bun runtime)
-    # - ~/.claude    # Uncomment if using Claude Code plugins
+    - ~/.bun         # Bun runtime (required for Telegram plugin)
+    - ~/.claude      # Claude Code plugins
 
   read_write:
     - /tmp           # Temporary files
@@ -140,15 +148,15 @@ network_policies:
       - { path: /usr/bin/curl }
       - { path: /usr/bin/gh }
 
-  # -- Telegram (uncomment if you set up a Telegram bot) -------------------
-  # telegram_api:
-  #   name: telegram-bot-api
-  #   endpoints:
-  #     - host: api.telegram.org
-  #       port: 443
-  #       protocol: rest
-  #       tls: terminate
-  #       enforcement: enforce
-  #       access: full
-  #   binaries:
-  #     - { path: "**" }  # Telegram plugin runs via Bun
+  # -- Telegram ------------------------------------------------------------
+  telegram_api:
+    name: telegram-bot-api
+    endpoints:
+      - host: api.telegram.org
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "**" }  # Telegram plugin runs via Bun
