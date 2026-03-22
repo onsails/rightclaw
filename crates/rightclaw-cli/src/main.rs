@@ -114,8 +114,7 @@ fn cmd_init(home: &Path, telegram_token: Option<&str>) -> miette::Result<()> {
         home.display()
     );
     if token.is_some() {
-        println!("Telegram channel configured. Install the plugin in Claude Code:");
-        println!("  /plugin install telegram@claude-plugins-official");
+        println!("Telegram channel configured and plugin auto-enabled.");
     }
     Ok(())
 }
