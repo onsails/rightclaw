@@ -74,7 +74,7 @@ pub fn init_rightclaw_home(
             .map_err(|e| miette::miette!("Failed to write {}: {}", path.display(), e))?;
     }
 
-    // Write Telegram bot token to .env if provided.
+    // Write Telegram bot token to .env and create .claude/settings.json if provided.
     if let Some(token) = telegram_token {
         let env_dir = match telegram_env_dir {
             Some(dir) => dir.to_path_buf(),
@@ -94,6 +94,19 @@ pub fn init_rightclaw_home(
         .map_err(|e| {
             miette::miette!("Failed to write telegram .env: {}", e)
         })?;
+
+        // Create .claude/settings.json with Telegram plugin auto-enabled.
+        let claude_dir = agents_dir.join(".claude");
+        std::fs::create_dir_all(&claude_dir).map_err(|e| {
+            miette::miette!("Failed to create {}: {}", claude_dir.display(), e)
+        })?;
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"enabledPlugins":{"telegram@claude-plugins-official":true}}"#,
+        )
+        .map_err(|e| {
+            miette::miette!("Failed to write settings.json: {}", e)
+        })?;
     }
 
     println!("Created RightClaw home at {}", home.display());
@@ -107,8 +120,7 @@ pub fn init_rightclaw_home(
 
     if telegram_token.is_some() {
         println!("  Telegram bot token saved");
-        println!();
-        println!("  Next: run `/plugin install telegram@claude-plugins-official` in Claude Code");
+        println!("  agents/right/.claude/settings.json (Telegram plugin enabled)");
     }
 
     Ok(())
