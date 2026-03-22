@@ -53,6 +53,11 @@ pub enum Commands {
     },
     /// Attach to running process-compose TUI
     Attach,
+    /// Launch an agent interactively for setup (Telegram pairing, onboarding)
+    Pair {
+        /// Agent name (defaults to "right")
+        agent: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -92,6 +97,7 @@ async fn main() -> miette::Result<()> {
         Commands::Status => cmd_status(&home).await,
         Commands::Restart { agent } => cmd_restart(&home, &agent).await,
         Commands::Attach => cmd_attach(&home),
+        Commands::Pair { agent } => cmd_pair(&home, agent.as_deref()),
     }
 }
 
@@ -244,26 +250,22 @@ async fn cmd_up(
 
     // Generate shell wrappers for each agent.
     for agent in &agents {
-        // Generate system prompt if agent has crons/ directory (per D-16, D-21).
-        let system_prompt_path = match rightclaw::codegen::generate_system_prompt(agent) {
-            Some(content) => {
-                let path = run_dir.join(format!("{}-system.md", agent.name));
-                std::fs::write(&path, &content).map_err(|e| {
-                    miette::miette!(
-                        "failed to write system prompt for '{}': {e:#}",
-                        agent.name
-                    )
-                })?;
-                tracing::debug!(agent = %agent.name, "wrote system prompt: {}", path.display());
-                Some(path.display().to_string())
-            }
-            None => None,
-        };
+        // Generate combined prompt (identity + start prompt + optional cronsync).
+        let combined_content = rightclaw::codegen::generate_combined_prompt(agent)?;
+        let prompt_path = run_dir.join(format!("{}-prompt.md", agent.name));
+        std::fs::write(&prompt_path, &combined_content).map_err(|e| {
+            miette::miette!(
+                "failed to write combined prompt for '{}': {e:#}",
+                agent.name
+            )
+        })?;
+        tracing::debug!(agent = %agent.name, "wrote combined prompt: {}", prompt_path.display());
 
+        let prompt_path_str = prompt_path.display().to_string();
         let wrapper_content = rightclaw::codegen::generate_wrapper(
             agent,
             no_sandbox,
-            system_prompt_path.as_deref(),
+            &prompt_path_str,
         )?;
         let wrapper_path = run_dir.join(format!("{}.sh", agent.name));
         std::fs::write(&wrapper_path, &wrapper_content)
@@ -452,4 +454,53 @@ fn cmd_attach(home: &Path) -> miette::Result<()> {
         .exec();
 
     Err(miette::miette!("Failed to attach: {err}"))
+}
+
+fn cmd_pair(home: &Path, agent_name: Option<&str>) -> miette::Result<()> {
+    let agent_name = agent_name.unwrap_or("right");
+
+    let agents_dir = home.join("agents");
+    let all_agents = rightclaw::agent::discover_agents(&agents_dir)?;
+
+    let agent = all_agents
+        .iter()
+        .find(|a| a.name == agent_name)
+        .ok_or_else(|| {
+            let available: Vec<&str> = all_agents.iter().map(|a| a.name.as_str()).collect();
+            miette::miette!(
+                "agent '{}' not found. Available agents: {}",
+                agent_name,
+                available.join(", ")
+            )
+        })?;
+
+    let run_dir = home.join("run");
+    std::fs::create_dir_all(&run_dir)
+        .map_err(|e| miette::miette!("failed to create run directory: {e:#}"))?;
+
+    let combined_content = rightclaw::codegen::generate_combined_prompt(agent)?;
+    let prompt_path = run_dir.join(format!("{agent_name}-prompt.md"));
+    std::fs::write(&prompt_path, &combined_content).map_err(|e| {
+        miette::miette!(
+            "failed to write combined prompt for '{}': {e:#}",
+            agent_name
+        )
+    })?;
+
+    let claude_bin = which::which("claude")
+        .or_else(|_| which::which("claude-bun"))
+        .map_err(|_| {
+            miette::miette!("claude CLI not found in PATH (tried: claude, claude-bun)")
+        })?;
+
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(claude_bin)
+        .arg("--append-system-prompt-file")
+        .arg(&prompt_path)
+        .arg("--dangerously-skip-permissions")
+        .arg("-p")
+        .arg(&agent.path)
+        .exec();
+
+    Err(miette::miette!("failed to launch claude: {err}"))
 }
