@@ -98,7 +98,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 03.2-01-PLAN.md — Add `rightclaw pair` subcommand for interactive Claude Code sessions
+- [x] 03.2-01-PLAN.md — Add `rightclaw pair` subcommand for interactive Claude Code sessions
 
 ### Phase 4: Skills and Automation
 **Goal**: Agents can safely install ClawHub skills and run scheduled tasks autonomously
