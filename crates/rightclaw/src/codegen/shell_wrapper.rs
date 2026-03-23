@@ -6,7 +6,7 @@ const WRAPPER_TEMPLATE: &str = include_str!("../../../../templates/agent-wrapper
 /// Generate a shell wrapper script for an agent.
 ///
 /// `combined_prompt_path` points to a single file containing the merged
-/// identity + start prompt + optional CronSync bootstrap content.
+/// identity + start prompt + optional RightCron bootstrap content.
 /// Claude Code only allows one `--append-system-prompt-file`, so all
 /// system prompt content must be combined into a single file.
 pub fn generate_wrapper(

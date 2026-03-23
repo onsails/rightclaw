@@ -92,7 +92,7 @@ fn contains_custom_start_prompt() {
 }
 
 #[test]
-fn includes_cronsync_when_crons_dir_has_yaml() {
+fn includes_rightcron_when_crons_dir_has_yaml() {
     let tmp = tempfile::tempdir().unwrap();
     let agent_dir = tmp.path().to_path_buf();
     write_identity(&agent_dir);
@@ -109,13 +109,13 @@ fn includes_cronsync_when_crons_dir_has_yaml() {
         "expected 'RightClaw System Instructions' in:\n{content}"
     );
     assert!(
-        content.contains("/cronsync"),
-        "expected '/cronsync' in:\n{content}"
+        content.contains("/rightcron"),
+        "expected '/rightcron' in:\n{content}"
     );
 }
 
 #[test]
-fn omits_cronsync_when_no_crons_dir() {
+fn omits_rightcron_bootstrap_when_no_crons_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let agent_dir = tmp.path().to_path_buf();
     write_identity(&agent_dir);
@@ -124,13 +124,18 @@ fn omits_cronsync_when_no_crons_dir() {
     let content = generate_combined_prompt(&agent).unwrap();
 
     assert!(
-        !content.contains("/cronsync"),
-        "expected no /cronsync when crons/ dir is absent:\n{content}"
+        !content.contains("RightClaw System Instructions"),
+        "expected no rightcron bootstrap when crons/ dir is absent:\n{content}"
+    );
+    // General routing instruction should still be present
+    assert!(
+        content.contains("Cron Management"),
+        "expected cron management routing instruction:\n{content}"
     );
 }
 
 #[test]
-fn omits_cronsync_when_crons_is_file_not_dir() {
+fn omits_rightcron_bootstrap_when_crons_is_file_not_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let agent_dir = tmp.path().to_path_buf();
     write_identity(&agent_dir);
@@ -140,13 +145,13 @@ fn omits_cronsync_when_crons_is_file_not_dir() {
     let content = generate_combined_prompt(&agent).unwrap();
 
     assert!(
-        !content.contains("/cronsync"),
-        "expected no /cronsync when crons is a file, not a directory:\n{content}"
+        !content.contains("RightClaw System Instructions"),
+        "expected no rightcron bootstrap when crons is a file, not a directory:\n{content}"
     );
 }
 
 #[test]
-fn omits_cronsync_when_crons_dir_is_empty() {
+fn omits_rightcron_bootstrap_when_crons_dir_is_empty() {
     let tmp = tempfile::tempdir().unwrap();
     let agent_dir = tmp.path().to_path_buf();
     write_identity(&agent_dir);
@@ -157,7 +162,7 @@ fn omits_cronsync_when_crons_dir_is_empty() {
     let content = generate_combined_prompt(&agent).unwrap();
 
     assert!(
-        !content.contains("/cronsync"),
-        "expected no /cronsync when crons/ dir has no yaml files:\n{content}"
+        !content.contains("RightClaw System Instructions"),
+        "expected no rightcron bootstrap when crons/ dir has no yaml files:\n{content}"
     );
 }

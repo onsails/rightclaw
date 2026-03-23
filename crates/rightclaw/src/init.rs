@@ -8,7 +8,7 @@ const DEFAULT_BOOTSTRAP: &str = include_str!("../../../templates/right/BOOTSTRAP
 const DEFAULT_POLICY_TELEGRAM: &str = include_str!("../../../templates/right/policy-telegram.yaml");
 const DEFAULT_AGENT_YAML: &str = include_str!("../../../templates/right/agent.yaml");
 const SKILL_CLAWHUB: &str = include_str!("../../../skills/clawhub/SKILL.md");
-const SKILL_CRONSYNC: &str = include_str!("../../../skills/cronsync/SKILL.md");
+const SKILL_RIGHTCRON: &str = include_str!("../../../skills/cronsync/SKILL.md");
 
 /// Initialize the RightClaw home directory with a default "right" agent.
 ///
@@ -78,7 +78,7 @@ pub fn init_rightclaw_home(
     // Claude Code discovers skills from .claude/skills/ relative to cwd.
     let built_in_skills: &[(&str, &str)] = &[
         ("clawhub/SKILL.md", SKILL_CLAWHUB),
-        ("cronsync/SKILL.md", SKILL_CRONSYNC),
+        ("rightcron/SKILL.md", SKILL_RIGHTCRON),
     ];
     let claude_skills_dir = agents_dir.join(".claude").join("skills");
     for (skill_path, content) in built_in_skills {
@@ -170,7 +170,7 @@ pub fn init_rightclaw_home(
     println!("  agents/right/policy.yaml");
     println!("  agents/right/agent.yaml");
     println!("  agents/right/.claude/skills/clawhub/SKILL.md  (skills.sh manager)");
-    println!("  agents/right/.claude/skills/cronsync/SKILL.md");
+    println!("  agents/right/.claude/skills/rightcron/SKILL.md");
 
     if telegram_token.is_some() {
         println!("  Telegram bot token saved");
@@ -336,8 +336,8 @@ mod tests {
             "clawhub skill should be installed"
         );
         assert!(
-            agents_dir.join(".claude/skills/cronsync/SKILL.md").exists(),
-            "cronsync skill should be installed"
+            agents_dir.join(".claude/skills/rightcron/SKILL.md").exists(),
+            "rightcron skill should be installed"
         );
     }
 
