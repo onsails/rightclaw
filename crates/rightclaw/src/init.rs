@@ -80,14 +80,20 @@ pub fn init_rightclaw_home(
         ("clawhub/SKILL.md", SKILL_CLAWHUB),
         ("cronsync/SKILL.md", SKILL_CRONSYNC),
     ];
+    let claude_skills_dir = agents_dir.join(".claude").join("skills");
     for (skill_path, content) in built_in_skills {
-        let path = agents_dir.join(".claude").join("skills").join(skill_path);
+        let path = claude_skills_dir.join(skill_path);
         std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| {
             miette::miette!("Failed to create skill directory: {}", e)
         })?;
         std::fs::write(&path, content)
             .map_err(|e| miette::miette!("Failed to write {}: {}", path.display(), e))?;
     }
+
+    // Pre-create installed.json so Claude Code doesn't prompt for file creation
+    // (--dangerously-skip-permissions doesn't bypass .claude/ write prompts).
+    std::fs::write(claude_skills_dir.join("installed.json"), "{}")
+        .map_err(|e| miette::miette!("Failed to write installed.json: {}", e))?;
 
     // Write Telegram bot token to .env and create .claude/settings.json if provided.
     if let Some(token) = telegram_token {
