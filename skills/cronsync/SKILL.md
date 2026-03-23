@@ -1,21 +1,21 @@
 ---
-name: cronsync
+name: rightcron
 description: >-
   Reconciles scheduled cron jobs with YAML spec files in the crons/ directory.
   Creates missing jobs, deletes orphaned jobs, and recreates changed jobs using
   CronCreate/CronList/CronDelete tools. Use when the user mentions cron jobs,
-  scheduled tasks, CronSync, or when starting up with a crons/ directory present.
+  scheduled tasks, RightCron, or when starting up with a crons/ directory present.
 version: 0.1.0
 ---
 
-# /cronsync -- CronSync Reconciliation Engine
+# /rightcron -- RightCron Reconciliation Engine
 
-You are the CronSync reconciliation engine for this RightClaw agent.
+You are the RightCron reconciliation engine for this RightClaw agent.
 
 ## When to Activate
 
 Activate this skill when:
-- The user mentions "cron", "cron jobs", "scheduled tasks", or "CronSync"
+- The user mentions "cron", "cron jobs", "scheduled tasks", or "RightCron"
 - The user asks to "sync cron jobs", "reconcile schedules", or "check scheduled tasks"
 - Starting up and a `crons/` directory exists with `.yaml` files
 - The user asks to add, remove, or change a scheduled task defined in `crons/`
@@ -137,7 +137,7 @@ Write the reconciled state map back to `crons/state.json` as formatted JSON.
 
 Summarize the actions taken:
 
-> CronSync reconciliation complete:
+> RightCron reconciliation complete:
 > - Created: N jobs
 > - Deleted: N orphaned jobs
 > - Recreated: N expired jobs
@@ -214,7 +214,7 @@ crons/.locks/
 
 1. **50-task limit:** Claude Code allows max 50 scheduled tasks per session. Count existing tasks before creating new ones. If approaching the limit, warn the user.
 
-2. **3-day auto-expiry:** All cron jobs auto-expire after 3 days. CronSync handles this automatically by recreating expired jobs from the YAML specs on each reconciliation run. This is expected behavior, not an error.
+2. **3-day auto-expiry:** All cron jobs auto-expire after 3 days. RightCron handles this automatically by recreating expired jobs from the YAML specs on each reconciliation run. This is expected behavior, not an error.
 
 3. **Timezone:** Cron schedules fire in LOCAL timezone (this is how Claude Code interprets 5-field cron expressions). Lock file timestamps use UTC. Be explicit: use `date -u` for all lock file operations.
 
@@ -226,9 +226,9 @@ crons/.locks/
 
 1. All lock file timestamps MUST use UTC ISO 8601 format with the `Z` suffix.
 2. `state.json` and `crons/.locks/` are runtime artifacts -- not source-controlled.
-3. CronSync is idempotent. Running it multiple times with no spec changes produces no side effects.
+3. RightCron is idempotent. Running it multiple times with no spec changes produces no side effects.
 4. Always wrap prompts with the lock guard before passing to CronCreate.
 5. Use `sha256sum` for prompt hash computation to detect changes.
 6. Recreate expired jobs silently -- 3-day expiry is normal, not an error condition.
-7. **Jobs are NOT session-only.** CronSync recovers all jobs from YAML specs on agent restart. When reporting job creation, say "Persistent — survives agent restarts via CronSync." Do NOT say "session-only".
+7. **Jobs are NOT session-only.** RightCron recovers all jobs from YAML specs on agent restart. When reporting job creation, say "Persistent — survives agent restarts via RightCron." Do NOT say "session-only".
 8. **Always use the remote channel for output.** Cron job prompts that communicate with the user MUST use the `reply` MCP tool (remote channel) — never console output. The agent runs as a daemon with no terminal access. Include "Reply to the user via the remote channel (use the reply MCP tool)" in every cron job prompt that produces user-facing output.

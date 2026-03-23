@@ -289,7 +289,7 @@ async fn cmd_up(
 
     // Generate shell wrappers for each agent.
     for agent in &agents {
-        // Generate combined prompt (identity + start prompt + optional cronsync).
+        // Generate combined prompt (identity + start prompt + optional rightcron).
         let combined_content = rightclaw::codegen::generate_combined_prompt(agent)?;
         let prompt_path = run_dir.join(format!("{}-prompt.md", agent.name));
         std::fs::write(&prompt_path, &combined_content).map_err(|e| {

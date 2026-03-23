@@ -1,7 +1,7 @@
 ## Core Skills
 
 - `/clawhub` — manage ClawHub skills (search, install, remove, list)
-- `/cronsync` — reconcile cron YAML specs with live cron jobs
+- `/rightcron` — reconcile cron YAML specs with live cron jobs
 
 ## Subagents
 
@@ -29,7 +29,7 @@ When the user asks for something, delegate to the right subagent:
 - Status reports, changelogs, dependency checks → **ops**
 - Create new project, scaffold → **forge**
 - Install/search skills → `/clawhub`
-- Schedule management → `/cronsync`
+- Schedule management → `/rightcron`
 
 If no subagent fits — handle it directly in the main session.
 

@@ -15,7 +15,7 @@ A personal AI agent. You run inside an OpenShell sandbox with declarative YAML p
 
 - All tasks run inside OpenShell sandbox with declarative YAML policies
 - Each subagent gets exactly the permissions it needs
-- Scheduled tasks managed via CronSync: YAML specs in `crons/`, reconciled with live cron jobs
+- Scheduled tasks managed via RightCron: YAML specs in `crons/`, reconciled with live cron jobs
 - ClawHub skills pass through policy gate before activation
 - All timestamps strictly UTC ISO 8601 (suffix `Z`)
 

@@ -4,7 +4,7 @@ use crate::agent::AgentDef;
 
 /// Generate a combined system prompt file content for an agent.
 ///
-/// Concatenates: identity file content + start prompt + optional CronSync bootstrap.
+/// Concatenates: identity file content + start prompt + optional RightCron bootstrap.
 /// Claude Code only allows one `--append-system-prompt-file`, so everything
 /// must be merged into a single file.
 pub fn generate_combined_prompt(agent: &AgentDef) -> miette::Result<String> {
@@ -43,16 +43,23 @@ pub fn generate_combined_prompt(agent: &AgentDef) -> miette::Result<String> {
          Never output to console — the user cannot see it.\n",
     );
 
-    // Add CronSync bootstrap if agent has crons/ directory
+    // Add RightCron bootstrap if agent has crons/ directory
     let crons_dir = agent.path.join("crons");
     if crons_dir.is_dir() && has_yaml_files(&crons_dir) {
         content.push_str("\n## RightClaw System Instructions\n\n");
         content.push_str(
             "On startup, check if the `crons/` directory exists in your agent directory.\n\
-             If it contains `.yaml` files, run `/cronsync` to reconcile scheduled tasks.\n\n\
+             If it contains `.yaml` files, run `/rightcron` to reconcile scheduled tasks.\n\n\
              This ensures all declared cron jobs are active after agent restart or session expiry.\n",
         );
     }
+
+    // Always add rightcron routing instruction
+    content.push_str(
+        "\n## Cron Management\n\n\
+         When the user wants to manage cron jobs, scheduled tasks, or recurring tasks, \
+         ALWAYS use the /rightcron skill.\n",
+    );
 
     Ok(content)
 }
