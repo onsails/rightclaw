@@ -60,10 +60,10 @@ filesystem_policy:
     - /dev/urandom   # Random number generator
     - /dev/null      # Null device
     - ~/.bun         # Bun runtime (required for Telegram plugin)
-    - ~/.claude      # Claude Code plugins
 
   read_write:
     - /tmp           # Temporary files
+    - ~/.claude      # Claude Code config, plugins, OAuth tokens (needs write for token refresh)
 
 # -- Landlock --------------------------------------------------------------
 #
@@ -147,6 +147,29 @@ network_policies:
       - { path: /usr/local/bin/claude }
       - { path: /usr/bin/curl }
       - { path: /usr/bin/gh }
+
+  # -- Anthropic API (Claude Code auth + inference) -------------------------
+  anthropic_api:
+    name: anthropic-api
+    endpoints:
+      - host: api.anthropic.com
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+      - host: claude.ai
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: full
+      - host: statsig.anthropic.com
+        port: 443
+      - host: sentry.io
+        port: 443
+    binaries:
+      - { path: "**" }
 
   # -- Telegram ------------------------------------------------------------
   telegram_api:
