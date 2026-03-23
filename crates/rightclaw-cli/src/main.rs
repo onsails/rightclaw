@@ -287,6 +287,12 @@ async fn cmd_up(
         ));
     }
 
+    // Clear rightcron init locks so the bootstrap hook fires on this session.
+    for agent in &agents {
+        let lock = agent.path.join(".rightcron-init-done");
+        let _ = std::fs::remove_file(&lock);
+    }
+
     // Generate shell wrappers for each agent.
     for agent in &agents {
         // Generate combined prompt (identity + start prompt + optional rightcron).
