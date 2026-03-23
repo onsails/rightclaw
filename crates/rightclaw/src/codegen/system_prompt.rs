@@ -35,6 +35,14 @@ pub fn generate_combined_prompt(agent: &AgentDef) -> miette::Result<String> {
     content.push_str(start_prompt);
     content.push('\n');
 
+    // Always communicate via remote channel (Telegram/Discord), not console.
+    content.push_str(
+        "\n## Communication\n\n\
+         You are running as a daemon with no terminal access. \
+         ALWAYS use the remote channel (reply MCP tool) to communicate with the user. \
+         Never output to console — the user cannot see it.\n",
+    );
+
     // Add CronSync bootstrap if agent has crons/ directory
     let crons_dir = agent.path.join("crons");
     if crons_dir.is_dir() && has_yaml_files(&crons_dir) {
