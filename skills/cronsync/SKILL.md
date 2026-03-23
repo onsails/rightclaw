@@ -16,9 +16,32 @@ You are the RightCron reconciliation engine for this RightClaw agent.
 
 Activate this skill when:
 - The user mentions "cron", "cron jobs", "scheduled tasks", or "RightCron"
+- The user asks to schedule, create, remove, or change a recurring task
 - The user asks to "sync cron jobs", "reconcile schedules", or "check scheduled tasks"
 - Starting up and a `crons/` directory exists with `.yaml` files
-- The user asks to add, remove, or change a scheduled task defined in `crons/`
+
+## Conversational Job Creation
+
+When the user asks to create a scheduled task (e.g., "schedule X every 5 minutes"):
+
+1. **Create the `crons/` directory** if it doesn't exist: `mkdir -p crons`
+2. **Write a YAML spec file** to `crons/<job-name>.yaml` with the schedule and prompt
+3. **Run the reconciliation algorithm** (Step 1-6 below) to register the job via CronCreate
+4. **Report** the job as created with "Persistent — survives agent restarts via RightCron"
+
+**CRITICAL:** NEVER call CronCreate directly without first writing a YAML spec file. The YAML spec is the source of truth. Without it, the job cannot be recovered after agent restart.
+
+When the user asks to remove a job:
+
+1. **Delete the YAML spec file** from `crons/<job-name>.yaml`
+2. **Run reconciliation** — the orphan detection (Step 4.4) will delete the live job
+3. **Report** the job as removed
+
+When the user asks to change a job's schedule or prompt:
+
+1. **Edit the YAML spec file** with the new values
+2. **Run reconciliation** — change detection (Step 4.2) will recreate the job
+3. **Report** the updated schedule/prompt
 
 ## YAML Spec Format
 
