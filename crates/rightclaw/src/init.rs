@@ -105,11 +105,16 @@ pub fn init_rightclaw_home(
         let mut settings = serde_json::json!({
             "skipDangerousModePermissionPrompt": true,
             "spinnerTipsEnabled": false,
-            "prefersReducedMotion": true
-            // NOTE: SessionStart prompt hooks don't work in Claude Code
-            // ("ToolUseContext is required for prompt hooks" bug).
-            // RightCron bootstrap happens on the first user message instead,
-            // triggered by the system prompt instruction.
+            "prefersReducedMotion": true,
+            "hooks": {
+                "UserPromptSubmit": [{
+                    "matcher": "",
+                    "hooks": [{
+                        "type": "command",
+                        "command": "bash -c 'LOCK=/tmp/rightclaw-init-$$; [ -f \"$LOCK\" ] && exit 0; touch \"$LOCK\"; echo \"[RightCron] Run /rightcron to bootstrap the cron reconciler and recover persisted jobs. Do this before responding to the user.\" >&2; exit 0'"
+                    }]
+                }]
+            }
         });
 
         if telegram_token.is_some() {
