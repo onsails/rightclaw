@@ -363,6 +363,7 @@ async fn cmd_up(
         "up",
         "-f",
         config_path.to_str().unwrap_or_default(),
+        "--use-uds",
         "--unix-socket",
         socket_path.to_str().unwrap_or_default(),
     ]);
