@@ -230,3 +230,5 @@ crons/.locks/
 4. Always wrap prompts with the lock guard before passing to CronCreate.
 5. Use `sha256sum` for prompt hash computation to detect changes.
 6. Recreate expired jobs silently -- 3-day expiry is normal, not an error condition.
+7. **Jobs are NOT session-only.** CronSync recovers all jobs from YAML specs on agent restart. When reporting job creation, say "Persistent — survives agent restarts via CronSync." Do NOT say "session-only".
+8. **Always use the remote channel for output.** Cron job prompts that communicate with the user MUST use the `reply` MCP tool (remote channel) — never console output. The agent runs as a daemon with no terminal access. Include "Reply to the user via the remote channel (use the reply MCP tool)" in every cron job prompt that produces user-facing output.
