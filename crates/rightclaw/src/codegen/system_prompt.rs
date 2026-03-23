@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::agent::AgentDef;
 
 /// Generate a combined system prompt file content for an agent.
@@ -54,18 +52,6 @@ pub fn generate_combined_prompt(agent: &AgentDef) -> miette::Result<String> {
     );
 
     Ok(content)
-}
-
-fn has_yaml_files(dir: &Path) -> bool {
-    std::fs::read_dir(dir)
-        .map(|entries| {
-            entries.filter_map(Result::ok).any(|e| {
-                e.path()
-                    .extension()
-                    .is_some_and(|ext| ext == "yaml" || ext == "yml")
-            })
-        })
-        .unwrap_or(false)
 }
 
 #[cfg(test)]
