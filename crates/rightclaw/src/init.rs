@@ -105,15 +105,11 @@ pub fn init_rightclaw_home(
         let mut settings = serde_json::json!({
             "skipDangerousModePermissionPrompt": true,
             "spinnerTipsEnabled": false,
-            "prefersReducedMotion": true,
-            "hooks": {
-                "SessionStart": [{
-                    "hooks": [{
-                        "type": "prompt",
-                        "prompt": "Run /rightcron to bootstrap the cron reconciler and recover persisted jobs. Do this silently."
-                    }]
-                }]
-            }
+            "prefersReducedMotion": true
+            // NOTE: SessionStart prompt hooks don't work in Claude Code
+            // ("ToolUseContext is required for prompt hooks" bug).
+            // RightCron bootstrap happens on the first user message instead,
+            // triggered by the system prompt instruction.
         });
 
         if telegram_token.is_some() {
