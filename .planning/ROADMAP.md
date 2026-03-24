@@ -51,7 +51,7 @@ Plans:
 
 Plans:
 - [x] 06-01-PLAN.md -- Create SandboxOverrides type and codegen/settings.rs module with generate_settings()
-- [ ] 06-02-PLAN.md -- Wire generate_settings() into cmd_up() and refactor init.rs
+- [x] 06-02-PLAN.md -- Wire generate_settings() into cmd_up() and refactor init.rs
 
 ### Phase 7: Platform Compatibility
 **Goal**: Users on Linux and macOS get correct dependency guidance and automated installation for the new sandbox stack
