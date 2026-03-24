@@ -238,7 +238,6 @@ async fn cmd_up(
 ) -> miette::Result<()> {
     // Fail fast if required tools are missing.
     rightclaw::runtime::verify_dependencies()?;
-    let _ = no_sandbox; // Kept as CLI flag for Phase 6 (sandbox config).
 
     let run_dir = home.join("run");
     std::fs::create_dir_all(&run_dir)
@@ -326,6 +325,19 @@ async fn cmd_up(
                 miette::miette!("failed to set wrapper permissions for '{}': {e:#}", agent.name)
             })?;
         tracing::debug!(agent = %agent.name, "wrote wrapper: {}", wrapper_path.display());
+
+        // Generate .claude/settings.json with sandbox config (Phase 6).
+        let settings = rightclaw::codegen::generate_settings(agent, no_sandbox)?;
+        let claude_dir = agent.path.join(".claude");
+        std::fs::create_dir_all(&claude_dir)
+            .map_err(|e| miette::miette!("failed to create .claude dir for '{}': {e:#}", agent.name))?;
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            serde_json::to_string_pretty(&settings)
+                .map_err(|e| miette::miette!("failed to serialize settings for '{}': {e:#}", agent.name))?,
+        )
+        .map_err(|e| miette::miette!("failed to write settings.json for '{}': {e:#}", agent.name))?;
+        tracing::debug!(agent = %agent.name, "wrote settings.json");
     }
 
     // Generate process-compose.yaml.
