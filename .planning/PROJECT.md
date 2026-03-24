@@ -2,11 +2,11 @@
 
 ## What This Is
 
-RightClaw is a multi-agent runtime for Claude Code. Each agent runs as an independent Claude Code session with native OS-level sandboxing (bubblewrap/Seatbelt) and full HOME isolation. The Rust CLI orchestrates agent lifecycles via process-compose. Drop-in compatible with the OpenClaw/ClawHub ecosystem — same file conventions, same skill format, same registry — but with security-first enforcement instead of "grant all, pray it works."
+RightClaw is a multi-agent runtime for Claude Code. Each agent runs as an independent Claude Code session with native OS-level sandboxing (bubblewrap/Seatbelt) and per-agent sandbox configuration. The Rust CLI orchestrates agent lifecycles via process-compose. Drop-in compatible with the OpenClaw/ClawHub ecosystem — same file conventions, same skill format, same registry — but with security-first enforcement instead of "grant all, pray it works."
 
 ## Core Value
 
-Run multiple autonomous Claude Code agents safely — each sandboxed by native OS-level isolation, each with its own HOME and identity, orchestrated by a single CLI command.
+Run multiple autonomous Claude Code agents safely — each sandboxed by native OS-level isolation, each with its own sandbox configuration and identity, orchestrated by a single CLI command.
 
 ## Requirements
 
@@ -31,10 +31,15 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 - ✓ `/clawhub` skill — search, install, remove, list via ClawHub HTTP API with policy gate — Phase 4
 - ✓ `/cronsync` skill — declarative cron reconciliation with lock-file concurrency — Phase 4
 - ✓ System prompt codegen for CronSync bootstrap — Phase 4
+- ✓ OpenShell removed, agents launch via direct claude invocation — v2.0 Phase 5
+- ✓ Per-agent `.claude/settings.json` with CC native sandbox config — v2.0 Phase 6
+- ✓ SandboxOverrides in agent.yaml for per-agent customization — v2.0 Phase 6
+- ✓ Doctor checks bubblewrap/socat on Linux with AppArmor smoke test — v2.0 Phase 7
+- ✓ install.sh installs bubblewrap/socat (apt/dnf/pacman) — v2.0 Phase 7
 
 ### Active
 
-(v2.0 requirements — see REQUIREMENTS.md)
+(No active requirements — run `/gsd:new-milestone` to define next)
 
 ### Out of Scope
 
@@ -51,7 +56,7 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 
 - **Positioning:** RightClaw is the "done right" alternative to OpenClaw. Same ecosystem compatibility (ClawHub skills, file conventions), but with sandbox enforcement instead of unrestricted system access.
 - **Sandboxing:** Claude Code native sandbox (bubblewrap on Linux, Seatbelt on macOS). OS-level filesystem + network isolation configured via per-agent `settings.json`. Replaced OpenShell in v2.0 — simpler, no API key required, no alpha instability.
-- **Agent isolation:** Each agent dir (`~/.rightclaw/agents/<name>/`) is the agent's `$HOME`. CC creates `.claude/` inside it — settings, permissions, memory all naturally scoped per agent.
+- **Agent isolation:** Each agent dir (`~/.rightclaw/agents/<name>/`) has its own `.claude/settings.json` generated on every `rightclaw up`. Per-agent sandbox overrides via `agent.yaml` `sandbox:` section.
 - **OpenClaw ecosystem:** ~5,700 ClawHub skills, SKILL.md format with YAML frontmatter, `metadata.openclaw` for gating. Agent files: SOUL.md (personality/values), USER.md (user context), IDENTITY.md (name/vibe/emoji), MEMORY.md (persistent facts), AGENTS.md (operational framework), BOOTSTRAP.md (first-run onboarding, self-deletes).
 - **process-compose:** Lightweight process orchestrator with TUI. Handles restart policies, logging, process groups. RightClaw generates its config, doesn't ship its own process manager.
 - **CronSync:** Built as a Claude Code skill (not CLI concern). Uses Claude Code's native CronCreate/CronList/CronDelete tools. Declarative YAML specs in `agents/<name>/crons/`, reconciled via `/loop`. Lock files with heartbeat for concurrency control.
@@ -99,29 +104,19 @@ This document evolves at phase transitions and milestone boundaries.
 3. Audit Out of Scope — reasons still valid?
 4. Update Context with current state
 
-## Current Milestone: v2.0 Native Sandbox & Agent Isolation
-
-**Goal:** Replace OpenShell with Claude Code's native sandboxing and isolate agents by making each agent directory their `$HOME`.
-
-**Target features:**
-- CC native sandbox (bubblewrap/Seatbelt) replaces OpenShell entirely
-- Per-agent `$HOME` at `~/.rightclaw/agents/<name>/` — own `.claude/`, settings, memory
-- Per-agent `settings.json` generation with `sandbox.*` config (filesystem + network restrictions)
-- Remove all OpenShell code paths, policy.yaml handling, sandbox create/destroy
-- Update `install.sh` and `rightclaw doctor` — new deps (bubblewrap, socat on Linux), drop openshell
-- Update shell wrappers — `HOME=<agent-dir> claude` instead of `openshell sandbox create -- claude`
-
 ## Current State
 
-**v1.0 shipped** (2026-03-23). **v2.0 complete** (2026-03-24).
+**v2.0 shipped** (2026-03-24). 3,793 LOC Rust. 108 unit tests, 20 integration tests.
 
-**v2.0 delivered:**
-- Phase 5: All OpenShell code removed. Shell wrappers launch claude directly.
-- Phase 6: Per-agent `.claude/settings.json` with CC native sandbox config. SandboxOverrides in agent.yaml.
-- Phase 7: Doctor checks bubblewrap/socat on Linux with AppArmor smoke test. install.sh updated.
+**Shipped versions:**
+- v1.0 (2026-03-23): Core runtime — CLI, process-compose, OpenShell sandbox, Telegram, skills, RightCron
+- v2.0 (2026-03-24): Native sandbox — replaced OpenShell with CC sandbox (bubblewrap/Seatbelt), per-agent settings.json, SandboxOverrides in agent.yaml, doctor AppArmor smoke test
 
-**v2.0 resolved:**
-- SEED-003: OpenShell API key requirement → CC native sandbox needs no API key
+**Known limitations:**
+- SEED-002: BOOTSTRAP.md onboarding doesn't trigger via Telegram
+- SEED-004: Per-agent HOME isolation deferred (edge cases with trust files, git/SSH)
+- `rightclaw restart` disabled (process-compose is_tty bug)
+- `test_status_no_running_instance` integration test fails (pre-existing)
 
 ---
-*Last updated: 2026-03-24 — v2.0 milestone complete*
+*Last updated: 2026-03-24 after v2.0 milestone*
