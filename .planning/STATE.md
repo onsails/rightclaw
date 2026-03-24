@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Sandbox & Agent Isolation
-status: Milestone complete
+status: v2.0 milestone complete
 stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-03-24T15:18:16.741Z"
+last_updated: "2026-03-24T15:36:20.685Z"
 progress:
   total_phases: 3
   completed_phases: 3
