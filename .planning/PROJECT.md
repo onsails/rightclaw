@@ -41,6 +41,11 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 - ✓ Credential symlink $AGENT_DIR/.claude/.credentials.json → host OAuth creds — v2.1 Phase 8
 - ✓ denyRead uses absolute host HOME paths (not tilde); allowRead includes agent path — v2.1 Phase 8
 - ✓ SandboxOverrides.allow_read for per-agent allowRead overrides — v2.1 Phase 8
+- ✓ `rightclaw up` runs `git init` in each agent dir that lacks .git/ (non-fatal) — v2.1 Phase 9
+- ✓ `rightclaw up` writes Telegram channel config per-agent when telegram fields set in agent.yaml — v2.1 Phase 9
+- ✓ `rightclaw up` reinstalls built-in skills into each agent's .claude/skills/ on every launch — v2.1 Phase 9
+- ✓ `rightclaw up` writes settings.local.json with {} if absent, never overwrites existing — v2.1 Phase 9
+- ✓ `rightclaw doctor` warns (non-fatal) when git binary absent — v2.1 Phase 9
 
 ### Active
 
@@ -111,7 +116,7 @@ This document evolves at phase transitions and milestone boundaries.
 
 ## Current State
 
-**v2.0 shipped** (2026-03-24). 3,793 LOC Rust. 108 unit tests, 20 integration tests.
+**v2.1 Phase 9 complete** (2026-03-24). Agent environment setup — git init, Telegram channel config, skills refresh, settings.local.json pre-creation all wired into `rightclaw up`. 148 lib tests, 20 integration tests.
 
 **Shipped versions:**
 - v1.0 (2026-03-23): Core runtime — CLI, process-compose, OpenShell sandbox, Telegram, skills, RightCron
@@ -133,4 +138,4 @@ This document evolves at phase transitions and milestone boundaries.
 - Solve HOME edge cases: trust file, OAuth/API key, git/SSH env forwarding
 
 ---
-*Last updated: 2026-03-24 — milestone v2.1 started*
+*Last updated: 2026-03-24 — Phase 9 complete (agent-environment-setup)*
