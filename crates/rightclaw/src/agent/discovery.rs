@@ -78,7 +78,6 @@ fn optional_file(agent_dir: &Path, filename: &str) -> Option<PathBuf> {
 /// Returns an error if:
 /// - The agents directory cannot be read
 /// - Any agent directory has an invalid name
-/// - Any agent has `IDENTITY.md` but is missing `policy.yaml`
 /// - Any agent has an invalid `agent.yaml`
 pub fn discover_agents(agents_dir: &Path) -> miette::Result<Vec<AgentDef>> {
     let entries = std::fs::read_dir(agents_dir).map_err(|e| AgentError::IoError {
@@ -112,21 +111,11 @@ pub fn discover_agents(agents_dir: &Path) -> miette::Result<Vec<AgentDef>> {
             continue;
         }
 
-        let policy_path = path.join("policy.yaml");
-        if !policy_path.exists() {
-            return Err(AgentError::MissingRequiredFile {
-                name: name.clone(),
-                file: "policy.yaml".to_string(),
-            }
-            .into());
-        }
-
         let config = parse_agent_config(&path)?;
 
         let agent = AgentDef {
             name,
             identity_path,
-            policy_path,
             config,
             mcp_config_path: optional_file(&path, ".mcp.json"),
             soul_path: optional_file(&path, "SOUL.md"),

@@ -16,23 +16,6 @@ if [ -z "$CLAUDE_BIN" ]; then
   exit 1
 fi
 
-{% if not no_sandbox %}
-exec openshell sandbox create \
-  --no-auto-providers \
-  --no-keep \
-  --policy "{{ policy_path }}" \
-  --name "rightclaw-{{ agent_name }}" \
-  -- claude \
-    --append-system-prompt-file "{{ combined_prompt_path }}" \
-    --dangerously-skip-permissions \
-    {% if model %}--model {{ model }} \
-    {% endif %}{% if debug %}--debug-file "{{ debug_log_path }}" \
-    {% endif %}{% if channels %}--channels {{ channels }} \
-    {% endif %}{% if startup_prompt %}-- "{{ startup_prompt }}"
-    {% else %}
-    {% endif %}
-{% else %}
-# WARNING: Running without sandbox (--no-sandbox mode)
 exec "$CLAUDE_BIN" \
   --append-system-prompt-file "{{ combined_prompt_path }}" \
   --dangerously-skip-permissions \
@@ -42,4 +25,3 @@ exec "$CLAUDE_BIN" \
   {% endif %}{% if startup_prompt %}-- "{{ startup_prompt }}"
   {% else %}
   {% endif %}
-{% endif %}

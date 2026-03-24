@@ -41,14 +41,14 @@ pub enum Commands {
         /// Launch in background with TUI server
         #[arg(short, long)]
         detach: bool,
-        /// Run without OpenShell sandbox (development only)
+        /// Disable sandbox enforcement (development only)
         #[arg(long)]
         no_sandbox: bool,
         /// Enable debug logging (writes to $RIGHTCLAW_HOME/run/<agent>-debug.log)
         #[arg(long)]
         debug: bool,
     },
-    /// Stop all agents and destroy sandboxes
+    /// Stop all agents
     Down,
     /// Show running agent status
     Status,
@@ -237,7 +237,8 @@ async fn cmd_up(
     debug: bool,
 ) -> miette::Result<()> {
     // Fail fast if required tools are missing.
-    rightclaw::runtime::verify_dependencies(no_sandbox)?;
+    rightclaw::runtime::verify_dependencies()?;
+    let _ = no_sandbox; // Kept as CLI flag for Phase 6 (sandbox config).
 
     let run_dir = home.join("run");
     std::fs::create_dir_all(&run_dir)
@@ -314,7 +315,6 @@ async fn cmd_up(
         };
         let wrapper_content = rightclaw::codegen::generate_wrapper(
             agent,
-            no_sandbox,
             &prompt_path_str,
             debug_log.as_deref(),
         )?;
@@ -344,12 +344,10 @@ async fn cmd_up(
             .iter()
             .map(|a| rightclaw::runtime::AgentState {
                 name: a.name.clone(),
-                sandbox_name: rightclaw::runtime::sandbox_name_for(&a.name),
             })
             .collect(),
         socket_path: socket_path.display().to_string(),
         started_at: format!("{}Z", now.as_secs()),
-        no_sandbox,
     };
     let state_path = run_dir.join("state.json");
     rightclaw::runtime::write_state(&state, &state_path)?;
@@ -408,7 +406,7 @@ async fn cmd_down(home: &Path) -> miette::Result<()> {
     let run_dir = home.join("run");
     let state_path = run_dir.join("state.json");
 
-    let state = rightclaw::runtime::read_state(&state_path).map_err(|_| {
+    let _state = rightclaw::runtime::read_state(&state_path).map_err(|_| {
         miette::miette!("No running instance found. Is rightclaw running?")
     })?;
 
@@ -422,11 +420,6 @@ async fn cmd_down(home: &Path) -> miette::Result<()> {
         Err(e) => {
             tracing::warn!("could not connect to process-compose: {e:#}");
         }
-    }
-
-    // Destroy sandboxes unless --no-sandbox was used.
-    if !state.no_sandbox {
-        rightclaw::runtime::destroy_sandboxes(&state.agents)?;
     }
 
     println!("All agents stopped.");
