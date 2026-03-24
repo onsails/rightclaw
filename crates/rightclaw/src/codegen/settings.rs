@@ -45,13 +45,13 @@ pub fn generate_settings(
     let mut allow_read = vec![agent.path.display().to_string()];
 
     // Merge user overrides from agent.yaml sandbox section (D-08, D-09b).
-    if let Some(ref config) = agent.config {
-        if let Some(ref overrides) = config.sandbox {
-            allow_write.extend(overrides.allow_write.iter().cloned());
-            allowed_domains.extend(overrides.allowed_domains.iter().cloned());
-            excluded_commands.extend(overrides.excluded_commands.iter().cloned());
-            allow_read.extend(overrides.allow_read.iter().cloned());
-        }
+    if let Some(ref config) = agent.config
+        && let Some(ref overrides) = config.sandbox
+    {
+        allow_write.extend(overrides.allow_write.iter().cloned());
+        allowed_domains.extend(overrides.allowed_domains.iter().cloned());
+        excluded_commands.extend(overrides.excluded_commands.iter().cloned());
+        allow_read.extend(overrides.allow_read.iter().cloned());
     }
 
     // Build denyRead with absolute host HOME paths (HOME-05).
