@@ -12,6 +12,7 @@ fn make_agent_at(path: std::path::PathBuf) -> AgentDef {
             backoff_seconds: 5,
             start_prompt: None,
             model: None,
+            sandbox: None,
         }),
         mcp_config_path: None,
         soul_path: None,
