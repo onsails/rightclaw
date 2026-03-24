@@ -4,9 +4,9 @@ set -euo pipefail
 # ── RightClaw Installer ────────────────────────────────────────────
 #
 # Installs RightClaw and its dependencies:
-#   1. rightclaw    - Multi-agent runtime CLI
-#   2. process-compose - Process orchestrator with TUI
-#   3. OpenShell    - NVIDIA sandbox runtime
+#   1. rightclaw        - Multi-agent runtime CLI
+#   2. process-compose  - Process orchestrator with TUI
+#   3. bubblewrap + socat (Linux only) - Sandbox dependencies
 #
 # Usage:
 #   curl -LsSf https://raw.githubusercontent.com/onsails/rightclaw/main/install.sh | sh
@@ -157,26 +157,41 @@ install_process_compose() {
   fi
 }
 
-# ── Step 3: Install OpenShell ──────────────────────────────────────
+# ── Step 3: Install sandbox dependencies (Linux only) ─────────────
 
-install_openshell() {
-  info "Installing OpenShell..."
-
-  if command -v openshell >/dev/null 2>&1; then
-    ok "openshell already installed: $(command -v openshell)"
+install_sandbox_deps() {
+  if [ "$PLATFORM" = "darwin" ]; then
+    ok "macOS uses built-in Seatbelt sandbox (no additional deps needed)"
     return 0
   fi
 
-  echo "  using official installer (v0.0.13)..."
-  curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh \
-    | OPENSHELL_VERSION=v0.0.13 sh
+  info "Installing sandbox dependencies..."
 
-  if command -v openshell >/dev/null 2>&1; then
-    ok "openshell installed"
-  else
-    warn "openshell install completed but binary not found in PATH"
-    echo "       You may need to add its install location to your PATH"
+  local need_bwrap=false need_socat=false
+  command -v bwrap  >/dev/null 2>&1 || need_bwrap=true
+  command -v socat  >/dev/null 2>&1 || need_socat=true
+
+  if [ "$need_bwrap" = false ] && [ "$need_socat" = false ]; then
+    ok "bubblewrap and socat already installed"
+    return 0
   fi
+
+  local pkgs=""
+  [ "$need_bwrap" = true ] && pkgs="bubblewrap"
+  [ "$need_socat" = true ] && pkgs="$pkgs socat"
+
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get install -y $pkgs
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y $pkgs
+  elif command -v pacman >/dev/null 2>&1; then
+    sudo pacman -S --noconfirm $pkgs
+  else
+    die "No supported package manager found (need apt, dnf, or pacman).
+    Install manually: bubblewrap socat"
+  fi
+
+  ok "sandbox dependencies installed"
 }
 
 # ── Step 4: Run rightclaw init ─────────────────────────────────────
@@ -223,7 +238,7 @@ main() {
   echo ""
   install_rightclaw
   install_process_compose
-  install_openshell
+  install_sandbox_deps
 
   echo ""
   check_bun
