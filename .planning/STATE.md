@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Sandbox & Agent Isolation
-status: Ready to execute
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-03-24T15:12:16.381Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 07-01-PLAN.md
+last_updated: "2026-03-24T15:14:21.510Z"
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 6
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -51,6 +51,7 @@ Plan: 2 of 2
 | Phase 06 P01 | 4min | 2 tasks | 8 files |
 | Phase 06 P02 | 2min | 2 tasks | 3 files |
 | Phase 07 P02 | 1min | 1 tasks | 1 files |
+| Phase 07 P01 | 2min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,7 @@ Recent decisions affecting current work:
 - [Phase 06]: no_sandbox hardcoded to false for init (sandbox always enabled for fresh agents)
 - [Phase 06]: Synthetic AgentDef in init.rs reuses codegen path -- single source of truth for settings.json
 - [Phase 07]: Selective sandbox dep install: only missing packages installed (bwrap/socat checked individually)
+- [Phase 07]: bwrap smoke test uses --unshare-net to match CC sandbox-runtime code path
 
 ### Pending Todos
 
@@ -82,6 +84,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T15:12:16.378Z
-Stopped at: Completed 07-02-PLAN.md
+Last session: 2026-03-24T15:14:21.507Z
+Stopped at: Completed 07-01-PLAN.md
 Resume file: None
