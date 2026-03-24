@@ -1,5 +1,5 @@
 ---
-status: complete
+status: partial
 phase: v2.0 (phases 05-07 combined)
 source: [05-01-SUMMARY.md, 05-02-SUMMARY.md, 06-01-SUMMARY.md, 06-02-SUMMARY.md, 07-01-SUMMARY.md, 07-02-SUMMARY.md]
 started: 2026-03-24T16:00:00Z
@@ -54,25 +54,42 @@ notes: Tested with allow_write, allowed_domains fields. `rightclaw list` shows "
 
 ### 9. devenv includes sandbox dependencies
 expected: devenv.nix includes bubblewrap and socat for development
-result: issue
-reported: "bwrap and socat not in devenv.nix PATH — devenv wasn't updated for v2.0 deps"
-severity: minor
+result: pass
+notes: Fixed — bubblewrap and socat added to devenv.nix. Doctor shows bwrap ok, socat ok, bwrap-sandbox ok.
+
+### 10. Sandbox blocks filesystem writes outside agent dir
+expected: Agent running via `rightclaw up` cannot write to `/tmp/should-fail` or any path outside its own agent directory. `touch /tmp/should-fail` executed inside the agent's bash should fail with a permission/sandbox error.
+result: [pending]
+notes: Requires interactive CC session with API key. Run `rightclaw up`, attach, ask agent to `touch /tmp/should-fail`.
+
+### 11. Sandbox allows filesystem writes inside agent dir
+expected: Agent can write files inside its own directory (e.g. `touch ~/test-file` from agent cwd). Should succeed without sandbox blocking.
+result: [pending]
+notes: Requires interactive CC session. Run `rightclaw up`, attach, ask agent to create a file in its dir.
+
+### 12. Sandbox blocks network access to non-allowed domains
+expected: Agent cannot reach domains not in allowedDomains. `curl https://httpbin.org/get` should be blocked or prompt for permission.
+result: [pending]
+notes: Requires interactive CC session. Run `rightclaw up`, attach, ask agent to curl a domain not in the allowlist.
+
+### 13. Sandbox allows network access to allowed domains
+expected: Agent can reach domains in allowedDomains (api.anthropic.com, github.com, etc.). `curl https://api.anthropic.com` should succeed.
+result: [pending]
+notes: Requires interactive CC session. Run `rightclaw up`, attach, ask agent to curl an allowed domain.
 
 ## Summary
 
-total: 9
-passed: 8
-issues: 1
-pending: 0
+total: 13
+passed: 9
+issues: 0
+pending: 4
 skipped: 0
 blocked: 0
 
 ## Gaps
 
 - truth: "devenv.nix includes bubblewrap and socat for development"
-  status: failed
-  reason: "User reported: bwrap and socat not in devenv.nix PATH — devenv wasn't updated for v2.0 deps"
+  status: resolved
+  reason: "Fixed — bubblewrap and socat added to devenv.nix (cfeb289)"
   severity: minor
   test: 9
-  artifacts: [devenv.nix]
-  missing: [bubblewrap, socat packages in devenv inputs]
