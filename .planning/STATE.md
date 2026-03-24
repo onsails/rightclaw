@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Native Sandbox & Agent Isolation
-status: Ready to execute
-stopped_at: Completed 06-01-PLAN.md
-last_updated: "2026-03-24T14:38:16.759Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 06-02-PLAN.md
+last_updated: "2026-03-24T14:43:16.455Z"
 progress:
   total_phases: 3
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 4
-  completed_plans: 3
+  completed_plans: 4
 ---
 
 # Project State
@@ -49,6 +49,7 @@ Plan: 2 of 2
 | Phase 05 P01 | 9min | 2 tasks | 20 files |
 | Phase 05 P02 | 2min | 2 tasks | 1 files |
 | Phase 06 P01 | 4min | 2 tasks | 8 files |
+| Phase 06 P02 | 2min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -65,6 +66,8 @@ Recent decisions affecting current work:
 - [Phase 05]: v1 state.json backward compat verified -- serde ignores unknown fields (sandbox_name, no_sandbox) in simplified structs
 - [Phase 06]: denyRead defaults include ~/.ssh, ~/.aws, ~/.gnupg for security-first sandbox config
 - [Phase 06]: excludedCommands omitted from settings JSON when empty for cleaner output
+- [Phase 06]: no_sandbox hardcoded to false for init (sandbox always enabled for fresh agents)
+- [Phase 06]: Synthetic AgentDef in init.rs reuses codegen path -- single source of truth for settings.json
 
 ### Pending Todos
 
@@ -77,6 +80,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-24T14:38:16.756Z
-Stopped at: Completed 06-01-PLAN.md
+Last session: 2026-03-24T14:43:16.452Z
+Stopped at: Completed 06-02-PLAN.md
 Resume file: None

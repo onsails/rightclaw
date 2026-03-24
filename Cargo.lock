@@ -1418,6 +1418,7 @@ dependencies = [
  "miette",
  "predicates",
  "rightclaw",
+ "serde_json",
  "tempfile",
  "tokio",
  "tracing",
