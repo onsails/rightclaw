@@ -36,6 +36,11 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 - ✓ SandboxOverrides in agent.yaml for per-agent customization — v2.0 Phase 6
 - ✓ Doctor checks bubblewrap/socat on Linux with AppArmor smoke test — v2.0 Phase 7
 - ✓ install.sh installs bubblewrap/socat (apt/dnf/pacman) — v2.0 Phase 7
+- ✓ Shell wrapper sets HOME=$AGENT_DIR + forwards 6 identity env vars before HOME override — v2.1 Phase 8
+- ✓ Per-agent .claude.json with hasTrustDialogAccepted generated on every `up`/`init` — v2.1 Phase 8
+- ✓ Credential symlink $AGENT_DIR/.claude/.credentials.json → host OAuth creds — v2.1 Phase 8
+- ✓ denyRead uses absolute host HOME paths (not tilde); allowRead includes agent path — v2.1 Phase 8
+- ✓ SandboxOverrides.allow_read for per-agent allowRead overrides — v2.1 Phase 8
 
 ### Active
 
