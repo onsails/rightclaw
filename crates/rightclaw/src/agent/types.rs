@@ -20,6 +20,25 @@ fn default_backoff_seconds() -> u32 {
     5
 }
 
+/// Per-agent sandbox overrides defined in agent.yaml.
+///
+/// All arrays MERGE with generated defaults (D-08).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxOverrides {
+    /// Additional paths to allow writing (appended to defaults).
+    #[serde(default)]
+    pub allow_write: Vec<String>,
+
+    /// Additional domains to allow (appended to defaults).
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+
+    /// Commands to exclude from sandbox (appended to defaults).
+    #[serde(default)]
+    pub excluded_commands: Vec<String>,
+}
+
 /// Parsed `agent.yaml` configuration for a single agent.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -37,6 +56,10 @@ pub struct AgentConfig {
 
     /// Claude model to use (e.g. "sonnet", "opus", "haiku")
     pub model: Option<String>,
+
+    /// Per-agent sandbox overrides from `sandbox:` section.
+    #[serde(default)]
+    pub sandbox: Option<SandboxOverrides>,
 }
 
 /// A discovered agent definition from the filesystem.
@@ -134,5 +157,58 @@ unknown_field: "should fail"
         let yaml = r#"restart: always"#;
         let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(config.restart, RestartPolicy::Always);
+    }
+
+    #[test]
+    fn agent_config_with_sandbox_overrides() {
+        let yaml = r#"
+restart: on_failure
+sandbox:
+  allow_write:
+    - "/tmp/builds"
+  allowed_domains:
+    - "registry.npmjs.org"
+  excluded_commands:
+    - "docker"
+"#;
+        let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
+        let sandbox = config.sandbox.unwrap();
+        assert_eq!(sandbox.allow_write, vec!["/tmp/builds"]);
+        assert_eq!(sandbox.allowed_domains, vec!["registry.npmjs.org"]);
+        assert_eq!(sandbox.excluded_commands, vec!["docker"]);
+    }
+
+    #[test]
+    fn agent_config_without_sandbox_section() {
+        let yaml = "restart: never";
+        let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
+        assert!(config.sandbox.is_none());
+    }
+
+    #[test]
+    fn sandbox_overrides_empty_section() {
+        let yaml = "sandbox: {}";
+        let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
+        let sandbox = config.sandbox.unwrap();
+        assert!(sandbox.allow_write.is_empty());
+        assert!(sandbox.allowed_domains.is_empty());
+        assert!(sandbox.excluded_commands.is_empty());
+    }
+
+    #[test]
+    fn sandbox_overrides_rejects_unknown_fields() {
+        let yaml = r#"
+sandbox:
+  allow_write:
+    - "/tmp"
+  unknown_field: "bad"
+"#;
+        let result: Result<AgentConfig, _> = serde_saphyr::from_str(yaml);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("unknown field"),
+            "expected 'unknown field' in error: {err}"
+        );
     }
 }
