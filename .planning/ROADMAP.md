@@ -47,7 +47,11 @@ Plans:
   2. Generated settings include filesystem restrictions (allowWrite scoped to agent dir) and network restrictions (allowedDomains for required services)
   3. Generated settings set `allowUnsandboxedCommands: false` and `autoAllowBashIfSandboxed: true` as secure defaults
   4. User can define sandbox overrides in `agent.yaml` (allowWrite, allowedDomains, excludedCommands) that merge with generated defaults
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 06-01-PLAN.md -- Create SandboxOverrides type and codegen/settings.rs module with generate_settings()
+- [ ] 06-02-PLAN.md -- Wire generate_settings() into cmd_up() and refactor init.rs
 
 ### Phase 7: Platform Compatibility
 **Goal**: Users on Linux and macOS get correct dependency guidance and automated installation for the new sandbox stack
@@ -67,6 +71,6 @@ Phases execute in numeric order: 5 -> 6 -> 7
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 5. Remove OpenShell | v2.0 | 0/2 | Planning complete | - |
-| 6. Sandbox Configuration | v2.0 | 0/0 | Not started | - |
+| 5. Remove OpenShell | v2.0 | 2/2 | Complete | 2026-03-24 |
+| 6. Sandbox Configuration | v2.0 | 0/2 | Planning complete | - |
 | 7. Platform Compatibility | v2.0 | 0/0 | Not started | - |
