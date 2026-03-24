@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::agent::AgentDef;
 
 /// Generate Telegram channel config for an agent under HOME override.
@@ -72,6 +70,8 @@ fn resolve_telegram_token(agent: &AgentDef) -> miette::Result<Option<String>> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
     use crate::agent::{AgentConfig, AgentDef, RestartPolicy};
     use tempfile::tempdir;
