@@ -293,6 +293,10 @@ async fn cmd_up(
         let _ = std::fs::remove_file(&lock);
     }
 
+    // Resolve host HOME before per-agent loop (must be done before any HOME env override).
+    let host_home = dirs::home_dir()
+        .ok_or_else(|| miette::miette!("cannot determine home directory"))?;
+
     // Generate shell wrappers for each agent.
     for agent in &agents {
         // Generate combined prompt (identity + start prompt + optional rightcron).
@@ -326,6 +330,12 @@ async fn cmd_up(
                 miette::miette!("failed to set wrapper permissions for '{}': {e:#}", agent.name)
             })?;
         tracing::debug!(agent = %agent.name, "wrote wrapper: {}", wrapper_path.display());
+
+        // Generate per-agent .claude.json with trust entries (Phase 8, HOME-02).
+        rightclaw::codegen::generate_agent_claude_json(agent)?;
+
+        // Create credential symlink for OAuth under HOME override (Phase 8, HOME-03).
+        rightclaw::codegen::create_credential_symlink(agent, &host_home)?;
     }
 
     // Generate process-compose.yaml.
