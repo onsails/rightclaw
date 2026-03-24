@@ -35,7 +35,7 @@ impl fmt::Display for DoctorCheck {
 
 /// Run all doctor checks against the given RightClaw home directory.
 ///
-/// Checks 4 binaries in PATH (rightclaw, process-compose, openshell, claude)
+/// Checks 3 binaries in PATH (rightclaw, process-compose, claude)
 /// and validates agent directory structure. Unlike `verify_dependencies()`,
 /// doctor runs ALL checks and collects results -- never short-circuits.
 pub fn run_doctor(home: &Path) -> Vec<DoctorCheck> {
@@ -47,10 +47,6 @@ pub fn run_doctor(home: &Path) -> Vec<DoctorCheck> {
         check_binary(
             "process-compose",
             Some("https://f1bonacc1.github.io/process-compose/installation/"),
-        ),
-        check_binary(
-            "openshell",
-            Some("curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh"),
         ),
         check_binary(
             "claude",
@@ -100,7 +96,7 @@ fn check_binary(name: &str, fix_hint: Option<&str>) -> DoctorCheck {
 /// Validate agent directory structure.
 ///
 /// Checks that agents/ exists and contains at least one valid agent
-/// (directory with IDENTITY.md + policy.yaml).
+/// (directory with IDENTITY.md).
 fn check_agent_structure(home: &Path) -> Vec<DoctorCheck> {
     let mut checks = Vec::new();
     let agents_dir = home.join("agents");
@@ -142,10 +138,9 @@ fn check_agent_structure(home: &Path) -> Vec<DoctorCheck> {
         };
 
         let identity_exists = path.join("IDENTITY.md").exists();
-        let policy_exists = path.join("policy.yaml").exists();
         let bootstrap_exists = path.join("BOOTSTRAP.md").exists();
 
-        if identity_exists && policy_exists {
+        if identity_exists {
             valid_agents += 1;
             checks.push(DoctorCheck {
                 name: format!("agents/{name}/"),
@@ -154,18 +149,11 @@ fn check_agent_structure(home: &Path) -> Vec<DoctorCheck> {
                 fix: None,
             });
         } else {
-            let mut missing = Vec::new();
-            if !identity_exists {
-                missing.push("IDENTITY.md");
-            }
-            if !policy_exists {
-                missing.push("policy.yaml");
-            }
             checks.push(DoctorCheck {
                 name: format!("agents/{name}/"),
                 status: CheckStatus::Fail,
-                detail: format!("missing {}", missing.join(", ")),
-                fix: Some("Each agent needs IDENTITY.md and policy.yaml".to_string()),
+                detail: "missing IDENTITY.md".to_string(),
+                fix: Some("Each agent needs IDENTITY.md".to_string()),
             });
         }
 
@@ -255,7 +243,6 @@ mod tests {
         let agent_dir = dir.path().join("agents").join("right");
         std::fs::create_dir_all(&agent_dir).unwrap();
         std::fs::write(agent_dir.join("IDENTITY.md"), "# Right").unwrap();
-        std::fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
 
         let checks = run_doctor(dir.path());
 
@@ -287,7 +274,6 @@ mod tests {
         let agent_dir = dir.path().join("agents").join("right");
         std::fs::create_dir_all(&agent_dir).unwrap();
         std::fs::write(agent_dir.join("IDENTITY.md"), "# Right").unwrap();
-        std::fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
         std::fs::write(agent_dir.join("BOOTSTRAP.md"), "# Onboarding").unwrap();
 
         let checks = run_doctor(dir.path());
@@ -301,12 +287,12 @@ mod tests {
     }
 
     #[test]
-    fn run_doctor_reports_missing_required_files() {
+    fn run_doctor_reports_missing_identity() {
         let dir = tempdir().unwrap();
         let agent_dir = dir.path().join("agents").join("broken");
         std::fs::create_dir_all(&agent_dir).unwrap();
-        // Only IDENTITY.md, no policy.yaml
-        std::fs::write(agent_dir.join("IDENTITY.md"), "# Broken").unwrap();
+        // No IDENTITY.md
+        std::fs::write(agent_dir.join("agent.yaml"), "{}").unwrap();
 
         let checks = run_doctor(dir.path());
 
@@ -315,7 +301,7 @@ mod tests {
             .find(|c| c.name.contains("agents/broken/"))
             .expect("should have a check for agents/broken/");
         assert_eq!(agent_check.status, CheckStatus::Fail);
-        assert!(agent_check.detail.contains("policy.yaml"));
+        assert!(agent_check.detail.contains("IDENTITY.md"));
     }
 
     #[test]
@@ -346,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    fn run_doctor_always_checks_all_four_binaries() {
+    fn run_doctor_always_checks_all_three_binaries() {
         let dir = tempdir().unwrap();
         let checks = run_doctor(dir.path());
 
@@ -358,7 +344,7 @@ mod tests {
 
         assert!(binary_names.contains(&"rightclaw"), "missing rightclaw check");
         assert!(binary_names.contains(&"process-compose"), "missing process-compose check");
-        assert!(binary_names.contains(&"openshell"), "missing openshell check");
         assert!(binary_names.contains(&"claude"), "missing claude check");
+        assert!(!binary_names.contains(&"openshell"), "openshell should not be checked");
     }
 }

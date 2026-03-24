@@ -30,9 +30,9 @@ fn test_init_creates_structure() {
         .success();
 
     assert!(dir.path().join("agents/right/IDENTITY.md").exists());
-    assert!(dir.path().join("agents/right/policy.yaml").exists());
     assert!(dir.path().join("agents/right/SOUL.md").exists());
     assert!(dir.path().join("agents/right/AGENTS.md").exists());
+    assert!(!dir.path().join("agents/right/policy.yaml").exists(), "policy.yaml should NOT be created");
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn test_doctor_in_valid_home() {
     rightclaw()
         .args(["--home", home, "doctor"])
         .assert()
-        // May still fail overall (openshell/process-compose not in PATH)
+        // May still fail overall (process-compose not in PATH)
         // but should contain the agent check.
         .stdout(predicate::str::contains("agents/right/"));
 }
@@ -149,12 +149,9 @@ fn test_init_with_telegram_token() {
         .success()
         .stdout(predicate::str::contains("Telegram"));
 
-    // Verify the agent was created with telegram policy.
-    let policy = fs::read_to_string(dir.path().join("agents/right/policy.yaml")).unwrap();
-    assert!(
-        policy.contains("telegram_api:") && !policy.contains("# telegram_api:"),
-        "should use telegram policy variant"
-    );
+    // Verify agent was created (policy.yaml no longer created).
+    assert!(dir.path().join("agents/right/IDENTITY.md").exists());
+    assert!(!dir.path().join("agents/right/policy.yaml").exists(), "policy.yaml should NOT be created");
 }
 
 #[test]

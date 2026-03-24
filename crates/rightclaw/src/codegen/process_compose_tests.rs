@@ -17,9 +17,7 @@ fn make_agent(name: &str, restart: RestartPolicy) -> AgentDef {
         identity_path: PathBuf::from(format!(
             "/home/user/.rightclaw/agents/{name}/IDENTITY.md"
         )),
-        policy_path: PathBuf::from(format!(
-            "/home/user/.rightclaw/agents/{name}/policy.yaml"
-        )),
+
         config,
         mcp_config_path: None,
         soul_path: None,
@@ -39,9 +37,7 @@ fn make_agent_no_config(name: &str) -> AgentDef {
         identity_path: PathBuf::from(format!(
             "/home/user/.rightclaw/agents/{name}/IDENTITY.md"
         )),
-        policy_path: PathBuf::from(format!(
-            "/home/user/.rightclaw/agents/{name}/policy.yaml"
-        )),
+
         config: None,
         mcp_config_path: None,
         soul_path: None,

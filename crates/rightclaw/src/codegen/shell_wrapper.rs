@@ -11,7 +11,6 @@ const WRAPPER_TEMPLATE: &str = include_str!("../../../../templates/agent-wrapper
 /// system prompt content must be combined into a single file.
 pub fn generate_wrapper(
     agent: &AgentDef,
-    no_sandbox: bool,
     combined_prompt_path: &str,
     debug_log_path: Option<&str>,
 ) -> miette::Result<String> {
@@ -34,10 +33,8 @@ pub fn generate_wrapper(
 
     tmpl.render(context! {
         agent_name => agent.name,
-        policy_path => agent.policy_path.display().to_string(),
         working_dir => agent.path.display().to_string(),
         combined_prompt_path => combined_prompt_path,
-        no_sandbox => no_sandbox,
         channels => channels,
         model => model,
         startup_prompt => startup_prompt,

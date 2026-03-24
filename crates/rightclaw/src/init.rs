@@ -3,9 +3,7 @@ use std::path::Path;
 const DEFAULT_IDENTITY: &str = include_str!("../../../templates/right/IDENTITY.md");
 const DEFAULT_SOUL: &str = include_str!("../../../templates/right/SOUL.md");
 const DEFAULT_AGENTS: &str = include_str!("../../../templates/right/AGENTS.md");
-const DEFAULT_POLICY: &str = include_str!("../../../templates/right/policy.yaml");
 const DEFAULT_BOOTSTRAP: &str = include_str!("../../../templates/right/BOOTSTRAP.md");
-const DEFAULT_POLICY_TELEGRAM: &str = include_str!("../../../templates/right/policy-telegram.yaml");
 const DEFAULT_AGENT_YAML: &str = include_str!("../../../templates/right/agent.yaml");
 const SKILL_CLAWHUB: &str = include_str!("../../../skills/clawhub/SKILL.md");
 const SKILL_RIGHTCRON: &str = include_str!("../../../skills/cronsync/SKILL.md");
@@ -13,10 +11,9 @@ const SKILL_RIGHTCRON: &str = include_str!("../../../skills/cronsync/SKILL.md");
 /// Initialize the RightClaw home directory with a default "right" agent.
 ///
 /// Creates `home/agents/right/` with template files: IDENTITY.md, SOUL.md,
-/// AGENTS.md, BOOTSTRAP.md, and policy.yaml (base or Telegram variant).
+/// AGENTS.md, BOOTSTRAP.md, and agent.yaml.
 ///
 /// When `telegram_token` is provided:
-/// - Uses `policy-telegram.yaml` instead of base `policy.yaml`
 /// - Writes the token to `telegram_env_dir/.env` for Claude Code's Telegram plugin
 /// - Creates `.claude/settings.json` with `enabledPlugins` for automatic Telegram plugin activation
 ///
@@ -43,18 +40,6 @@ pub fn init_rightclaw_home(
         miette::miette!("Failed to create directory {}: {}", agents_dir.display(), e)
     })?;
 
-    let policy_template = if telegram_token.is_some() {
-        DEFAULT_POLICY_TELEGRAM
-    } else {
-        DEFAULT_POLICY
-    };
-
-    // Expand ~ to actual home directory in policy (OpenShell requires absolute paths).
-    let home_dir_str = dirs::home_dir()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "~".to_string());
-    let policy_content = policy_template.replace("~/", &format!("{home_dir_str}/"));
-
     let files: &[(&str, &str)] = &[
         ("IDENTITY.md", DEFAULT_IDENTITY),
         ("SOUL.md", DEFAULT_SOUL),
@@ -68,11 +53,6 @@ pub fn init_rightclaw_home(
         std::fs::write(&path, content)
             .map_err(|e| miette::miette!("Failed to write {}: {}", path.display(), e))?;
     }
-
-    // Write policy separately (it has expanded paths).
-    let policy_path = agents_dir.join("policy.yaml");
-    std::fs::write(&policy_path, &policy_content)
-        .map_err(|e| miette::miette!("Failed to write {}: {}", policy_path.display(), e))?;
 
     // Install built-in skills into .claude/skills/ (standard Agent Skills path).
     // Claude Code discovers skills from .claude/skills/ relative to cwd.
@@ -176,7 +156,6 @@ pub fn init_rightclaw_home(
     println!("  agents/right/SOUL.md");
     println!("  agents/right/AGENTS.md");
     println!("  agents/right/BOOTSTRAP.md");
-    println!("  agents/right/policy.yaml");
     println!("  agents/right/agent.yaml");
     println!("  agents/right/.claude/skills/clawhub/SKILL.md  (skills.sh manager)");
     println!("  agents/right/.claude/skills/rightcron/SKILL.md");
@@ -331,7 +310,7 @@ mod tests {
         assert!(agents_dir.join("IDENTITY.md").exists());
         assert!(agents_dir.join("SOUL.md").exists());
         assert!(agents_dir.join("AGENTS.md").exists());
-        assert!(agents_dir.join("policy.yaml").exists());
+        assert!(!agents_dir.join("policy.yaml").exists(), "policy.yaml should NOT be created");
         assert!(
             agents_dir.join("BOOTSTRAP.md").exists(),
             "BOOTSTRAP.md should always be created"
@@ -374,45 +353,6 @@ mod tests {
         assert!(
             err.contains("already initialized"),
             "expected 'already initialized' in: {err}"
-        );
-    }
-
-    #[test]
-    fn init_without_telegram_uses_base_policy() {
-        let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), None, None, None).unwrap();
-
-        let policy = std::fs::read_to_string(
-            dir.path().join("agents/right/policy.yaml"),
-        )
-        .unwrap();
-        // Base policy has telegram commented out
-        assert!(
-            policy.contains("# telegram_api:"),
-            "base policy should have telegram_api commented out"
-        );
-    }
-
-    #[test]
-    fn init_with_telegram_uses_telegram_policy() {
-        let dir = tempdir().unwrap();
-        let env_dir = tempdir().unwrap();
-        init_rightclaw_home(
-            dir.path(),
-            Some("123456:ABCdef"),
-            None,
-            Some(env_dir.path()),
-        )
-        .unwrap();
-
-        let policy = std::fs::read_to_string(
-            dir.path().join("agents/right/policy.yaml"),
-        )
-        .unwrap();
-        // Telegram policy has telegram_api uncommented
-        assert!(
-            policy.contains("telegram_api:") && !policy.contains("# telegram_api:"),
-            "telegram policy should have telegram_api uncommented"
         );
     }
 

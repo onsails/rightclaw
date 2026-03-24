@@ -99,27 +99,24 @@ fn discover_finds_valid_agent() {
     let agent_dir = dir.path().join("test-agent");
     fs::create_dir(&agent_dir).unwrap();
     fs::write(agent_dir.join("IDENTITY.md"), "# Test Agent").unwrap();
-    fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
 
     let agents = discover_agents(dir.path()).unwrap();
     assert_eq!(agents.len(), 1);
     assert_eq!(agents[0].name, "test-agent");
     assert!(agents[0].identity_path.ends_with("IDENTITY.md"));
-    assert!(agents[0].policy_path.ends_with("policy.yaml"));
 }
 
 #[test]
-fn discover_errors_on_identity_without_policy() {
+fn discover_accepts_agent_without_policy() {
     let dir = tempdir().unwrap();
-    let agent_dir = dir.path().join("broken");
+    let agent_dir = dir.path().join("no-policy");
     fs::create_dir(&agent_dir).unwrap();
-    fs::write(agent_dir.join("IDENTITY.md"), "# Broken").unwrap();
-    // No policy.yaml
+    fs::write(agent_dir.join("IDENTITY.md"), "# No Policy").unwrap();
+    // No policy.yaml -- should still be discovered
 
-    let result = discover_agents(dir.path());
-    assert!(result.is_err(), "expected error for missing policy.yaml");
-    let err = format!("{:?}", result.unwrap_err());
-    assert!(err.contains("policy.yaml"), "expected policy.yaml in: {err}");
+    let agents = discover_agents(dir.path()).unwrap();
+    assert_eq!(agents.len(), 1);
+    assert_eq!(agents[0].name, "no-policy");
 }
 
 #[test]
@@ -136,7 +133,7 @@ fn discover_skips_directories_without_identity() {
     let dir = tempdir().unwrap();
     let agent_dir = dir.path().join("no-identity");
     fs::create_dir(&agent_dir).unwrap();
-    fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
+
     // No IDENTITY.md
 
     let agents = discover_agents(dir.path()).unwrap();
@@ -149,7 +146,7 @@ fn discover_parses_agent_yaml_when_present() {
     let agent_dir = dir.path().join("configured");
     fs::create_dir(&agent_dir).unwrap();
     fs::write(agent_dir.join("IDENTITY.md"), "# Config Test").unwrap();
-    fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
+
     fs::write(
         agent_dir.join("agent.yaml"),
         "restart: always\nmax_restarts: 7\n",
@@ -169,7 +166,7 @@ fn discover_detects_mcp_json() {
     let agent_dir = dir.path().join("mcp-agent");
     fs::create_dir(&agent_dir).unwrap();
     fs::write(agent_dir.join("IDENTITY.md"), "# MCP").unwrap();
-    fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
+
     fs::write(agent_dir.join(".mcp.json"), "{}").unwrap();
 
     let agents = discover_agents(dir.path()).unwrap();
@@ -183,7 +180,7 @@ fn discover_detects_optional_files() {
     let agent_dir = dir.path().join("full-agent");
     fs::create_dir(&agent_dir).unwrap();
     fs::write(agent_dir.join("IDENTITY.md"), "# Full").unwrap();
-    fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
+
     fs::write(agent_dir.join("SOUL.md"), "soul").unwrap();
     fs::write(agent_dir.join("USER.md"), "user").unwrap();
     fs::write(agent_dir.join("MEMORY.md"), "memory").unwrap();
@@ -210,7 +207,7 @@ fn discover_rejects_invalid_agent_name() {
     let agent_dir = dir.path().join("bad.name");
     fs::create_dir(&agent_dir).unwrap();
     fs::write(agent_dir.join("IDENTITY.md"), "# Bad").unwrap();
-    fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
+
 
     let result = discover_agents(dir.path());
     assert!(result.is_err());
@@ -223,7 +220,7 @@ fn discover_sorts_agents_by_name() {
         let agent_dir = dir.path().join(name);
         fs::create_dir(&agent_dir).unwrap();
         fs::write(agent_dir.join("IDENTITY.md"), "# Agent").unwrap();
-        fs::write(agent_dir.join("policy.yaml"), "version: 1").unwrap();
+    
     }
 
     let agents = discover_agents(dir.path()).unwrap();

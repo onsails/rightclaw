@@ -6,7 +6,6 @@ fn make_agent_at(path: std::path::PathBuf) -> AgentDef {
         name: "testbot".to_owned(),
         path: path.clone(),
         identity_path: path.join("IDENTITY.md"),
-        policy_path: path.join("policy.yaml"),
         config: Some(AgentConfig {
             restart: RestartPolicy::OnFailure,
             max_restarts: 3,
