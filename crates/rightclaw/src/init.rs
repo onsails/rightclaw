@@ -156,10 +156,25 @@ pub fn init_rightclaw_home(
         }
     }
 
-    // Pre-trust the agent directory in Claude Code's config so the
-    // workspace trust dialog doesn't block non-interactive launches.
+    // Pre-trust the agent directory in the agent-local .claude.json (D-06).
+    // Under HOME override, CC reads $AGENT_DIR/.claude.json, not host ~/.claude.json.
     // See: https://github.com/anthropics/claude-code/issues/28506
-    pre_trust_directory(&agents_dir)?;
+    let trust_agent = crate::agent::AgentDef {
+        name: "right".to_owned(),
+        path: agents_dir.clone(),
+        identity_path: agents_dir.join("IDENTITY.md"),
+        policy_path: agents_dir.join("policy.yaml"),
+        config: None,
+        mcp_config_path: None,
+        soul_path: None,
+        user_path: None,
+        memory_path: None,
+        agents_path: None,
+        tools_path: None,
+        bootstrap_path: None,
+        heartbeat_path: None,
+    };
+    crate::codegen::generate_agent_claude_json(&trust_agent)?;
 
     println!("Created RightClaw home at {}", home.display());
     println!("  agents/right/IDENTITY.md");
@@ -174,92 +189,6 @@ pub fn init_rightclaw_home(
         println!("  Telegram bot token saved");
         println!("  agents/right/.claude/settings.json (Telegram plugin enabled)");
     }
-
-    Ok(())
-}
-
-/// Pre-trust a directory in Claude Code's `~/.claude.json` config.
-///
-/// Sets `hasTrustDialogAccepted: true` for the given directory so Claude Code
-/// doesn't show the "Quick safety check" workspace trust dialog on launch.
-/// This is necessary because `--dangerously-skip-permissions` does NOT bypass
-/// the trust dialog (see: github.com/anthropics/claude-code/issues/28506).
-fn pre_trust_directory(agent_dir: &Path) -> miette::Result<()> {
-    let home_dir = dirs::home_dir()
-        .ok_or_else(|| miette::miette!("cannot determine home directory"))?;
-    let claude_json_path = home_dir.join(".claude.json");
-
-    let mut config: serde_json::Value = if claude_json_path.exists() {
-        let content = std::fs::read_to_string(&claude_json_path)
-            .map_err(|e| miette::miette!("failed to read {}: {}", claude_json_path.display(), e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| miette::miette!("failed to parse {}: {}", claude_json_path.display(), e))?
-    } else {
-        serde_json::json!({})
-    };
-
-    let abs_path = std::fs::canonicalize(agent_dir)
-        .unwrap_or_else(|_| agent_dir.to_path_buf());
-    let path_key = abs_path.display().to_string();
-
-    let projects = config
-        .as_object_mut()
-        .ok_or_else(|| miette::miette!("~/.claude.json is not a JSON object"))?
-        .entry("projects")
-        .or_insert_with(|| serde_json::json!({}));
-
-    let project = projects
-        .as_object_mut()
-        .ok_or_else(|| miette::miette!("projects is not a JSON object"))?
-        .entry(&path_key)
-        .or_insert_with(|| serde_json::json!({}));
-
-    let project_obj = project
-        .as_object_mut()
-        .ok_or_else(|| miette::miette!("project entry is not a JSON object"))?;
-    project_obj.insert(
-        "hasTrustDialogAccepted".to_owned(),
-        serde_json::Value::Bool(true),
-    );
-    std::fs::write(
-        &claude_json_path,
-        serde_json::to_string_pretty(&config)
-            .map_err(|e| miette::miette!("failed to serialize config: {e}"))?,
-    )
-    .map_err(|e| miette::miette!("failed to write {}: {}", claude_json_path.display(), e))?;
-
-    // Also write skipDangerousModePermissionPrompt to ~/.claude/settings.json
-    // (user-level settings — separate file from .claude.json).
-    let user_settings_dir = home_dir.join(".claude");
-    std::fs::create_dir_all(&user_settings_dir).map_err(|e| {
-        miette::miette!("failed to create {}: {}", user_settings_dir.display(), e)
-    })?;
-    let user_settings_path = user_settings_dir.join("settings.json");
-
-    let mut user_settings: serde_json::Value = if user_settings_path.exists() {
-        let content = std::fs::read_to_string(&user_settings_path).map_err(|e| {
-            miette::miette!("failed to read {}: {}", user_settings_path.display(), e)
-        })?;
-        serde_json::from_str(&content).map_err(|e| {
-            miette::miette!("failed to parse {}: {}", user_settings_path.display(), e)
-        })?
-    } else {
-        serde_json::json!({})
-    };
-
-    if let Some(obj) = user_settings.as_object_mut() {
-        obj.insert(
-            "skipDangerousModePermissionPrompt".to_owned(),
-            serde_json::Value::Bool(true),
-        );
-    }
-
-    std::fs::write(
-        &user_settings_path,
-        serde_json::to_string_pretty(&user_settings)
-            .map_err(|e| miette::miette!("failed to serialize settings: {e}"))?,
-    )
-    .map_err(|e| miette::miette!("failed to write {}: {}", user_settings_path.display(), e))?;
 
     Ok(())
 }

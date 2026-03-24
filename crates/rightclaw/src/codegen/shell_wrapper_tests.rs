@@ -152,3 +152,108 @@ fn wrapper_has_exactly_one_append_system_prompt_file() {
         "expected exactly 1 --append-system-prompt-file, got {count}:\n{output}"
     );
 }
+
+// Phase 8: HOME override and env var forwarding tests
+
+#[test]
+fn wrapper_contains_home_override() {
+    let agent = make_agent("testbot", Some("Do the thing"));
+    let output = generate_wrapper(&agent, true, DUMMY_PROMPT_PATH, None).unwrap();
+
+    assert!(
+        output.contains("export HOME=\"/home/user/.rightclaw/agents/testbot\""),
+        "expected HOME override in:\n{output}"
+    );
+}
+
+#[test]
+fn wrapper_contains_git_env_forwarding() {
+    let agent = make_agent("testbot", Some("Do the thing"));
+    let output = generate_wrapper(&agent, true, DUMMY_PROMPT_PATH, None).unwrap();
+
+    let expected = [
+        "export GIT_CONFIG_GLOBAL=\"${GIT_CONFIG_GLOBAL:-}\"",
+        "export GIT_AUTHOR_NAME=\"${GIT_AUTHOR_NAME:-}\"",
+        "export GIT_AUTHOR_EMAIL=\"${GIT_AUTHOR_EMAIL:-}\"",
+        "export SSH_AUTH_SOCK=\"${SSH_AUTH_SOCK:-}\"",
+        "export GIT_SSH_COMMAND=\"${GIT_SSH_COMMAND:-}\"",
+    ];
+    for line in &expected {
+        assert!(output.contains(line), "expected '{line}' in:\n{output}");
+    }
+}
+
+#[test]
+fn wrapper_contains_anthropic_key_forwarding() {
+    let agent = make_agent("testbot", Some("Do the thing"));
+    let output = generate_wrapper(&agent, true, DUMMY_PROMPT_PATH, None).unwrap();
+
+    assert!(
+        output.contains("export ANTHROPIC_API_KEY=\"${ANTHROPIC_API_KEY:-}\""),
+        "expected ANTHROPIC_API_KEY forwarding in:\n{output}"
+    );
+}
+
+#[test]
+fn wrapper_home_override_after_env_capture() {
+    let agent = make_agent("testbot", Some("Do the thing"));
+    let output = generate_wrapper(&agent, true, DUMMY_PROMPT_PATH, None).unwrap();
+
+    let home_idx = output
+        .lines()
+        .position(|l| l.contains("export HOME="))
+        .expect("HOME export line not found");
+
+    let env_vars = [
+        "GIT_CONFIG_GLOBAL",
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "SSH_AUTH_SOCK",
+        "GIT_SSH_COMMAND",
+        "ANTHROPIC_API_KEY",
+    ];
+    for var in &env_vars {
+        let var_idx = output
+            .lines()
+            .position(|l| l.contains(&format!("export {var}=")))
+            .unwrap_or_else(|| panic!("{var} export line not found"));
+        assert!(
+            home_idx > var_idx,
+            "HOME export (line {home_idx}) must come AFTER {var} export (line {var_idx})"
+        );
+    }
+}
+
+#[test]
+fn wrapper_home_override_before_exec() {
+    let agent = make_agent("testbot", Some("Do the thing"));
+    let output = generate_wrapper(&agent, true, DUMMY_PROMPT_PATH, None).unwrap();
+
+    let home_idx = output
+        .lines()
+        .position(|l| l.contains("export HOME="))
+        .expect("HOME export line not found");
+
+    let exec_idx = output
+        .lines()
+        .position(|l| l.contains("exec "))
+        .expect("exec line not found");
+
+    assert!(
+        home_idx < exec_idx,
+        "HOME export (line {home_idx}) must come BEFORE exec (line {exec_idx})"
+    );
+}
+
+#[test]
+fn wrapper_retains_dangerously_skip_permissions() {
+    let agent = make_agent("testbot", Some("Do the thing"));
+    // Test both sandbox and no-sandbox modes.
+    for no_sandbox in [false, true] {
+        let output = generate_wrapper(&agent, no_sandbox, DUMMY_PROMPT_PATH, None).unwrap();
+        assert!(
+            output.contains("--dangerously-skip-permissions"),
+            "expected --dangerously-skip-permissions (no_sandbox={no_sandbox}) in:\n{output}"
+        );
+    }
+}
