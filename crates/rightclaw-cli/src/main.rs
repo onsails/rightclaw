@@ -18,6 +18,13 @@ pub struct Cli {
     pub command: Commands,
 }
 
+/// Subcommands for `rightclaw config`.
+#[derive(Subcommand)]
+pub enum ConfigCommands {
+    /// Enable machine-wide domain blocking via managed settings (requires sudo)
+    StrictSandbox,
+}
+
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize RightClaw home directory with default agent
@@ -64,6 +71,11 @@ pub enum Commands {
         /// Agent name (defaults to "right")
         agent: Option<String>,
     },
+    /// Manage RightClaw configuration
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
 }
 
 #[tokio::main]
@@ -105,6 +117,9 @@ async fn main() -> miette::Result<()> {
         Commands::Restart { agent } => cmd_restart(&home, &agent).await,
         Commands::Attach => cmd_attach(&home),
         Commands::Pair { agent } => cmd_pair(&home, agent.as_deref()),
+        Commands::Config { command } => match command {
+            ConfigCommands::StrictSandbox => cmd_config_strict_sandbox(),
+        },
     }
 }
 
@@ -527,9 +542,69 @@ fn cmd_attach(_home: &Path) -> miette::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::{write_managed_settings, ConfigCommands};
     use std::fs;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    // ---- config strict-sandbox tests ----
+
+    #[test]
+    fn config_commands_strict_sandbox_variant_exists() {
+        // Compile-time check: ConfigCommands::StrictSandbox must exist.
+        // If it doesn't compile, the test fails.
+        let _cmd = ConfigCommands::StrictSandbox;
+    }
+
+    #[test]
+    fn write_managed_settings_writes_correct_json_to_writable_dir() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("etc").join("claude-code");
+        let path = dir.join("managed-settings.json");
+
+        write_managed_settings(
+            dir.to_str().unwrap(),
+            path.to_str().unwrap(),
+        )
+        .expect("should succeed in writable temp dir");
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("\"allowManagedDomainsOnly\": true"),
+            "file must contain allowManagedDomainsOnly:true, got: {content}"
+        );
+    }
+
+    #[test]
+    fn write_managed_settings_returns_error_with_sudo_hint_on_nonexistent_path() {
+        // /nonexistent cannot be created without root.
+        let result = write_managed_settings(
+            "/nonexistent-rightclaw-test-dir",
+            "/nonexistent-rightclaw-test-dir/managed-settings.json",
+        );
+        let err = result.expect_err("should fail on unwritable path");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("sudo"),
+            "error must mention sudo, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn write_managed_settings_is_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("etc").join("claude-code");
+        let path = dir.join("managed-settings.json");
+
+        write_managed_settings(dir.to_str().unwrap(), path.to_str().unwrap())
+            .expect("first call should succeed");
+
+        write_managed_settings(dir.to_str().unwrap(), path.to_str().unwrap())
+            .expect("second call should also succeed (idempotent)");
+
+        let content = fs::read_to_string(&path).unwrap();
+        assert!(content.contains("\"allowManagedDomainsOnly\": true"));
+    }
 
     /// Creates a minimal agent directory with IDENTITY.md so discover_agents accepts it.
     fn make_agent_dir(base: &TempDir, name: &str) -> PathBuf {
@@ -680,6 +755,32 @@ mod tests {
         let clawhub_skill = skills_dir.join("clawhub").join("SKILL.md");
         assert!(clawhub_skill.exists(), "clawhub/SKILL.md should be installed");
     }
+}
+
+const MANAGED_SETTINGS_DIR: &str = "/etc/claude-code";
+const MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
+
+/// Write managed-settings.json to the given dir/path (extracted for testability).
+fn write_managed_settings(dir: &str, path: &str) -> miette::Result<()> {
+    std::fs::create_dir_all(dir).map_err(|e| {
+        miette::miette!(
+            help = "Run with elevated privileges: sudo rightclaw config strict-sandbox",
+            "Permission denied creating {dir}: {e:#}"
+        )
+    })?;
+    std::fs::write(path, "{\"allowManagedDomainsOnly\": true}\n").map_err(|e| {
+        miette::miette!(
+            help = "Run with elevated privileges: sudo rightclaw config strict-sandbox",
+            "Permission denied writing {path}: {e:#}"
+        )
+    })?;
+    Ok(())
+}
+
+fn cmd_config_strict_sandbox() -> miette::Result<()> {
+    write_managed_settings(MANAGED_SETTINGS_DIR, MANAGED_SETTINGS_PATH)?;
+    println!("Wrote {MANAGED_SETTINGS_PATH} — machine-wide domain blocking enabled.");
+    Ok(())
 }
 
 fn cmd_pair(home: &Path, agent_name: Option<&str>) -> miette::Result<()> {
