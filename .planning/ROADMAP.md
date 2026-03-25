@@ -91,4 +91,4 @@ Phases execute in numeric order: 8 -> 9 -> 10
 | 7. Platform Compatibility | v2.0 | 2/2 | Complete | 2026-03-24 |
 | 8. HOME Isolation & Permission Model | v2.1 | 0/2 | Planned    |  |
 | 9. Agent Environment Setup | v2.1 | 1/2 | In Progress|  |
-| 10. Doctor & Managed Settings | v2.1 | 1/1 | Complete   | 2026-03-25 |
+| 10. Doctor & Managed Settings | v2.1 | 1/1 | Complete    | 2026-03-25 |
