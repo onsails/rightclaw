@@ -12,3 +12,11 @@ max_restarts: 5
 
 # Seconds to wait between restarts
 backoff_seconds: 10
+
+# Per-agent environment variables injected before exec claude.
+# Values are single-quoted literals — no shell expansion, no host variable forwarding.
+# WARNING: values are stored in plaintext in agent.yaml. Do not store secrets here.
+# Use telegram_token_file pattern (file reference) for sensitive values.
+# env:
+#   MY_VAR: "literal value"
+#   ANOTHER_VAR: "also literal"
