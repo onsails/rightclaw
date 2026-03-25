@@ -15,6 +15,7 @@ fn make_agent(name: &str, start_prompt: Option<&str>) -> AgentDef {
         telegram_token_file: None,
         telegram_token: None,
         telegram_user_id: None,
+        env: HashMap::new(),
     });
     AgentDef {
         name: name.to_owned(),
