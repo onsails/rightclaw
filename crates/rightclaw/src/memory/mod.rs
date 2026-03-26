@@ -9,7 +9,12 @@ pub use error::MemoryError;
 /// - Enables WAL journal mode and sets busy_timeout=5000ms.
 /// - Applies all pending schema migrations via rusqlite_migration.
 pub fn open_db(agent_path: &std::path::Path) -> Result<(), MemoryError> {
-    todo!("implement open_db")
+    let db_path = agent_path.join("memory.db");
+    let mut conn = rusqlite::Connection::open(&db_path)?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "busy_timeout", 5000)?;
+    migrations::MIGRATIONS.to_latest(&mut conn)?;
+    Ok(())
 }
 
 #[cfg(test)]
