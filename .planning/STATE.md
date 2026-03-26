@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Skills Registry
-status: Milestone complete
-stopped_at: Phase 14 context gathered
-last_updated: "2026-03-26T11:14:45.316Z"
+status: Phase complete — ready for verification
+stopped_at: Completed 14-01-PLAN.md
+last_updated: "2026-03-26T11:31:50.248Z"
 progress:
   total_phases: 4
-  completed_phases: 3
-  total_plans: 4
-  completed_plans: 4
+  completed_phases: 4
+  total_plans: 5
+  completed_plans: 5
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-25)
 
 **Core value:** Run multiple autonomous Claude Code agents safely -- each sandboxed by native OS-level isolation, orchestrated by a single CLI command.
-**Current focus:** Phase 13 — policy-gate-rework
+**Current focus:** Phase 14 — rightskills-rename
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
+Phase: 14 (rightskills-rename) — EXECUTING
+Plan: 1 of 1
 
 ## Performance Metrics
 
@@ -52,6 +52,7 @@ Plan: Not started
 | Phase 11 P01 | 10min | 2 tasks | 9 files |
 | Phase 12 P01 | 188 | 2 tasks | 4 files |
 | Phase 13 P01 | 2 | 2 tasks | 1 files |
+| Phase 14-rightskills-rename P01 | 2 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,7 @@ Recent decisions affecting current work:
 - [Phase 12]: Stale clawhub cleanup uses let _ = pattern — only acceptable error-ignoring in codebase (best-effort stale dir removal)
 - [Phase 13]: Replaced Step 3 in full — prose compatibility gate reads sandbox.network.allowedDomains and sandbox.filesystem.allowWrite; BLOCK on network/filesystem only, WARN on bins/env
 - [Phase 13]: skill-doctor unions installed.json + disk scan for complete skill coverage, labels untracked as manual
+- [Phase 14-rightskills-rename]: SKILL_SKILLS -> SKILL_RIGHTSKILLS; install path tuple: skills/SKILL.md -> rightskills/SKILL.md; no stale cleanup (D-10)
 
 ### Pending Todos
 
@@ -85,6 +87,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T11:14:45.313Z
-Stopped at: Phase 14 context gathered
-Resume file: .planning/phases/14-rightskills-rename/14-CONTEXT.md
+Last session: 2026-03-26T11:31:50.245Z
+Stopped at: Completed 14-01-PLAN.md
+Resume file: None
