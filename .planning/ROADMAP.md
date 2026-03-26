@@ -42,7 +42,7 @@ See [milestones/v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
 
 **Milestone Goal:** Give each agent a per-agent SQLite-backed memory store — persistent across restarts, queryable via a built-in skill, and inspectable from the CLI.
 
-- [ ] **Phase 16: DB Foundation** - Per-agent SQLite module with append-only schema, WAL mode, migrations, security invariants, and doctor check
+- [x] **Phase 16: DB Foundation** - Per-agent SQLite module with append-only schema, WAL mode, migrations, security invariants, and doctor check (completed 2026-03-26)
 - [ ] **Phase 17: Memory Skill** - `rightmemory` built-in skill with /remember /recall /search /forget and injection scanning
 - [ ] **Phase 18: CLI Inspection** - `rightclaw memory` subcommand with list, search, delete, stats
 
@@ -63,7 +63,7 @@ See [milestones/v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
 Plans:
 - [x] 16-01-PLAN.md — memory module: rusqlite deps, error type, V1 SQL schema, open_db(), 9 unit tests
 - [x] 16-02-PLAN.md — dead code removal: memory_path from AgentDef, MEMORY.md scan, stale default start_prompt
-- [ ] 16-03-PLAN.md — integration: open_db wired into cmd_up step 10, sqlite3 Warn check in doctor
+- [x] 16-03-PLAN.md — integration: open_db wired into cmd_up step 10, sqlite3 Warn check in doctor
 
 ### Phase 17: Memory Skill
 **Goal**: Agents can store, retrieve, search, and forget memories via built-in slash commands
@@ -94,6 +94,6 @@ Phases execute in numeric order: 16 → 17 → 18
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 16. DB Foundation | v2.3 | 2/3 | In Progress|  |
+| 16. DB Foundation | v2.3 | 3/3 | Complete   | 2026-03-26 |
 | 17. Memory Skill | v2.3 | 0/? | Not started | - |
 | 18. CLI Inspection | v2.3 | 0/? | Not started | - |
