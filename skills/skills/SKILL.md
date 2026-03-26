@@ -248,6 +248,74 @@ npx skills update -a claude
 
 If `npx` is unavailable, suggest the user re-install the skill: `npx skills add <slug> -a claude --copy -y`
 
+### skill-doctor
+
+Audit all installed skills against this agent's current sandbox configuration. Reports whether each skill's requirements are satisfied.
+
+**Step 1: Discover installed skills**
+
+Union two sources to build the complete skill list:
+
+```bash
+# Source 1: tracked skills
+cat .claude/skills/installed.json
+
+# Source 2: scan disk for any SKILL.md not in installed.json
+ls .claude/skills/
+```
+
+Skills found on disk but absent from `installed.json` are labeled `manual` (matching the `list` command convention).
+
+**Step 2: Read sandbox configuration**
+
+```bash
+cat .claude/settings.json
+```
+
+Extract `sandbox.network.allowedDomains` and `sandbox.filesystem.allowWrite` from the output.
+
+**Step 3: Check each skill**
+
+For each skill (from both sources):
+
+```bash
+# Read the skill's compatibility field
+head -20 .claude/skills/<name>/SKILL.md
+```
+
+If the skill has no `compatibility` field: mark all checks as `—` (no requirements) and status as `PASS`.
+
+If a `compatibility` field is present: interpret it to identify bins, env vars, network domains, and filesystem requirements (same logic as the install gate in Step 3 of `install`).
+
+```bash
+# Check each required binary
+which <bin>
+
+# Check each required env var
+printenv <VAR>
+```
+
+Compare required network domains against `allowedDomains` and required filesystem write paths against `allowWrite`.
+
+**Step 4: Report results**
+
+Present a single table covering all skills:
+
+| Skill | Source | Bins | Env Vars | Network | Status |
+|-------|--------|------|----------|---------|--------|
+| rightcron | skills.sh | — | — | — | PASS |
+| my-skill | skills.sh | git ✓ | API_KEY ✗ | api.example.com ✗ | WARN |
+| custom-tool | manual | docker ✓ | — | api.custom.com ✗ | BLOCK |
+
+Status rules:
+- **PASS**: all checks pass (or no requirements)
+- **WARN**: one or more required binaries missing from PATH or env vars unset — but no sandbox violations
+- **BLOCK**: one or more required network domains absent from `allowedDomains`, or required write path absent from `allowWrite`
+
+After the table, summarize any actionable items:
+- For each BLOCK: name the missing domain or write path and remind the user to update `agent.yaml` sandbox overrides and run `rightclaw up`.
+- For each WARN: name the missing binary or env var and suggest installing/setting it.
+
 ## Error Handling
 
 - **npx not available:** Inform the user to install Node.js (v18+). Suggest manual git clone as fallback.
