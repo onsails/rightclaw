@@ -37,8 +37,8 @@ Built RightClaw from scratch — a multi-agent runtime for Claude Code with Open
 | OpenShell base image | Has Claude Code installed, not OpenClaw |
 | OpenShell OAuth | Sandbox containers can't access host OAuth tokens |
 | Skills path | Must be `.claude/skills/` not `skills/` |
-| `is_tty: true` needed | Without it CC enters print mode under PC |
-| PC restart crashes | REST API restart kills PC with is_tty processes |
+| `is_interactive: true` needed | Without it CC enters print mode under PC (renamed from `is_tty`) |
+| PC restart crashes | REST API restart kills PC with is_interactive processes — status unverified after field rename |
 | PC detached mode | `--detached-with-tui` fails, use `--detached` |
 | PC Unix socket | `--use-uds` crashes TUI, use TCP `--port` |
 | SessionStart prompt hooks | Don't work (ToolUseContext bug) |
@@ -123,7 +123,7 @@ rightclaw doctor → validates deps + agent structure
 
 2. **OpenShell is alpha and container-only.** No host file access means OAuth doesn't work. The provider system only supports API keys. This limits the target audience.
 
-3. **process-compose has quirks.** `is_tty` fakes enough for CC but breaks restart. Unix socket mode crashes TUI. Detached-with-TUI needs /dev/tty. TCP mode works.
+3. **process-compose has quirks.** `is_interactive` (renamed from `is_tty`) fakes enough for CC to stay interactive; restart status unverified after field rename. Unix socket mode crashes TUI. Detached-with-TUI needs /dev/tty. TCP mode works.
 
 4. **The agentskills.io ecosystem is mature.** 500k+ skills, multiple registries, standard format. RightClaw should lean into this rather than build its own.
 
