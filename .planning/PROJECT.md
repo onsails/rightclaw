@@ -140,7 +140,7 @@ This document evolves at phase transitions and milestone boundaries.
 
 **Known limitations:**
 - SEED-002: BOOTSTRAP.md onboarding doesn't trigger via Telegram
-- `rightclaw restart` disabled (process-compose is_tty bug)
+- `rightclaw restart` status unknown — changed `is_tty` to `is_interactive` (correct field name); restart may now work
 - `test_status_no_running_instance` integration test fails (pre-existing)
 - Tech debt: git absence warning in `verify_dependencies()` (called by `rightclaw up`) but not surfaced by `rightclaw doctor`
 
