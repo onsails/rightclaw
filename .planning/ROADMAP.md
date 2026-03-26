@@ -32,7 +32,7 @@
 - [x] **Phase 11: Env Var Injection** - Per-agent env vars declared in agent.yaml, shell-quoted and injected before `exec claude` (completed 2026-03-25)
 - [x] **Phase 12: Skills Registry Rename** - `/clawhub` replaced by `/skills` (skills.sh primary, ClawHub removed completely), stale dirs cleaned (completed 2026-03-26)
 - [x] **Phase 13: Policy Gate Rework** - `/skills` SKILL.md policy gate rewritten for CC-native sandbox; drops all OpenShell/policy.yaml references (completed 2026-03-26)
-- [ ] **Phase 14: rightskills Rename** - Rename `/skills` skill to `/rightskills` — directory, Rust constant, SKILL.md name field, stale dir cleanup for existing agent dirs
+- [x] **Phase 14: rightskills Rename** - Rename `/skills` skill to `/rightskills` — directory, Rust constant, SKILL.md name field, stale dir cleanup for existing agent dirs (completed 2026-03-26)
 
 ## Phase Details
 
@@ -84,9 +84,9 @@ Plans:
   2. SKILL.md frontmatter `name: rightskills`; heading `# /rightskills -- Agent Skills Manager (skills.sh)`
   3. Rust constant is `SKILL_RIGHTSKILLS`, `include_str!` and install path tuple both reference `skills/rightskills/SKILL.md`
   4. All test assertions updated; `cargo build --workspace` and `cargo test --workspace` both pass
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 Plans:
-- [ ] 14-01-PLAN.md — rename directory, update SKILL.md, update Rust constant/paths/tests (RS-01 through RS-04)
+- [x] 14-01-PLAN.md — rename directory, update SKILL.md, update Rust constant/paths/tests (RS-01 through RS-04)
 
 ## Progress
 
@@ -97,4 +97,4 @@ Plans:
 | 11. Env Var Injection | v2.2 | 2/2 | Complete    | 2026-03-25 |
 | 12. Skills Registry Rename | v2.2 | 1/1 | Complete    | 2026-03-26 |
 | 13. Policy Gate Rework | v2.2 | 1/1 | Complete    | 2026-03-26 |
-| 14. rightskills Rename | v2.2 | 0/1 | Pending     | |
+| 14. rightskills Rename | v2.2 | 1/1 | Complete   | 2026-03-26 |
