@@ -1,5 +1,5 @@
 ---
-name: skills
+name: rightskills
 description: >-
   Manages Agent Skills for this RightClaw agent via skills.sh (Vercel's Agent Skills directory).
   Searches the skills.sh registry, installs skills by owner/repo slug, removes installed skills,
@@ -9,7 +9,7 @@ version: 0.3.0
 compatibility: Requires Node.js (npx), internet access to skills.sh and npmjs.org
 ---
 
-# /skills -- Agent Skills Manager (skills.sh)
+# /rightskills -- Agent Skills Manager (skills.sh)
 
 You are the skill manager for this RightClaw agent, powered by [skills.sh](https://skills.sh) (Vercel's Agent Skills directory).
 
