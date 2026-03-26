@@ -391,6 +391,8 @@ async fn cmd_up(
         // Always overwrites built-in skill dirs; user skill dirs untouched (D-10).
         // Remove stale clawhub dir from agents upgraded from pre-v2.2 (SKILLS-05, D-01, D-02).
         let _ = std::fs::remove_dir_all(agent.path.join(".claude/skills/clawhub"));
+        // Remove stale skills/ dir from agents upgraded from Phase 12 intermediate state (CLEANUP-02).
+        let _ = std::fs::remove_dir_all(agent.path.join(".claude/skills/skills"));
         rightclaw::codegen::install_builtin_skills(&agent.path)?;
 
         // 9. Write settings.local.json only if absent (Phase 9, AENV-03).
@@ -781,6 +783,33 @@ mod tests {
         let agent_dir = make_agent_dir(&tmp, "agent-no-stale");
         // No clawhub dir — cleanup should not error
         let result = std::fs::remove_dir_all(agent_dir.join(".claude/skills/clawhub"));
+        // Either Ok or NotFound error — never panics
+        assert!(result.is_ok() || result.unwrap_err().kind() == std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn cmd_up_removes_stale_skills_skill_dir() {
+        let tmp = TempDir::new().unwrap();
+        let agent_dir = make_agent_dir(&tmp, "agent-stale-skills");
+
+        // Simulate Phase 12 intermediate state: skills/ dir exists
+        let stale = agent_dir.join(".claude").join("skills").join("skills");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("SKILL.md"), "old content").unwrap();
+        assert!(stale.exists(), "stale dir should exist before cleanup");
+
+        // Run cleanup (same logic as cmd_up inserts)
+        let _ = std::fs::remove_dir_all(agent_dir.join(".claude/skills/skills"));
+
+        assert!(!stale.exists(), "stale skills dir should be removed after cleanup");
+    }
+
+    #[test]
+    fn stale_skills_cleanup_is_idempotent_when_dir_absent() {
+        let tmp = TempDir::new().unwrap();
+        let agent_dir = make_agent_dir(&tmp, "agent-no-stale-skills");
+        // No skills/ dir — cleanup should not error
+        let result = std::fs::remove_dir_all(agent_dir.join(".claude/skills/skills"));
         // Either Ok or NotFound error — never panics
         assert!(result.is_ok() || result.unwrap_err().kind() == std::io::ErrorKind::NotFound);
     }
