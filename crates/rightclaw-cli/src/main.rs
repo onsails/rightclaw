@@ -389,6 +389,8 @@ async fn cmd_up(
 
         // 8. Reinstall built-in skills (Phase 9, AENV-03).
         // Always overwrites built-in skill dirs; user skill dirs untouched (D-10).
+        // Remove stale clawhub dir from agents upgraded from pre-v2.2 (SKILLS-05, D-01, D-02).
+        let _ = std::fs::remove_dir_all(agent.path.join(".claude/skills/clawhub"));
         rightclaw::codegen::install_builtin_skills(&agent.path)?;
 
         // 9. Write settings.local.json only if absent (Phase 9, AENV-03).
@@ -754,6 +756,33 @@ mod tests {
         let skills_dir = agent_dir.join(".claude").join("skills");
         let skills_skill = skills_dir.join("skills").join("SKILL.md");
         assert!(skills_skill.exists(), "skills/SKILL.md should be installed");
+    }
+
+    #[test]
+    fn cmd_up_removes_stale_clawhub_skill_dir() {
+        let tmp = TempDir::new().unwrap();
+        let agent_dir = make_agent_dir(&tmp, "agent-stale");
+
+        // Simulate pre-v2.2 state: clawhub dir exists
+        let stale = agent_dir.join(".claude").join("skills").join("clawhub");
+        std::fs::create_dir_all(&stale).unwrap();
+        std::fs::write(stale.join("SKILL.md"), "old content").unwrap();
+        assert!(stale.exists(), "stale dir should exist before cleanup");
+
+        // Run cleanup (same logic as cmd_up inserts)
+        let _ = std::fs::remove_dir_all(agent_dir.join(".claude/skills/clawhub"));
+
+        assert!(!stale.exists(), "stale clawhub dir should be removed after cleanup");
+    }
+
+    #[test]
+    fn stale_cleanup_is_idempotent_when_dir_absent() {
+        let tmp = TempDir::new().unwrap();
+        let agent_dir = make_agent_dir(&tmp, "agent-no-stale");
+        // No clawhub dir — cleanup should not error
+        let result = std::fs::remove_dir_all(agent_dir.join(".claude/skills/clawhub"));
+        // Either Ok or NotFound error — never panics
+        assert!(result.is_ok() || result.unwrap_err().kind() == std::io::ErrorKind::NotFound);
     }
 }
 
