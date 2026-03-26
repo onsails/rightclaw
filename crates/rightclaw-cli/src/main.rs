@@ -3,6 +3,8 @@ use std::path::Path;
 
 use clap::{Parser, Subcommand};
 
+mod memory_server;
+
 #[derive(Parser)]
 #[command(name = "rightclaw", version, about = "Multi-agent runtime for Claude Code")]
 pub struct Cli {
@@ -76,6 +78,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
+    /// Run MCP memory server (stdio transport, launched by Claude Code)
+    MemoryServer,
 }
 
 #[tokio::main]
@@ -83,6 +87,12 @@ async fn main() -> miette::Result<()> {
     miette::set_hook(Box::new(|_| Box::new(miette::MietteHandlerOpts::new().build())))?;
 
     let cli = Cli::parse();
+
+    // memory-server manages its own tracing (stderr-only for MCP compatibility).
+    // Dispatch BEFORE the default tracing_subscriber init which writes to stdout.
+    if matches!(cli.command, Commands::MemoryServer) {
+        return memory_server::run_memory_server().await;
+    }
 
     let filter = if cli.verbose {
         "rightclaw=debug"
@@ -120,6 +130,8 @@ async fn main() -> miette::Result<()> {
         Commands::Config { command } => match command {
             ConfigCommands::StrictSandbox => cmd_config_strict_sandbox(),
         },
+        // Unreachable: MemoryServer is dispatched before reaching here.
+        Commands::MemoryServer => unreachable!("MemoryServer dispatched before tracing init"),
     }
 }
 
