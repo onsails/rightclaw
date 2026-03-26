@@ -44,7 +44,7 @@ See [milestones/v2.2-ROADMAP.md](milestones/v2.2-ROADMAP.md)
 
 - [x] **Phase 16: DB Foundation** - Per-agent SQLite module with append-only schema, WAL mode, migrations, security invariants, and doctor check (completed 2026-03-26)
 - [x] **Phase 17: Memory Skill** - `rightmemory` MCP stdio server with store/recall/search/forget tools and injection scanning (completed 2026-03-26)
-- [ ] **Phase 18: CLI Inspection** - `rightclaw memory` subcommand with list, search, delete, stats
+- [x] **Phase 18: CLI Inspection** - `rightclaw memory` subcommand with list, search, delete, stats (completed 2026-03-26)
 
 ## Phase Details
 
@@ -93,7 +93,7 @@ Plans:
 
 Plans:
 - [x] 18-01-PLAN.md — store layer: list_memories, search_memories_paged, hard_delete_memory, Serialize on MemoryEntry, mod.rs re-exports
-- [ ] 18-02-PLAN.md — CLI layer: MemoryCommands enum, resolve_agent_db, cmd_memory_{list,search,delete,stats} in main.rs
+- [x] 18-02-PLAN.md — CLI layer: MemoryCommands enum, resolve_agent_db, cmd_memory_{list,search,delete,stats} in main.rs
 
 ## Progress
 
@@ -104,4 +104,4 @@ Phases execute in numeric order: 16 → 17 → 18
 |-------|-----------|----------------|--------|-----------|
 | 16. DB Foundation | v2.3 | 3/3 | Complete    | 2026-03-26 |
 | 17. Memory Skill | v2.3 | 2/2 | Complete    | 2026-03-26 |
-| 18. CLI Inspection | v2.3 | 1/2 | In Progress|  |
+| 18. CLI Inspection | v2.3 | 2/2 | Complete   | 2026-03-26 |

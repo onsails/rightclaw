@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.3
 milestone_name: Memory System
-status: executing
-stopped_at: Completed 18-cli-inspection-01-PLAN.md
-last_updated: "2026-03-26T23:15:55.529Z"
+status: verifying
+stopped_at: Completed 18-cli-inspection-02-PLAN.md
+last_updated: "2026-03-26T23:21:14.822Z"
 last_activity: 2026-03-26
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 7
-  completed_plans: 6
+  completed_plans: 7
   percent: 0
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 
 Phase: 18 (cli-inspection) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-03-26
 
 Progress: [░░░░░░░░░░] 0%
@@ -49,6 +49,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 17 P01 | 4 | 2 tasks | 5 files |
 | Phase 17 P02 | 455 | 2 tasks | 8 files |
 | Phase 18-cli-inspection P01 | 4 | 2 tasks | 3 files |
+| Phase 18-cli-inspection P02 | 3 | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,8 @@ Recent decisions relevant to v2.3:
 - [Phase 18-cli-inspection]: list_memories uses ORDER BY created_at DESC, id DESC for deterministic pagination when timestamps tie
 - [Phase 18-cli-inspection]: hard_delete_memory checks existence without deleted_at filter — operators can hard-delete soft-deleted rows
 - [Phase 18-cli-inspection]: search_memories unchanged (LIMIT 50); search_memories_paged is separate function for CLI pagination
+- [Phase 18-cli-inspection]: cmd_memory_delete fetches entry preview via direct SQL including soft-deleted rows — operators see what they are hard-deleting
+- [Phase 18-cli-inspection]: resolve_agent_db centralizes agent-dir and memory.db validation for all cmd_memory_* functions
 
 ### Pending Todos
 
@@ -92,6 +95,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-26T23:15:55.526Z
-Stopped at: Completed 18-cli-inspection-01-PLAN.md
+Last session: 2026-03-26T23:21:14.819Z
+Stopped at: Completed 18-cli-inspection-02-PLAN.md
 Resume file: None
