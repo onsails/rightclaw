@@ -35,7 +35,7 @@
 
 ### Doctor
 
-- [ ] **DOCTOR-01**: `rightclaw doctor` warns (non-fatal) when `sqlite3` binary is absent from PATH
+- [x] **DOCTOR-01**: `rightclaw doctor` warns (non-fatal) when `sqlite3` binary is absent from PATH
 
 ## Future Requirements
 
@@ -67,7 +67,7 @@
 | DB-04 | Phase 16 | Complete |
 | SEC-02 | Phase 16 | Complete |
 | SEC-03 | Phase 16 | Complete |
-| DOCTOR-01 | Phase 16 | Pending |
+| DOCTOR-01 | Phase 16 | Complete |
 | SKILL-01 | Phase 17 | Pending |
 | SKILL-02 | Phase 17 | Pending |
 | SKILL-03 | Phase 17 | Pending |
