@@ -33,6 +33,11 @@
 - [x] **RS-03**: Rust constant renamed from `SKILL_SKILLS` to `SKILL_RIGHTSKILLS`; `include_str!` path and install path tuple updated to reference `skills/rightskills/SKILL.md`
 - [x] **RS-04**: All test assertions in `skills.rs` and `init.rs` that referenced `.claude/skills/skills/SKILL.md` updated to `.claude/skills/rightskills/SKILL.md`; workspace builds and all tests pass
 
+### v2.2 Cleanup
+
+- [ ] **CLEANUP-01**: `11-01-SUMMARY.md` and `13-01-SUMMARY.md` frontmatter updated to use `requirements-completed:` field (not `dependency_graph.provides`) listing their respective REQ-IDs
+- [ ] **CLEANUP-02**: `cmd_up` agent loop includes `.claude/skills/skills/` stale dir removal before `install_builtin_skills()`; unit test added parallel to existing clawhub cleanup tests
+
 ## Future Requirements (Deferred)
 
 - Secretspec / vault integration for sensitive env vars (`env:` is plaintext only) — v2.3
@@ -66,3 +71,5 @@
 | RS-02 | Phase 14 | Complete |
 | RS-03 | Phase 14 | Complete |
 | RS-04 | Phase 14 | Complete |
+| CLEANUP-01 | Phase 15 | Pending |
+| CLEANUP-02 | Phase 15 | Pending |
