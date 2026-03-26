@@ -80,6 +80,20 @@ pub fn run_doctor(home: &Path) -> Vec<DoctorCheck> {
     // Agent structure checks
     checks.extend(check_agent_structure(home));
 
+    // sqlite3 binary check — Warn (non-fatal): bundled SQLite in rightclaw binary makes
+    // sqlite3 optional. Present on all standard macOS/Linux installs. (Phase 16, DOCTOR-01).
+    {
+        let raw = check_binary("sqlite3", None);
+        checks.push(DoctorCheck {
+            status: if raw.status == CheckStatus::Pass {
+                CheckStatus::Pass
+            } else {
+                CheckStatus::Warn
+            },
+            ..raw
+        });
+    }
+
     // Managed settings conflict check — cross-platform, D-05.
     // Only emits a check if the file exists (D-08: silent skip when absent).
     if let Some(check) = check_managed_settings(MANAGED_SETTINGS_PATH) {
@@ -660,6 +674,53 @@ mod tests {
         assert!(
             fix.contains("sudo rightclaw config strict-sandbox"),
             "fix hint must include the sudo command, got: {fix}"
+        );
+    }
+
+    #[test]
+    fn run_doctor_includes_sqlite3_check() {
+        let dir = tempdir().unwrap();
+        // Need agents/ dir to avoid unrelated Fail masking the check
+        std::fs::create_dir_all(dir.path().join("agents")).unwrap();
+        let checks = run_doctor(dir.path());
+        let sqlite3_check = checks
+            .iter()
+            .find(|c| c.name == "sqlite3")
+            .expect("run_doctor must include sqlite3 check");
+        // Status is Pass or Warn (never Fail) — DOCTOR-01 requires non-fatal
+        assert!(
+            sqlite3_check.status == CheckStatus::Pass || sqlite3_check.status == CheckStatus::Warn,
+            "sqlite3 check must be Pass or Warn, got: {:?}",
+            sqlite3_check.status
+        );
+        // No fix suggestion — sqlite3 is available on all standard installs
+        assert!(
+            sqlite3_check.fix.is_none(),
+            "sqlite3 check must have no fix hint"
+        );
+    }
+
+    #[test]
+    fn sqlite3_check_is_warn_not_fail_when_absent() {
+        // Simulate missing binary by calling check_binary with a guaranteed-absent name,
+        // then verify the status override logic produces Warn.
+        let raw = check_binary("rightclaw-absolutely-nonexistent-sqlite3-xyz", None);
+        assert_eq!(
+            raw.status,
+            CheckStatus::Fail,
+            "raw check_binary returns Fail for absent binary"
+        );
+
+        // The override logic from run_doctor:
+        let overridden_status = if raw.status == CheckStatus::Pass {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Warn
+        };
+        assert_eq!(
+            overridden_status,
+            CheckStatus::Warn,
+            "absent binary must map to Warn, not Fail"
         );
     }
 }
