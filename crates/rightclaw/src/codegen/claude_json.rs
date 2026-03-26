@@ -2,10 +2,11 @@ use std::path::Path;
 
 use crate::agent::AgentDef;
 
-/// Generate a per-agent `.claude.json` file with workspace trust entries.
+/// Generate a per-agent `.claude.json` file with workspace trust and onboarding state.
 ///
 /// Creates or updates `$AGENT_DIR/.claude.json` with:
 /// - `projects[agent_abs_path].hasTrustDialogAccepted: true`
+/// - `hasCompletedOnboarding: true` (suppresses theme picker / first-run flow)
 ///
 /// Uses read-modify-write to preserve any existing fields CC has written.
 /// Pattern follows `pre_trust_directory()` in `init.rs`.
@@ -28,9 +29,17 @@ pub fn generate_agent_claude_json(agent: &AgentDef) -> miette::Result<()> {
         .display()
         .to_string();
 
-    let projects = config
+    let root = config
         .as_object_mut()
-        .ok_or_else(|| miette::miette!(".claude.json is not a JSON object"))?
+        .ok_or_else(|| miette::miette!(".claude.json is not a JSON object"))?;
+
+    // Suppress CC's first-run onboarding flow (theme picker + auth prompt).
+    // Under HOME override, CC reads this .claude.json as its user config and
+    // shows onboarding when hasCompletedOnboarding is missing.
+    root.entry("hasCompletedOnboarding")
+        .or_insert(serde_json::Value::Bool(true));
+
+    let projects = root
         .entry("projects")
         .or_insert_with(|| serde_json::json!({}));
 
@@ -164,6 +173,52 @@ mod tests {
             project["hasTrustDialogAccepted"],
             serde_json::Value::Bool(true),
             "hasTrustDialogAccepted should be true"
+        );
+    }
+
+    #[test]
+    fn test_sets_onboarding_completed() {
+        let dir = tempdir().unwrap();
+        let agent = make_test_agent(dir.path(), "testbot");
+
+        generate_agent_claude_json(&agent).unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join(".claude.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            parsed["hasCompletedOnboarding"],
+            serde_json::Value::Bool(true),
+            "hasCompletedOnboarding should be true to suppress theme picker"
+        );
+    }
+
+    #[test]
+    fn test_does_not_overwrite_existing_onboarding() {
+        let dir = tempdir().unwrap();
+        let agent = make_test_agent(dir.path(), "testbot");
+
+        // Pre-write .claude.json with hasCompletedOnboarding already set.
+        let existing = serde_json::json!({"hasCompletedOnboarding": true, "numStartups": 42});
+        std::fs::write(
+            dir.path().join(".claude.json"),
+            serde_json::to_string_pretty(&existing).unwrap(),
+        )
+        .unwrap();
+
+        generate_agent_claude_json(&agent).unwrap();
+
+        let content = std::fs::read_to_string(dir.path().join(".claude.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            parsed["hasCompletedOnboarding"],
+            serde_json::Value::Bool(true),
+            "existing hasCompletedOnboarding should be preserved"
+        );
+        assert_eq!(
+            parsed["numStartups"], 42,
+            "other fields should be preserved"
         );
     }
 
