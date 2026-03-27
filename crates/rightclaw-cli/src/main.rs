@@ -389,6 +389,11 @@ async fn cmd_up(
     let host_home = dirs::home_dir()
         .ok_or_else(|| miette::miette!("cannot determine home directory"))?;
 
+    // Resolve current executable path once — written into each agent's .mcp.json so the
+    // rightmemory MCP server can be found even when rightclaw is not on PATH (process-compose).
+    let self_exe = std::env::current_exe()
+        .map_err(|e| miette::miette!("failed to resolve current executable path: {e:#}"))?;
+
     // Generate shell wrappers for each agent.
     for agent in &agents {
         // Generate combined prompt (identity + start prompt + optional rightcron).
@@ -486,7 +491,7 @@ async fn cmd_up(
         tracing::debug!(agent = %agent.name, "memory.db initialized");
 
         // 11. Generate .mcp.json with rightmemory MCP server entry (Phase 17, SKILL-05).
-        rightclaw::codegen::generate_mcp_config(&agent.path)?;
+        rightclaw::codegen::generate_mcp_config(&agent.path, &self_exe)?;
         tracing::debug!(agent = %agent.name, "wrote .mcp.json with rightmemory entry");
     }
 

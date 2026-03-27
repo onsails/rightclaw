@@ -6,7 +6,9 @@ use std::path::Path;
 ///   `mcpServers.rightmemory` key, writes back.
 /// - If `.mcp.json` does not exist, creates it with just the rightmemory entry.
 /// - Preserves all other keys in the existing JSON (non-destructive merge per D-05).
-pub fn generate_mcp_config(agent_path: &Path) -> miette::Result<()> {
+/// - `binary` is written verbatim into the `command` field — pass `current_exe()` result
+///   so agents can always find the rightclaw binary regardless of PATH.
+pub fn generate_mcp_config(agent_path: &Path, binary: &Path) -> miette::Result<()> {
     let mcp_path = agent_path.join(".mcp.json");
 
     let mut root: serde_json::Value = if mcp_path.exists() {
@@ -36,7 +38,7 @@ pub fn generate_mcp_config(agent_path: &Path) -> miette::Result<()> {
     servers.insert(
         "rightmemory".to_string(),
         serde_json::json!({
-            "command": "rightclaw",
+            "command": binary.to_string_lossy(),
             "args": ["memory-server"],
             "env": {}
         }),
@@ -58,7 +60,7 @@ mod tests {
     #[test]
     fn creates_mcp_json_when_absent() {
         let dir = tempdir().unwrap();
-        generate_mcp_config(dir.path()).unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -83,7 +85,7 @@ mod tests {
         )
         .unwrap();
 
-        generate_mcp_config(dir.path()).unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -107,7 +109,7 @@ mod tests {
         )
         .unwrap();
 
-        generate_mcp_config(dir.path()).unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -131,7 +133,7 @@ mod tests {
         )
         .unwrap();
 
-        generate_mcp_config(dir.path()).unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -150,8 +152,8 @@ mod tests {
     #[test]
     fn idempotent_on_repeated_calls() {
         let dir = tempdir().unwrap();
-        generate_mcp_config(dir.path()).unwrap();
-        generate_mcp_config(dir.path()).unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw")).unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -176,7 +178,7 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join(".mcp.json"), r#"{"telegram": true}"#).unwrap();
 
-        generate_mcp_config(dir.path()).unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -188,6 +190,19 @@ mod tests {
             parsed["mcpServers"]["rightmemory"]["command"],
             "rightclaw",
             "mcpServers.rightmemory must be added"
+        );
+    }
+
+    #[test]
+    fn uses_provided_binary_path() {
+        let dir = tempdir().unwrap();
+        generate_mcp_config(dir.path(), Path::new("/usr/local/bin/rightclaw")).unwrap();
+        let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["rightmemory"]["command"],
+            "/usr/local/bin/rightclaw",
+            "command must be the absolute path passed in, not a hardcoded name"
         );
     }
 }
