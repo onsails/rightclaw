@@ -98,20 +98,29 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 16 → 17 → 18
+Phases execute in numeric order: 16 → 17 → 18 → 19
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 16. DB Foundation | v2.3 | 3/3 | Complete    | 2026-03-26 |
 | 17. Memory Skill | v2.3 | 2/2 | Complete    | 2026-03-26 |
 | 18. CLI Inspection | v2.3 | 2/2 | Complete   | 2026-03-26 |
+| 19. HOME Isolation Hardening | v2.3 | 0/2 | Planning   | |
 
 ### Phase 19: HOME Isolation Hardening
 
-**Goal:** Fix HOME override gaps — plugin state sharing, shell snapshot cleanup, and comprehensive fresh-init UAT
-**Requirements**: TBD
+**Goal:** Fix Telegram false-positive detection, RC_AGENT_NAME propagation, mcp_config_path dead code removal, and comprehensive fresh-init UAT
+**Requirements**: HOME-01, HOME-02, HOME-03, HOME-04, HOME-05, HOME-06
 **Depends on:** Phase 18
-**Plans:** 0 plans
+**Success Criteria** (what must be TRUE):
+  1. Agent without telegram config does NOT get `--channels` flag or `enabledPlugins` in settings.json
+  2. `.mcp.json` env section contains `RC_AGENT_NAME` with the correct agent name
+  3. `AgentDef` struct has no `mcp_config_path` field — Telegram detection uses `agent.config`
+  4. `generate_telegram_channel_config` does NOT write `{"telegram": true}` to `.mcp.json`
+  5. Memory server warns on stderr when `RC_AGENT_NAME` is absent or empty
+  6. All 7 UAT test cases pass from a fresh-init state
+**Plans**: 2 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 19 to break down)
+- [ ] 19-01-PLAN.md — TDD bug fixes: regression tests, Telegram detection fix, RC_AGENT_NAME injection, mcp_config_path removal
+- [ ] 19-02-PLAN.md — UAT document + human verification checkpoint

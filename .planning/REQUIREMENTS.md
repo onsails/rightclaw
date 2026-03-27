@@ -37,6 +37,15 @@
 
 - [x] **DOCTOR-01**: `rightclaw doctor` warns (non-fatal) when `sqlite3` binary is absent from PATH
 
+### HOME Isolation Hardening
+
+- [ ] **HOME-01**: Agents without telegram config do NOT get `--channels` flag or `enabledPlugins` in settings.json
+- [ ] **HOME-02**: `generate_mcp_config` injects `RC_AGENT_NAME` into `.mcp.json` env section
+- [ ] **HOME-03**: `mcp_config_path` field removed from `AgentDef` — Telegram detection uses `agent.config`
+- [ ] **HOME-04**: `generate_telegram_channel_config` does NOT write `{"telegram": true}` marker to `.mcp.json`
+- [ ] **HOME-05**: Memory server warns on stderr when `RC_AGENT_NAME` is absent or empty
+- [ ] **HOME-06**: Comprehensive fresh-init UAT with 7 test cases covering all v2.3 capabilities
+
 ## Future Requirements
 
 ### v2.4 Candidates
@@ -78,12 +87,18 @@
 | CLI-02 | Phase 18 | Complete |
 | CLI-03 | Phase 18 | Complete |
 | CLI-04 | Phase 18 | Complete |
+| HOME-01 | Phase 19 | Planned |
+| HOME-02 | Phase 19 | Planned |
+| HOME-03 | Phase 19 | Planned |
+| HOME-04 | Phase 19 | Planned |
+| HOME-05 | Phase 19 | Planned |
+| HOME-06 | Phase 19 | Planned |
 
 **Coverage:**
-- v2.3 requirements: 17 total
-- Mapped to phases: 17
-- Unmapped: 0 ✓
+- v2.3 requirements: 23 total
+- Mapped to phases: 23
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-26*
-*Last updated: 2026-03-26 — traceability populated by roadmapper*
+*Last updated: 2026-03-27 — Phase 19 HOME isolation requirements added*
