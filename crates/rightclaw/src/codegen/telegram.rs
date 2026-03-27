@@ -53,7 +53,14 @@ fn resolve_telegram_token(agent: &AgentDef) -> miette::Result<Option<String>> {
                 abs.display()
             )
         })?;
-        return Ok(Some(content.trim().to_string()));
+        // Handle dotenv format: strip `TELEGRAM_BOT_TOKEN=` prefix if present.
+        // init writes a .env file (dotenv format for CC), but resolve_telegram_token
+        // must return just the raw token value.
+        let trimmed = content.trim();
+        let token = trimmed
+            .strip_prefix("TELEGRAM_BOT_TOKEN=")
+            .unwrap_or(trimmed);
+        return Ok(Some(token.to_string()));
     }
 
     Ok(config.telegram_token.clone())
@@ -256,5 +263,32 @@ mod tests {
         )
         .unwrap();
         assert!(access_content.contains("222"), "access.json should be overwritten");
+    }
+
+    #[test]
+    fn token_file_in_dotenv_format_strips_prefix() {
+        let dir = tempdir().unwrap();
+        // Write dotenv format (what `init.rs` produces)
+        std::fs::write(
+            dir.path().join(".telegram.env"),
+            "TELEGRAM_BOT_TOKEN=999:tokenFromDotenv\n",
+        )
+        .unwrap();
+
+        let config = AgentConfig {
+            telegram_token_file: Some(".telegram.env".to_string()),
+            ..base_config()
+        };
+        let agent = make_agent(dir.path(), Some(config));
+        generate_telegram_channel_config(&agent).unwrap();
+
+        let content = std::fs::read_to_string(
+            dir.path().join(".claude/channels/telegram/.env"),
+        )
+        .unwrap();
+        assert_eq!(
+            content, "TELEGRAM_BOT_TOKEN=999:tokenFromDotenv\n",
+            "prefix must not be doubled — dotenv prefix should be stripped before re-writing"
+        );
     }
 }
