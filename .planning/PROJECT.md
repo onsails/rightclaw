@@ -149,14 +149,14 @@ This document evolves at phase transitions and milestone boundaries.
 - `test_status_no_running_instance` integration test fails (pre-existing)
 - Tech debt: git absence warning in `verify_dependencies()` (called by `rightclaw up`) but not surfaced by `rightclaw doctor`
 
-## Current Milestone: v2.4 Sandbox Telegram Fix
+## Current Milestone: v2.5 RightCron Reliability
 
-**Goal:** Diagnose and fix why CC sandbox blocks Telegram message processing, so agents respond to Telegram commands whether sandbox is enabled or not.
+**Goal:** Make rightcron's cron reconciler actually work — fix the bootstrap so it can create the reconciler job, and redesign the skill so reconciliation is deterministic regardless of context.
 
 **Target features:**
-- Log analysis to identify root cause (bwrap network isolation, socat relay, CC event loop, or settings.json)
-- Fix: make Telegram work correctly under sandbox
-- Regression test or verification step to confirm the fix holds
+- `startup_prompt` fix in `shell_wrapper.rs`: remove Agent tool delegation so bootstrap runs inline with CronCreate access
+- rightcron `SKILL.md` redesign: split reconciler into CHECK (lightweight, read-only diff output) + RECONCILE (main thread CronCreate/CronDelete calls)
+- End-to-end verification: bootstrap creates reconciler job, cron fires every 5 min, user jobs managed correctly
 
 ---
-*Last updated: 2026-03-28 after v2.4 milestone — Telegram freeze diagnosed, fix deferred to CC*
+*Last updated: 2026-03-28 — v2.5 RightCron Reliability started*
