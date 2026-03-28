@@ -63,7 +63,7 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 
 ### Active
 
-(No active requirements — next milestone will define new ones via `/gsd:new-milestone`)
+(Defined in v2.4 REQUIREMENTS.md)
 
 ### Out of Scope
 
@@ -146,15 +146,14 @@ This document evolves at phase transitions and milestone boundaries.
 - `test_status_no_running_instance` integration test fails (pre-existing)
 - Tech debt: git absence warning in `verify_dependencies()` (called by `rightclaw up`) but not surfaced by `rightclaw doctor`
 
-## Current Milestone: v2.3 Memory System
+## Current Milestone: v2.4 Sandbox Telegram Fix
 
-**Goal:** Give each agent a per-agent SQLite-backed memory store — persistent across restarts, queryable via a built-in skill, and inspectable from the CLI.
+**Goal:** Diagnose and fix why CC sandbox blocks Telegram message processing, so agents respond to Telegram commands whether sandbox is enabled or not.
 
 **Target features:**
-- Per-agent SQLite database (lives in agent HOME dir, no cross-agent sharing)
-- Built-in memory skill: store, recall, search, forget operations
-- `rightclaw memory` CLI subcommand: list, search, delete
-- Full audit trail: timestamps + provenance on every entry
+- Log analysis to identify root cause (bwrap network isolation, socat relay, CC event loop, or settings.json)
+- Fix: make Telegram work correctly under sandbox
+- Regression test or verification step to confirm the fix holds
 
 ---
-*Last updated: 2026-03-27 after v2.3 milestone — Memory System shipped*
+*Last updated: 2026-03-28 — v2.4 Sandbox Telegram Fix started*
