@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.3
-milestone_name: Memory System
-status: verifying
-stopped_at: Completed 19-home-isolation-hardening-01-PLAN.md
-last_updated: "2026-03-27T12:39:44.319Z"
-last_activity: 2026-03-27
+milestone: v2.4
+milestone_name: Sandbox Telegram Fix
+status: planning
+stopped_at: ""
+last_updated: "2026-03-28T00:00:00.000Z"
+last_activity: 2026-03-28
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
   percent: 0
 ---
 
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 
 ## Current Position
 
-Phase: 19
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-03-27
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-28 — Milestone v2.4 started
 
 Progress: [░░░░░░░░░░] 0%
 
