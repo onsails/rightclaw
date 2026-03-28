@@ -7,7 +7,7 @@ stopped_at: ""
 last_updated: "2026-03-28T00:00:00.000Z"
 last_activity: 2026-03-28
 progress:
-  total_phases: 0
+  total_phases: 2
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Run multiple autonomous Claude Code agents safely -- each sandboxed by native OS-level isolation, orchestrated by a single CLI command.
-**Current focus:** Phase 18 — cli-inspection
+**Current focus:** Phase 20 — Diagnosis
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 20 — Diagnosis
 Plan: —
-Status: Defining requirements
-Last activity: 2026-03-28 — Milestone v2.4 started
+Status: Ready to plan
+Last activity: 2026-03-28 — Roadmap created for v2.4
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -84,6 +84,7 @@ Recent decisions relevant to v2.3:
 ### Roadmap Evolution
 
 - Phase 19 added: HOME Isolation Hardening — plugin sharing, shell snapshot cleanup, fresh-init UAT
+- v2.4 phases 20-21 added: Sandbox Telegram Fix (diagnosis + fix/verification)
 
 ### Pending Todos
 
@@ -103,6 +104,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-27T11:16:48.317Z
-Stopped at: Completed 19-home-isolation-hardening-01-PLAN.md
+Last session: 2026-03-28T00:00:00.000Z
+Stopped at: Roadmap created for v2.4 — ready to plan Phase 20
 Resume file: None

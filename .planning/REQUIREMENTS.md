@@ -35,9 +35,9 @@ Diagnose and fix why CC sandbox blocks Telegram message processing, so agents re
 
 | Requirement | Phase | Plan |
 |-------------|-------|------|
-| DIAG-01 | TBD | TBD |
-| DIAG-02 | TBD | TBD |
-| DIAG-03 | TBD | TBD |
-| FIX-01 | TBD | TBD |
-| FIX-02 | TBD | TBD |
-| VERIFY-01 | TBD | TBD |
+| DIAG-01 | Phase 20 | TBD |
+| DIAG-02 | Phase 20 | TBD |
+| DIAG-03 | Phase 20 | TBD |
+| FIX-01 | Phase 21 | TBD |
+| FIX-02 | Phase 21 | TBD |
+| VERIFY-01 | Phase 21 | TBD |
