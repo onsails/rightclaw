@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.4
-milestone_name: Sandbox Telegram Fix
-status: verifying
-stopped_at: Completed 20-diagnosis 20-01-PLAN.md
-last_updated: "2026-03-28T22:56:25.337Z"
+milestone: v2.5
+milestone_name: RightCron Reliability
+status: planning
+stopped_at: ""
+last_updated: "2026-03-28T00:00:00.000Z"
 last_activity: 2026-03-28
 progress:
-  total_phases: 1
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Run multiple autonomous Claude Code agents safely -- each sandboxed by native OS-level isolation, orchestrated by a single CLI command.
-**Current focus:** Phase 20 — Diagnosis
+**Current focus:** v2.5 — Defining requirements
 
 ## Current Position
 
-Phase: 21
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-03-28
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-03-28 — Milestone v2.5 started
 
 Progress: [░░░░░░░░░░] 0%
 
