@@ -159,4 +159,4 @@ This document evolves at phase transitions and milestone boundaries.
 - End-to-end verification: bootstrap creates reconciler job, cron fires every 5 min, user jobs managed correctly
 
 ---
-*Last updated: 2026-03-28 — v2.5 RightCron Reliability started*
+*Last updated: 2026-03-29 after Phase 21 — startup_prompt fix + SKILL.md CHECK/RECONCILE redesign shipped*
