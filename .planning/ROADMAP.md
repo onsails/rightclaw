@@ -133,8 +133,13 @@ Plans:
   4. `/reset` command deletes the telegram_sessions row for the current thread; next message starts a fresh session
   5. claude -p non-zero exit or stderr output produces an error reply in Telegram; responses over 4096 chars are split into multiple messages
   6. Bot shows ChatAction::Typing indicator while claude -p subprocess is running
-**Plans**: TBD
+**Plans**: 3 plans
 **UI hint**: no
+
+Plans:
+- [ ] 25-01-PLAN.md — Add Cargo deps + session.rs DB CRUD with TDD (Wave 1)
+- [ ] 25-02-PLAN.md — worker.rs: debounce loop, CC subprocess, reply tool parsing, typing indicator (Wave 2)
+- [ ] 25-03-PLAN.md — handler.rs + dispatch.rs rewrite: DashMap worker map, BotCommand schema, lib.rs wiring (Wave 3)
 
 ### Phase 26: PC Cutover
 **Goal**: rightclaw up starts teloxide bot processes and removes all CC channels infrastructure atomically
@@ -178,7 +183,7 @@ Phases execute in order: 22 → 23 (parallel with 24) → 25 → 26, 27 (paralle
 | 22. DB Schema | v3.0 | 1/1 | Complete   | 2026-03-31 |
 | 23. Bot Skeleton | v3.0 | 3/3 | Complete    | 2026-03-31 |
 | 24. System Prompt Codegen | v3.0 | 3/3 | Complete    | 2026-03-31 |
-| 25. Telegram Handler + CC Dispatch | v3.0 | 0/? | Not started | - |
+| 25. Telegram Handler + CC Dispatch | v3.0 | 0/3 | Not started | - |
 | 26. PC Cutover | v3.0 | 0/? | Not started | - |
 | 27. Cron Runtime | v3.0 | 0/? | Not started | - |
 | 28. Cronsync SKILL Rewrite | v3.0 | 0/? | Not started | - |
