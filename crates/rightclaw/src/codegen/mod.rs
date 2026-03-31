@@ -15,5 +15,5 @@ pub use process_compose::generate_process_compose;
 pub use settings::generate_settings;
 pub use shell_wrapper::generate_wrapper;
 pub use skills::install_builtin_skills;
-pub use system_prompt::generate_combined_prompt;
+pub use system_prompt::generate_system_prompt;
 pub use telegram::generate_telegram_channel_config;
