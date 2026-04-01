@@ -163,6 +163,23 @@ pub fn parse_reply_output(raw_json: &str) -> Result<(ReplyOutput, Option<String>
     Ok((output, session_id))
 }
 
+/// Wait for a child process to complete, killing it if `timeout_secs` elapses.
+///
+/// On timeout the future is dropped, which triggers `kill_on_drop(true)` and
+/// kills the subprocess.  Returns the formatted error string on both timeout
+/// and OS-level wait failure so callers can forward it straight to Telegram.
+async fn wait_with_timeout(
+    child: tokio::process::Child,
+    timeout_secs: u64,
+) -> Result<std::process::Output, String> {
+    timeout(Duration::from_secs(timeout_secs), child.wait_with_output())
+        .await
+        .map_err(|_| {
+            format_error_reply(-1, &format!("CC subprocess timed out after {timeout_secs}s"))
+        })?
+        .map_err(|e| format_error_reply(-1, &format!("wait failed: {:#}", e)))
+}
+
 // ── Async worker ─────────────────────────────────────────────────────────────
 
 /// Spawn a per-session worker task.
@@ -384,16 +401,7 @@ async fn invoke_cc(
         .map_err(|e| format_error_reply(-1, &format!("spawn failed: {:#}", e)))?;
 
     // DIS-02: always wait_with_output, never .wait()
-    // Timeout prevents indefinite blocking when CC hangs (kill_on_drop kills child on drop)
-    let output = timeout(Duration::from_secs(CC_TIMEOUT_SECS), child.wait_with_output())
-        .await
-        .map_err(|_| {
-            format_error_reply(
-                -1,
-                &format!("CC subprocess timed out after {CC_TIMEOUT_SECS}s"),
-            )
-        })?
-        .map_err(|e| format_error_reply(-1, &format!("wait failed: {:#}", e)))?;
+    let output = wait_with_timeout(child, CC_TIMEOUT_SECS).await?;
 
     // DIS-06: non-zero exit or non-empty stderr → error reply
     if !output.status.success() {
@@ -612,5 +620,38 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.contains("missing both"), "error should mention both fields: {err}");
+    }
+
+    // wait_with_timeout tests
+    #[tokio::test]
+    async fn wait_with_timeout_fires_before_slow_process_exits() {
+        let child = tokio::process::Command::new("sleep")
+            .arg("999")
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("sleep should be available");
+
+        let err = wait_with_timeout(child, 1).await.unwrap_err();
+        assert!(
+            err.contains("timed out after 1s"),
+            "expected timeout message, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_with_timeout_returns_output_for_fast_process() {
+        let child = tokio::process::Command::new("true")
+            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("true should be available");
+
+        let output = wait_with_timeout(child, 5).await.expect("should succeed");
+        assert!(output.status.success());
     }
 }
