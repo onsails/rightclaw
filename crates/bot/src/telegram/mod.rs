@@ -1,6 +1,7 @@
 pub mod bot;
 pub mod dispatch;
 pub mod filter;
+pub mod handler;
 pub mod session;
 pub mod worker;
 

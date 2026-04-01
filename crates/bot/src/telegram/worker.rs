@@ -19,7 +19,7 @@ use uuid::Uuid;
 use super::session::{create_session, get_session, touch_session};
 
 /// Session key: `(chat_id, effective_thread_id)`.
-type SessionKey = (i64, i64);
+pub type SessionKey = (i64, i64);
 
 /// Fixed 500ms debounce window (D-01).
 const DEBOUNCE_MS: u64 = 500;
@@ -31,6 +31,7 @@ const DEBOUNCE_MS: u64 = 500;
 const REPLY_TOOL_JSON: &str = r#"{"name":"reply","description":"Send a reply to the user or stay silent","input_schema":{"type":"object","properties":{"content":{"type":["string","null"],"description":"Message text. null = silent (no Telegram reply)"},"reply_to_message_id":{"type":["integer","null"],"description":"Telegram message_id to reply to. null = reply to thread only"},"media_paths":{"type":["array","null"],"items":{"type":"string"},"description":"STUB: Phase 25 logs warning, does not send"}},"required":["content"]}}"#;
 
 /// A single Telegram message queued into the debounce channel.
+#[derive(Clone)]
 pub struct DebounceMsg {
     pub message_id: i32,
     pub text: String,
