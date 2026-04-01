@@ -42,9 +42,9 @@
 ## AGDEF — Agent Definition Codegen
 
 - [x] **AGDEF-01**: `rightclaw up` generates `agent_dir/.claude/agents/<name>.md` with YAML frontmatter (`name`, `model` from agent.yaml or `"inherit"`, `description: "RightClaw agent: <name>"`, `tools` whitelist from sandbox config) + body concatenated from present IDENTITY.md → SOUL.md → USER.md → AGENTS.md (absent files skipped)
-- [ ] **AGDEF-02**: worker.rs first call: `claude -p --agent <name> --json-schema <reply_schema> --output-format json --session-id <uuid>`; `--system-prompt-file` and `--append-system-prompt` flags removed
-- [ ] **AGDEF-03**: worker.rs resume call: `claude -p --resume <root_session_id> --json-schema <reply_schema> --output-format json`; no `--agent` flag on resume
-- [ ] **AGDEF-04**: Output parsing reads direct structured JSON conforming to reply schema (`content: string|null`, `reply_to_message_id: int|null`, `media_paths: array|null`); tool_use block parsing removed
+- [x] **AGDEF-02**: worker.rs first call: `claude -p --agent <name> --json-schema <reply_schema> --output-format json --session-id <uuid>`; `--system-prompt-file` and `--append-system-prompt` flags removed
+- [x] **AGDEF-03**: worker.rs resume call: `claude -p --resume <root_session_id> --json-schema <reply_schema> --output-format json`; no `--agent` flag on resume
+- [x] **AGDEF-04**: Output parsing reads direct structured JSON conforming to reply schema (`content: string|null`, `reply_to_message_id: int|null`, `media_paths: array|null`); tool_use block parsing removed
 - [x] **AGDEF-05**: `system-prompt.txt` no longer written by `rightclaw up`; `codegen/system_prompt.rs` deleted; PROMPT-01 and PROMPT-02 superseded by AGDEF-01 and AGDEF-02
 
 ## PROCESS-COMPOSE — Bot Integration
@@ -116,9 +116,9 @@
 | DIS-05 | Phase 25 | Complete |
 | DIS-06 | Phase 25 | Complete |
 | AGDEF-01 | Phase 25.5 | Complete |
-| AGDEF-02 | Phase 25.5 | Pending |
-| AGDEF-03 | Phase 25.5 | Pending |
-| AGDEF-04 | Phase 25.5 | Pending |
+| AGDEF-02 | Phase 25.5 | Complete |
+| AGDEF-03 | Phase 25.5 | Complete |
+| AGDEF-04 | Phase 25.5 | Complete |
 | AGDEF-05 | Phase 25.5 | Complete |
 | PC-01 | Phase 26 | Pending |
 | PC-02 | Phase 26 | Pending |
