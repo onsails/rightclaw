@@ -12,7 +12,7 @@ use dashmap::DashMap;
 use teloxide::prelude::*;
 use teloxide::types::{ChatAction, MessageId, ReplyParameters, ThreadId};
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, timeout, Duration};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -23,6 +23,9 @@ pub type SessionKey = (i64, i64);
 
 /// Fixed 500ms debounce window (D-01).
 const DEBOUNCE_MS: u64 = 500;
+
+/// Maximum time to wait for a CC subprocess to complete.
+const CC_TIMEOUT_SECS: u64 = 120;
 
 
 /// A single Telegram message queued into the debounce channel.
@@ -191,11 +194,13 @@ pub fn spawn_worker(
         let tg_chat_id = ctx.chat_id;
 
         loop {
+            tracing::info!(?key, "worker waiting for message");
             // Wait for first message in this debounce cycle
             let Some(first) = rx.recv().await else {
-                tracing::debug!(?key, "worker channel closed — exiting");
+                tracing::info!(?key, "worker channel closed — exiting");
                 break;
             };
+            tracing::info!(?key, batch_size = 1, "worker received message, starting debounce");
             let mut batch = vec![first];
 
             // Collect additional messages within debounce window (D-01)
@@ -379,9 +384,15 @@ async fn invoke_cc(
         .map_err(|e| format_error_reply(-1, &format!("spawn failed: {:#}", e)))?;
 
     // DIS-02: always wait_with_output, never .wait()
-    let output = child
-        .wait_with_output()
+    // Timeout prevents indefinite blocking when CC hangs (kill_on_drop kills child on drop)
+    let output = timeout(Duration::from_secs(CC_TIMEOUT_SECS), child.wait_with_output())
         .await
+        .map_err(|_| {
+            format_error_reply(
+                -1,
+                &format!("CC subprocess timed out after {CC_TIMEOUT_SECS}s"),
+            )
+        })?
         .map_err(|e| format_error_reply(-1, &format!("wait failed: {:#}", e)))?;
 
     // DIS-06: non-zero exit or non-empty stderr → error reply
