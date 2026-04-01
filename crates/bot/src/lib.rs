@@ -90,8 +90,18 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
             .delete_webhook()
             .await
             .map_err(|e| miette::miette!("deleteWebhook failed — long polling would compete with active webhook: {e:#}"))?;
+
+        // Log bot identity — helps detect token conflicts with other running CC sessions
+        match webhook_bot.get_me().await {
+            Ok(me) => tracing::info!(
+                agent = %args.agent,
+                bot_id = me.id.0,
+                bot_username = %me.username(),
+                "deleteWebhook succeeded — bot identity confirmed"
+            ),
+            Err(e) => tracing::warn!(agent = %args.agent, "deleteWebhook succeeded but getMe failed: {e:#}"),
+        }
     }
-    tracing::info!(agent = %args.agent, "deleteWebhook succeeded");
 
     // Warn if allowed_chat_ids is empty (D-05)
     if config.allowed_chat_ids.is_empty() {

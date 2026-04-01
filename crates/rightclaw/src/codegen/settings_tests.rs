@@ -155,8 +155,12 @@ fn excluded_commands_omitted_when_empty() {
     );
 }
 
+/// Telegram plugin must NOT be enabled regardless of telegram config.
+/// The native Rust bot (teloxide) owns Telegram; enabling CC's plugin creates a
+/// getUpdates race on the same token, causing intermittent message drops.
 #[test]
-fn includes_telegram_plugin_when_telegram_config_present() {
+fn never_enables_telegram_plugin_in_settings() {
+    // With telegram config
     let config = AgentConfig {
         restart: RestartPolicy::OnFailure,
         max_restarts: 3,
@@ -168,21 +172,16 @@ fn includes_telegram_plugin_when_telegram_config_present() {
         allowed_chat_ids: vec![],
         env: HashMap::new(),
     };
-    let agent = make_test_agent("test-agent", Some(config));
-    let settings = generate_settings(&agent, false, Path::new("/home/user")).unwrap();
-
-    assert_eq!(
-        settings["enabledPlugins"]["telegram@claude-plugins-official"],
-        true,
-        "expected telegram plugin enabled when telegram config present"
+    let agent_with_tg = make_test_agent("test-agent", Some(config));
+    let settings = generate_settings(&agent_with_tg, false, Path::new("/home/user")).unwrap();
+    assert!(
+        settings.get("enabledPlugins").is_none(),
+        "enabledPlugins must be absent even when telegram token is configured — CC plugin races with native bot"
     );
-}
 
-#[test]
-fn omits_telegram_plugin_when_no_telegram_config() {
-    let agent = make_test_agent("test-agent", None);
-    let settings = generate_settings(&agent, false, Path::new("/home/user")).unwrap();
-
+    // Without telegram config
+    let agent_no_tg = make_test_agent("test-agent", None);
+    let settings = generate_settings(&agent_no_tg, false, Path::new("/home/user")).unwrap();
     assert!(
         settings.get("enabledPlugins").is_none(),
         "enabledPlugins should be omitted without telegram config"

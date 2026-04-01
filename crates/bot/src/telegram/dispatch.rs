@@ -67,15 +67,14 @@ pub async fn run_telegram(
         .endpoint(handle_reset);
 
     let message_handler = Update::filter_message()
+        .inspect(|msg: Message| {
+            tracing::info!(chat_id = msg.chat.id.0, "message update received by dispatcher");
+        })
         .filter_map(filter)
         .branch(command_handler)
         .endpoint(handle_message);
 
-    let schema = dptree::entry()
-        .inspect(|upd: Update| {
-            tracing::info!(update_id = upd.id.0, "update received");
-        })
-        .branch(message_handler);
+    let schema = dptree::entry().branch(message_handler);
 
     let mut dispatcher = Dispatcher::builder(bot.clone(), schema)
         .dependencies(dptree::deps![Arc::clone(&worker_map), Arc::clone(&agent_dir_arc), Arc::clone(&debug_arc)])

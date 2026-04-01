@@ -376,13 +376,15 @@ mod tests {
         );
 
         let content = std::fs::read_to_string(&settings_path).unwrap();
+        // CC Telegram plugin must NOT be enabled — it races with the native Rust bot
+        // for getUpdates on the same token, causing intermittent message drops.
         assert!(
-            content.contains("enabledPlugins"),
-            "settings.json should contain enabledPlugins"
+            !content.contains("enabledPlugins"),
+            "settings.json must NOT contain enabledPlugins — CC plugin races with native teloxide bot"
         );
         assert!(
-            content.contains("telegram@claude-plugins-official"),
-            "settings.json should enable telegram plugin"
+            !content.contains("telegram@claude-plugins-official"),
+            "telegram@claude-plugins-official must NOT be in settings.json"
         );
         assert!(
             content.contains("spinnerTipsEnabled"),
