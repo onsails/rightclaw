@@ -106,7 +106,6 @@ fn merges_user_overrides_with_defaults() {
         sandbox: Some(overrides),
         telegram_token_file: None,
         telegram_token: None,
-        telegram_user_id: None,
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     };
@@ -166,7 +165,6 @@ fn includes_telegram_plugin_when_telegram_config_present() {
         sandbox: None,
         telegram_token_file: None,
         telegram_token: Some("tok".to_string()),
-        telegram_user_id: None,
         allowed_chat_ids: vec![],
         env: HashMap::new(),
     };
@@ -258,7 +256,6 @@ fn merges_user_allow_read_overrides() {
         sandbox: Some(overrides),
         telegram_token_file: None,
         telegram_token: None,
-        telegram_user_id: None,
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     };

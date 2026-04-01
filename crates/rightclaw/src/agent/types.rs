@@ -74,11 +74,6 @@ pub struct AgentConfig {
     #[serde(default)]
     pub telegram_token: Option<String>,
 
-    /// Numeric Telegram user ID for access.json pre-pairing.
-    /// If absent, access.json is not written; user must pair interactively.
-    #[serde(default)]
-    pub telegram_user_id: Option<String>,
-
     /// Telegram chat IDs permitted to interact with this agent's bot.
     /// Empty vec = block all incoming messages (secure default). Bot emits
     /// `tracing::warn!` at startup when empty — see D-05.
@@ -127,7 +122,6 @@ mod tests {
         let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(config.telegram_token_file.as_deref(), Some(".telegram.env"));
         assert_eq!(config.telegram_token, None);
-        assert_eq!(config.telegram_user_id, None);
     }
 
     #[test]
@@ -136,16 +130,6 @@ mod tests {
         let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(config.telegram_token.as_deref(), Some("123:abc"));
         assert_eq!(config.telegram_token_file, None);
-        assert_eq!(config.telegram_user_id, None);
-    }
-
-    #[test]
-    fn agent_config_telegram_user_id_field() {
-        let yaml = r#"telegram_user_id: "987654321""#;
-        let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
-        assert_eq!(config.telegram_user_id.as_deref(), Some("987654321"));
-        assert_eq!(config.telegram_token_file, None);
-        assert_eq!(config.telegram_token, None);
     }
 
     #[test]
@@ -154,7 +138,6 @@ mod tests {
         let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(config.telegram_token_file, None);
         assert_eq!(config.telegram_token, None);
-        assert_eq!(config.telegram_user_id, None);
     }
 
     #[test]
@@ -162,12 +145,10 @@ mod tests {
         let yaml = r#"
 telegram_token_file: ".telegram.env"
 telegram_token: "123:abc"
-telegram_user_id: "987654321"
 "#;
         let config: AgentConfig = serde_saphyr::from_str(yaml).unwrap();
         assert_eq!(config.telegram_token_file.as_deref(), Some(".telegram.env"));
         assert_eq!(config.telegram_token.as_deref(), Some("123:abc"));
-        assert_eq!(config.telegram_user_id.as_deref(), Some("987654321"));
     }
 
     #[test]

@@ -14,7 +14,6 @@ fn make_bot_agent(name: &str, token: &str) -> AgentDef {
         sandbox: None,
         telegram_token: Some(token.to_string()),
         telegram_token_file: None,
-        telegram_user_id: None,
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     });
@@ -43,7 +42,6 @@ fn make_agent_no_token(name: &str) -> AgentDef {
         sandbox: None,
         telegram_token: None,
         telegram_token_file: None,
-        telegram_user_id: None,
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     });
@@ -89,7 +87,6 @@ fn make_agent_token_file(name: &str, file: &str) -> AgentDef {
         sandbox: None,
         telegram_token: None,
         telegram_token_file: Some(file.to_string()),
-        telegram_user_id: None,
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     });
@@ -118,7 +115,6 @@ fn make_agent_with_restart(name: &str, token: &str, restart: RestartPolicy) -> A
         sandbox: None,
         telegram_token: Some(token.to_string()),
         telegram_token_file: None,
-        telegram_user_id: None,
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     });

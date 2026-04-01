@@ -176,7 +176,6 @@ mod tests {
                 sandbox: None,
                 telegram_token_file: None,
                 telegram_token: None,
-                telegram_user_id: None,
                 allowed_chat_ids: vec![],
                 env: std::collections::HashMap::new(),
             }),
