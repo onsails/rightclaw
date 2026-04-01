@@ -70,6 +70,7 @@ See [milestones/v2.5-ROADMAP.md](milestones/v2.5-ROADMAP.md)
 - [x] **Phase 23: Bot Skeleton** - rightclaw bot subcommand with env loading, DB open, and no-op teloxide dispatcher (completed 2026-03-31)
 - [x] **Phase 24: System Prompt Codegen** - Compose SOUL.md + USER.md + AGENTS.md into system-prompt.txt on rightclaw up; remove shell wrapper codegen (completed 2026-03-31)
 - [x] **Phase 25: Telegram Handler + CC Dispatch** - Full message dispatch loop with session continuity, per-thread mpsc queue, and CC subprocess invocation (completed 2026-04-01)
+- [ ] **Phase 25.5: Agent Definition Codegen** - Generate .claude/agents/<name>.md per agent; migrate bot to --agent + --json-schema structured output
 - [ ] **Phase 26: PC Cutover** - Wire bot into rightclaw up lifecycle; atomic cutover removes CC channels flag and starts teloxide
 - [ ] **Phase 27: Cron Runtime** - tokio cron task loop reading crons/*.yaml and executing claude -p subprocesses
 - [ ] **Phase 28: Cronsync SKILL Rewrite** - Reduce cronsync SKILL.md to file management only; remove all execution logic
@@ -141,16 +142,36 @@ Plans:
 - [x] 25-02-PLAN.md — worker.rs: debounce loop, CC subprocess, reply tool parsing, typing indicator (Wave 2)
 - [x] 25-03-PLAN.md — handler.rs + dispatch.rs rewrite: DashMap worker map, BotCommand schema, lib.rs wiring (Wave 3)
 
+### Phase 25.5: Agent Definition Codegen
+**Goal**: rightclaw up generates a CC-native agent definition file per agent; bot migrates from --system-prompt-file to --agent + --json-schema structured output
+**Depends on**: Phase 25
+**Requirements**: AGDEF-01, AGDEF-02, AGDEF-03, AGDEF-04, AGDEF-05
+**Success Criteria** (what must be TRUE):
+  1. `rightclaw up` generates `agent_dir/.claude/agents/<name>.md` with YAML frontmatter (name, model, description, tools whitelist) + body concatenated from present IDENTITY.md → SOUL.md → USER.md → AGENTS.md
+  2. worker.rs first call uses `--agent <name> --json-schema <reply_schema> --output-format json --session-id <uuid>`; `--system-prompt-file` and `--append-system-prompt` flags are gone
+  3. worker.rs resume call uses `--resume <root_session_id> --json-schema <reply_schema> --output-format json`; no `--agent` (system prompt stored in session)
+  4. Output parsing reads direct structured JSON (reply schema: content, reply_to_message_id, media_paths); tool_use block parsing removed
+  5. `system-prompt.txt` no longer written by `rightclaw up`; `codegen/system_prompt.rs` removed
+**Plans**: 2 plans
+
+Plans:
+- [ ] 25.5-01-PLAN.md — agent_def.rs codegen module + cmd_up/cmd_pair wiring + system_prompt.rs deletion
+- [ ] 25.5-02-PLAN.md — worker.rs invoke_cc rewrite + parse_reply_output + test updates
+
 ### Phase 26: PC Cutover
 **Goal**: rightclaw up starts teloxide bot processes and removes all CC channels infrastructure atomically
-**Depends on**: Phase 25
+**Depends on**: Phase 25.5
 **Requirements**: PC-01, PC-02, PC-03, PC-04, PC-05
 **Success Criteria** (what must be TRUE):
   1. `rightclaw up` generates a `<agent>-bot` process-compose entry for every agent with telegram_token set; entry includes RC_AGENT_DIR, RC_AGENT_NAME, RC_TELEGRAM_TOKEN environment block
   2. CC channels flag (`--channels plugin:telegram@...`) is absent from all agent launch paths after cutover
   3. is_interactive is removed from the PC template — bot processes do not request TTY
   4. Bot process calls deleteWebhook on startup; `rightclaw doctor` warns when a configured token has an active webhook
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 25.5-01-PLAN.md — agent_def.rs codegen module + cmd_up/cmd_pair wiring + system_prompt.rs deletion
+- [ ] 25.5-02-PLAN.md — worker.rs invoke_cc rewrite + parse_reply_output + test updates
 
 ### Phase 27: Cron Runtime
 **Goal**: Cron jobs defined in crons/*.yaml are scheduled and executed by a Rust tokio task inside the bot process
@@ -161,7 +182,11 @@ Plans:
   2. Cron runtime re-reads `crons/` every 60 seconds; adding or removing a YAML file takes effect without restarting the bot
   3. A job with a fresh lock file is skipped — no duplicate execution when a previous run is still in progress
   4. Removing a cron spec and waiting one polling interval results in the job no longer being scheduled; re-adding it schedules it again (idempotent reconciler)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 25.5-01-PLAN.md — agent_def.rs codegen module + cmd_up/cmd_pair wiring + system_prompt.rs deletion
+- [ ] 25.5-02-PLAN.md — worker.rs invoke_cc rewrite + parse_reply_output + test updates
 
 ### Phase 28: Cronsync SKILL Rewrite
 **Goal**: cronsync SKILL.md manages only cron spec files in crons/ directory; all execution logic is handled by the Rust runtime
@@ -171,7 +196,11 @@ Plans:
   1. cronsync SKILL.md contains only file-management instructions: create, edit, delete YAML spec files in `crons/`
   2. All CHECK/RECONCILE/CRITICAL guard logic is absent from SKILL.md — no reference to CronCreate, CronList, CronDelete, or Agent tool invocation
   3. BOOT-01/BOOT-02 startup bootstrap references are absent from SKILL.md
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 25.5-01-PLAN.md — agent_def.rs codegen module + cmd_up/cmd_pair wiring + system_prompt.rs deletion
+- [ ] 25.5-02-PLAN.md — worker.rs invoke_cc rewrite + parse_reply_output + test updates
 
 ## Progress
 
