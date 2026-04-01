@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Teloxide Bot Runtime
 status: executing
-stopped_at: Completed 25-telegram-handler-cc-dispatch-01-PLAN.md
-last_updated: "2026-04-01T09:41:04.951Z"
+stopped_at: Completed 25-telegram-handler-cc-dispatch-02-PLAN.md
+last_updated: "2026-04-01T09:51:21.327Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 7
   completed_phases: 3
   total_plans: 10
-  completed_plans: 8
+  completed_plans: 9
   percent: 14
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 ## Current Position
 
 Phase: 25 (telegram-handler-cc-dispatch) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-01
 
@@ -56,6 +56,7 @@ Progress: [█░░░░░░░░░] 14%
 | Phase 24-system-prompt-codegen P03 | 7 | 2 tasks | 3 files |
 | Phase 24-system-prompt-codegen P02 | 155 | 2 tasks | 2 files |
 | Phase 25-telegram-handler-cc-dispatch P01 | 25 | 2 tasks | 4 files |
+| Phase 25-telegram-handler-cc-dispatch P02 | 7 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -95,6 +96,9 @@ Recent decisions relevant to v2.3:
 - [Phase 24-system-prompt-codegen]: cmd_pair writes system-prompt.txt itself before exec for standalone correctness
 - [Phase 25-01]: ThreadId in teloxide 0.17 wraps MessageId(i32) — match pattern must destructure both layers: Some(ThreadId(MessageId(n)))
 - [Phase 25-01]: tokio-util 0.7 rt feature (not sync) enables CancellationToken via tokio/sync transitively
+- [Phase 25-telegram-handler-cc-dispatch]: Use 'y' not 'x' in stderr truncation test — 'exit' contains 'x' causing collision
+- [Phase 25-telegram-handler-cc-dispatch]: parse_reply_tool uses serde_json::Value directly, no typed CcOutput struct needed
+- [Phase 25-telegram-handler-cc-dispatch]: teloxide 0.13 reply uses ReplyParameters not reply_to_message_id method
 
 ### Roadmap Evolution
 
@@ -118,6 +122,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-01T09:41:04.947Z
-Stopped at: Completed 25-telegram-handler-cc-dispatch-01-PLAN.md
+Last session: 2026-04-01T09:51:21.323Z
+Stopped at: Completed 25-telegram-handler-cc-dispatch-02-PLAN.md
 Resume file: None
