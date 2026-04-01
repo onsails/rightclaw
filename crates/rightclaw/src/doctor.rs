@@ -906,6 +906,23 @@ mod tests {
         assert!(check.fix.is_none());
     }
 
+    /// Regression test: fetch_webhook_url must not panic when called from within
+    /// an existing tokio multi-thread runtime context (UAT-FIX-02).
+    ///
+    /// Before the fix: Runtime::new().block_on() panics with
+    /// "Cannot start a runtime from within a runtime".
+    /// After the fix: returns Err (network/auth error) without panic.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fetch_webhook_url_does_not_panic_in_async_context() {
+        // An invalid token will trigger an HTTP error from the Telegram API,
+        // which is the expected Err path. We only care that there is no panic.
+        let result = fetch_webhook_url("invalid-token-for-test");
+        assert!(
+            result.is_err(),
+            "expected Err from invalid token, got: {result:?}"
+        );
+    }
+
     #[test]
     fn check_webhook_info_for_agents_skips_agents_without_token() {
         let dir = tempdir().unwrap();
