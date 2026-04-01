@@ -11,6 +11,8 @@ pub struct BotArgs {
     pub agent: String,
     /// Override for RIGHTCLAW_HOME (from --home flag).
     pub home: Option<String>,
+    /// Pass --verbose to CC subprocess and log CC stderr at debug level.
+    pub debug: bool,
 }
 
 /// Entry point called from rightclaw-cli.
@@ -107,5 +109,5 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
     });
 
     // Start Telegram dispatcher
-    telegram::run_telegram(token, config.allowed_chat_ids, agent_dir).await
+    telegram::run_telegram(token, config.allowed_chat_ids, agent_dir, args.debug).await
 }

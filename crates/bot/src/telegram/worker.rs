@@ -44,6 +44,8 @@ pub struct WorkerContext {
     pub bot: super::BotType,
     /// agent_dir — passed separately so worker opens its own Connection
     pub db_path: PathBuf,
+    /// When true, pass --verbose to CC subprocess and log CC stderr at debug level.
+    pub debug: bool,
 }
 
 /// Parsed output from CC structured JSON response (`result` field per D-03).
@@ -141,8 +143,10 @@ pub fn parse_reply_output(raw_json: &str) -> Result<(ReplyOutput, Option<String>
         .map(str::to_string);
 
     let result_val = parsed
-        .get("result")
-        .ok_or_else(|| "CC response missing 'result' field".to_string())?;
+        .get("structured_output")
+        .filter(|v| !v.is_null())
+        .or_else(|| parsed.get("result"))
+        .ok_or_else(|| "CC response missing both 'structured_output' and 'result' fields".to_string())?;
 
     let output: ReplyOutput = serde_json::from_value(result_val.clone())
         .map_err(|e| format!("failed to deserialize result: {e}"))?;
@@ -336,6 +340,9 @@ async fn invoke_cc(
     let reply_schema_path = ctx.agent_dir.join(".claude").join("reply-schema.json");
     let mut cmd = tokio::process::Command::new(&cc_bin);
     cmd.arg("-p");
+    if ctx.debug {
+        cmd.arg("--verbose");
+    }
     for arg in &cmd_args {
         cmd.arg(arg);
     }
@@ -347,7 +354,10 @@ async fn invoke_cc(
     }
 
     // --json-schema on BOTH first and resume calls (D-01, Pitfall 4)
-    cmd.arg("--json-schema").arg(&reply_schema_path);
+    // CC expects inline JSON string, NOT a file path — read and inline the content
+    let reply_schema = std::fs::read_to_string(&reply_schema_path)
+        .map_err(|e| format_error_reply(-1, &format!("reply-schema.json read failed: {:#}", e)))?;
+    cmd.arg("--json-schema").arg(&reply_schema);
 
     cmd.arg("--").arg(xml);
     cmd.env("HOME", &ctx.agent_dir);
@@ -379,6 +389,13 @@ async fn invoke_cc(
         let exit_code = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format_error_reply(exit_code, &stderr));
+    }
+
+    if ctx.debug {
+        let stderr_str = String::from_utf8_lossy(&output.stderr);
+        if !stderr_str.is_empty() {
+            tracing::debug!(?chat_id, stderr = %stderr_str, "CC stderr");
+        }
     }
 
     let raw = String::from_utf8_lossy(&output.stdout);
@@ -533,7 +550,7 @@ mod tests {
         let json = r#"{"session_id":"x"}"#;
         let result = parse_reply_output(json);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing 'result'"));
+        assert!(result.unwrap_err().contains("missing both"));
     }
 
     #[test]
@@ -557,5 +574,32 @@ mod tests {
         let json = r#"{"result":[{"type":"text"}]}"#;
         let result = parse_reply_output(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_reply_output_structured_output_field() {
+        // When structured_output is present, it should be used instead of result
+        let json = r#"{"session_id":"abc","result":"","structured_output":{"content":"Hello from structured!","reply_to_message_id":null,"media_paths":null}}"#;
+        let (output, session_id) = parse_reply_output(json).unwrap();
+        assert_eq!(output.content.as_deref(), Some("Hello from structured!"));
+        assert_eq!(session_id.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn parse_reply_output_falls_back_to_result_when_no_structured_output() {
+        // When structured_output is absent, fall back to result field
+        let json = r#"{"session_id":"xyz","result":{"content":"Fallback result","reply_to_message_id":null,"media_paths":null}}"#;
+        let (output, session_id) = parse_reply_output(json).unwrap();
+        assert_eq!(output.content.as_deref(), Some("Fallback result"));
+        assert_eq!(session_id.as_deref(), Some("xyz"));
+    }
+
+    #[test]
+    fn parse_reply_output_missing_result_and_structured_output_returns_error() {
+        let json = r#"{"session_id":"x"}"#;
+        let result = parse_reply_output(json);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("missing both"), "error should mention both fields: {err}");
     }
 }

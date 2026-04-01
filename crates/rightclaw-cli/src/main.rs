@@ -140,6 +140,9 @@ pub enum Commands {
         /// Agent name (resolves to $RIGHTCLAW_HOME/agents/<name>/)
         #[arg(long)]
         agent: String,
+        /// Pass --verbose to CC subprocess and log CC stderr at debug level
+        #[arg(long)]
+        debug: bool,
     },
 }
 
@@ -203,10 +206,11 @@ async fn main() -> miette::Result<()> {
         },
         // Unreachable: MemoryServer is dispatched before reaching here.
         Commands::MemoryServer => unreachable!("MemoryServer dispatched before tracing init"),
-        Commands::Bot { agent } => {
+        Commands::Bot { agent, debug } => {
             rightclaw_bot::run(rightclaw_bot::BotArgs {
                 agent,
                 home: cli.home,
+                debug,
             })
             .await
         }

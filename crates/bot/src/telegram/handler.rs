@@ -16,6 +16,10 @@ use super::session::{delete_session, effective_thread_id};
 use super::worker::{DebounceMsg, SessionKey, WorkerContext, spawn_worker};
 use super::BotType;
 
+/// Newtype wrapper for the debug flag passed via dptree dependencies.
+#[derive(Clone)]
+pub struct DebugFlag(pub bool);
+
 /// Convert an arbitrary error into `RequestError::Io` so it propagates through `ResponseResult`.
 fn to_request_err(e: impl std::fmt::Display) -> RequestError {
     RequestError::Io(std::io::Error::other(e.to_string()).into())
@@ -34,6 +38,7 @@ pub async fn handle_message(
     msg: Message,
     worker_map: Arc<DashMap<SessionKey, mpsc::Sender<DebounceMsg>>>,
     agent_dir: Arc<PathBuf>,
+    debug_flag: Arc<DebugFlag>,
 ) -> ResponseResult<()> {
     // Only process messages with text (ignore stickers, photos, etc. in Phase 25)
     let text = match msg.text() {
@@ -81,6 +86,7 @@ pub async fn handle_message(
                     agent_name,
                     bot: bot.clone(),
                     db_path: (*agent_dir).clone(),
+                    debug: debug_flag.0,
                 };
                 let tx = spawn_worker(key, ctx, Arc::clone(&worker_map));
                 worker_map.insert(key, tx.clone());

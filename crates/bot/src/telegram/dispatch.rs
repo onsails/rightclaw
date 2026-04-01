@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 
 use super::bot::build_bot;
 use super::filter::make_chat_id_filter;
-use super::handler::{handle_message, handle_reset};
+use super::handler::{handle_message, handle_reset, DebugFlag};
 use super::worker::{DebounceMsg, SessionKey};
 
 #[derive(BotCommands, Clone)]
@@ -47,6 +47,7 @@ pub async fn run_telegram(
     token: String,
     allowed_chat_ids: Vec<i64>,
     agent_dir: PathBuf,
+    debug: bool,
 ) -> miette::Result<()> {
     let bot = build_bot(token);
 
@@ -57,6 +58,7 @@ pub async fn run_telegram(
     let worker_map: Arc<DashMap<SessionKey, mpsc::Sender<DebounceMsg>>> =
         Arc::new(DashMap::new());
     let agent_dir_arc: Arc<PathBuf> = Arc::new(agent_dir);
+    let debug_arc: Arc<DebugFlag> = Arc::new(DebugFlag(debug));
 
     // Dispatch schema (RESEARCH.md Pattern 1)
     let command_handler = dptree::entry()
@@ -71,7 +73,7 @@ pub async fn run_telegram(
     let schema = dptree::entry().branch(message_handler);
 
     let mut dispatcher = Dispatcher::builder(bot.clone(), schema)
-        .dependencies(dptree::deps![Arc::clone(&worker_map), Arc::clone(&agent_dir_arc)])
+        .dependencies(dptree::deps![Arc::clone(&worker_map), Arc::clone(&agent_dir_arc), Arc::clone(&debug_arc)])
         .build();
 
     let shutdown_token = dispatcher.shutdown_token();
