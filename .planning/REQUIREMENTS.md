@@ -52,8 +52,8 @@
 - [ ] **PC-01**: PC config entry `<agent>-bot` generated for agents with `telegram_token` set; entry uses `rightclaw bot --agent <name>` with `environment:` block containing `RC_AGENT_DIR`, `RC_AGENT_NAME`, `RC_TELEGRAM_TOKEN` (or `RC_TELEGRAM_TOKEN_FILE`)
 - [ ] **PC-02**: `is_interactive` removed from PC template (bots don't need TTY)
 - [ ] **PC-03**: CC channels flag (`--channels plugin:telegram@...`) removed from all agent launch code paths
-- [ ] **PC-04**: Bot process calls `deleteWebhook` on startup to clear any prior Telegram webhook registration
-- [ ] **PC-05**: `rightclaw doctor` warns when a configured Telegram token has an active webhook (conflicts with long polling)
+- [x] **PC-04**: Bot process calls `deleteWebhook` on startup to clear any prior Telegram webhook registration
+- [x] **PC-05**: `rightclaw doctor` warns when a configured Telegram token has an active webhook (conflicts with long polling)
 
 ## CRON — Rust Cron Runtime
 
@@ -123,8 +123,8 @@
 | PC-01 | Phase 26 | Pending |
 | PC-02 | Phase 26 | Pending |
 | PC-03 | Phase 26 | Pending |
-| PC-04 | Phase 26 | Pending |
-| PC-05 | Phase 26 | Pending |
+| PC-04 | Phase 26 | Complete |
+| PC-05 | Phase 26 | Complete |
 | CRON-01 | Phase 27 | Pending |
 | CRON-02 | Phase 27 | Pending |
 | CRON-03 | Phase 27 | Pending |

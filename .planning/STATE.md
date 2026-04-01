@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Teloxide Bot Runtime
-status: verifying
-stopped_at: Completed 25.5-agent-definition-codegen-02-PLAN.md
-last_updated: "2026-04-01T14:03:56.397Z"
+status: executing
+stopped_at: Completed 26-02-PLAN.md
+last_updated: "2026-04-01T14:42:05.586Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 8
   completed_phases: 5
-  total_plans: 12
-  completed_plans: 12
+  total_plans: 14
+  completed_plans: 13
   percent: 14
 ---
 
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Run multiple autonomous Claude Code agents safely -- each sandboxed by native OS-level isolation, orchestrated by a single CLI command.
-**Current focus:** Phase 25.5 — agent-definition-codegen
+**Current focus:** Phase 26 — pc-cutover
 
 ## Current Position
 
-Phase: 26
-Plan: Not started
-Status: Phase complete — ready for verification
+Phase: 26 (pc-cutover) — EXECUTING
+Plan: 2 of 2
+Status: Ready to execute
 Last activity: 2026-04-01
 
 Progress: [█░░░░░░░░░] 14%
@@ -60,6 +60,7 @@ Progress: [█░░░░░░░░░] 14%
 | Phase 25-telegram-handler-cc-dispatch P03 | 228 | 2 tasks | 5 files |
 | Phase 25.5-agent-definition-codegen P01 | 212 | 2 tasks | 6 files |
 | Phase 25.5-agent-definition-codegen P02 | 3 | 1 tasks | 2 files |
+| Phase 26-pc-cutover P02 | 460 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -107,6 +108,7 @@ Recent decisions relevant to v2.3:
 - [Phase 25.5-agent-definition-codegen]: agent_def.rs model field uses 'inherit' when AgentConfig.model is None — matches CC native agent convention
 - [Phase 25.5-agent-definition-codegen]: No tools: field in frontmatter per D-05 — CC infers tools from sandbox settings
 - [Phase 25.5-agent-definition-codegen]: [Phase 25.5-02]: --agent first call only (AGDEF-02/03); --json-schema both calls (D-01); ReplyOutput gains Debug+Deserialize; agent_name from agent_dir.file_name() at WorkerContext construction
+- [Phase 26-pc-cutover]: Use teloxide::requests::Requester as _ in scoped block for delete_webhook; inline token resolver in doctor.rs with TODO for Plan 01 pub(crate) migration
 
 ### Roadmap Evolution
 
@@ -130,6 +132,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-01T14:03:56.394Z
-Stopped at: Completed 25.5-agent-definition-codegen-02-PLAN.md
+Last session: 2026-04-01T14:42:05.583Z
+Stopped at: Completed 26-02-PLAN.md
 Resume file: None
