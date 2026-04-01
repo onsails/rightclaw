@@ -72,7 +72,7 @@ See [milestones/v2.5-ROADMAP.md](milestones/v2.5-ROADMAP.md)
 - [x] **Phase 25: Telegram Handler + CC Dispatch** - Full message dispatch loop with session continuity, per-thread mpsc queue, and CC subprocess invocation (completed 2026-04-01)
 - [x] **Phase 25.5: Agent Definition Codegen** - Generate .claude/agents/<name>.md per agent; migrate bot to --agent + --json-schema structured output (completed 2026-04-01)
 - [x] **Phase 26: PC Cutover** - Wire bot into rightclaw up lifecycle; atomic cutover removes CC channels flag and starts teloxide (completed 2026-04-01)
-- [ ] **Phase 27: Cron Runtime** - tokio cron task loop reading crons/*.yaml and executing claude -p subprocesses
+- [x] **Phase 27: Cron Runtime** - tokio cron task loop reading crons/*.yaml and executing claude -p subprocesses (completed 2026-04-01)
 - [ ] **Phase 28: Cronsync SKILL Rewrite** - Reduce cronsync SKILL.md to file management only; remove all execution logic
 
 ## Phase Details
@@ -186,7 +186,7 @@ Plans:
 
 Plans:
 - [x] 27-01-PLAN.md — cron.rs scheduling engine + V3 migration + lib.rs spawn site
-- [ ] 27-02-PLAN.md — MCP server rename to 'rightclaw' + cron_list_runs + cron_show_run tools
+- [x] 27-02-PLAN.md — MCP server rename to 'rightclaw' + cron_list_runs + cron_show_run tools
 
 ### Phase 28: Cronsync SKILL Rewrite
 **Goal**: cronsync SKILL.md manages only cron spec files in crons/ directory; all execution logic is handled by the Rust runtime
@@ -214,5 +214,5 @@ Phases execute in order: 22 → 23 (parallel with 24) → 25 → 26, 27 (paralle
 | 24. System Prompt Codegen | v3.0 | 3/3 | Complete    | 2026-03-31 |
 | 25. Telegram Handler + CC Dispatch | v3.0 | 3/3 | Complete    | 2026-04-01 |
 | 26. PC Cutover | v3.0 | 2/2 | Complete    | 2026-04-01 |
-| 27. Cron Runtime | v3.0 | 1/2 | In Progress|  |
+| 27. Cron Runtime | v3.0 | 2/2 | Complete   | 2026-04-01 |
 | 28. Cronsync SKILL Rewrite | v3.0 | 0/? | Not started | - |
