@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Teloxide Bot Runtime
-status: executing
-stopped_at: Completed 27-cron-runtime-01-PLAN.md
-last_updated: "2026-04-01T19:03:28.087Z"
+status: verifying
+stopped_at: Completed 27-cron-runtime-02-PLAN.md
+last_updated: "2026-04-01T19:09:17.149Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 8
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 16
-  completed_plans: 15
+  completed_plans: 16
   percent: 14
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 
 Phase: 27 (cron-runtime) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-01
 
 Progress: [█░░░░░░░░░] 14%
@@ -63,6 +63,7 @@ Progress: [█░░░░░░░░░] 14%
 | Phase 26-pc-cutover P02 | 460 | 2 tasks | 2 files |
 | Phase 26-pc-cutover P01 | 15 | 2 tasks | 6 files |
 | Phase 27-cron-runtime P01 | 222 | 2 tasks | 7 files |
+| Phase 27-cron-runtime P02 | 3 | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -115,6 +116,8 @@ Recent decisions relevant to v2.3:
 - [Phase 26-pc-cutover]: generate_process_compose filters out non-telegram agents entirely; early-exit in cmd_up when no bot agents
 - [Phase 27-cron-runtime]: D-01: --agent <name> invocation style for cron jobs (not --system-prompt-file) — matches AGDEF-02
 - [Phase 27-cron-runtime]: D-04: cron_runs V3 migration in memory.db + log files at crons/logs/; rusqlite::Connection opened per-job (not passed from lib.rs)
+- [Phase 27-cron-runtime]: Implementation::new('rightclaw', CARGO_PKG_VERSION) for MCP server rename — cleaner than struct update syntax
+- [Phase 27-cron-runtime]: server_info is non-Optional in rmcp 1.3 InitializeResult — direct field access in tests
 
 ### Roadmap Evolution
 
@@ -138,6 +141,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-01T19:03:28.084Z
-Stopped at: Completed 27-cron-runtime-01-PLAN.md
+Last session: 2026-04-01T19:09:17.146Z
+Stopped at: Completed 27-cron-runtime-02-PLAN.md
 Resume file: None
