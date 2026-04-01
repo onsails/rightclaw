@@ -78,7 +78,7 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 ### Active
 
 - [ ] Per-agent teloxide Telegram bot process (replaces Claude Code channels)
-- [ ] Thread → session mapping in memory.db (new `telegram_sessions` table)
+- ~~Thread → session mapping in memory.db (new `telegram_sessions` table)~~ — Validated in Phase 25
 - [ ] `claude -p --session-id / --resume` session continuity per Telegram thread
 - ~~System prompt composition from SOUL.md + USER.md + AGENTS.md on `rightclaw up`~~ — Validated in Phase 24
 - [ ] Cron scheduling/execution in Rust runtime (tokio task, file watcher)
@@ -151,6 +151,8 @@ This document evolves at phase transitions and milestone boundaries.
 
 ## Current State
 
+**v3.0 in progress** (2026-04-01). Teloxide Bot Runtime — Phase 25 complete: Telegram handler + CC dispatch. session.rs CRUD, worker.rs (debounce + CC subprocess), handler.rs + dispatch.rs (DashMap worker map, BotCommand, SIGTERM shutdown).
+
 **v2.5 shipped** (2026-03-31). RightCron Reliability — fixed startup_prompt Agent tool delegation (bootstrap now runs inline on main thread with CronCreate access), restructured cronsync SKILL.md with CRITICAL guard and CHECK/RECONCILE phase split. Phase 22 (E2E verification) cancelled — user chose new milestone approach. [Full archive](milestones/v2.5-ROADMAP.md)
 
 **Shipped versions:**
@@ -171,4 +173,4 @@ This document evolves at phase transitions and milestone boundaries.
 - Tech debt: git absence warning in `verify_dependencies()` but not surfaced by `rightclaw doctor`
 
 ---
-*Last updated: 2026-03-31 — Milestone v3.0 started: Teloxide Bot Runtime*
+*Last updated: 2026-04-01 — Phase 25 complete: Telegram handler + CC dispatch*
