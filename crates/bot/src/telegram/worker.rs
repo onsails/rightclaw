@@ -572,27 +572,49 @@ mod tests {
         assert_eq!(y_block.len(), 300);
     }
 
-    // parse_reply_tool tests
+    // parse_reply_output tests (new structured output format per D-03)
     #[test]
-    fn parse_reply_content_string() {
-        let json = r#"{"session_id":"abc","result":[{"type":"tool_use","name":"reply","input":{"content":"hello","reply_to_message_id":null,"media_paths":null}}]}"#;
-        let (output, session_id) = parse_reply_tool(json).unwrap();
+    fn parse_reply_output_content_string() {
+        let json = r#"{"session_id":"abc","result":{"content":"hello","reply_to_message_id":null,"media_paths":null}}"#;
+        let (output, session_id) = parse_reply_output(json).unwrap();
         assert_eq!(output.content.as_deref(), Some("hello"));
         assert_eq!(session_id.as_deref(), Some("abc"));
     }
 
     #[test]
-    fn parse_reply_content_null() {
-        let json =
-            r#"{"result":[{"type":"tool_use","name":"reply","input":{"content":null}}]}"#;
-        let (output, _) = parse_reply_tool(json).unwrap();
+    fn parse_reply_output_content_null() {
+        let json = r#"{"result":{"content":null}}"#;
+        let (output, _) = parse_reply_output(json).unwrap();
         assert!(output.content.is_none());
     }
 
     #[test]
-    fn parse_no_tool_call_returns_error() {
-        let json = r#"{"result":[{"type":"text","text":"plain response"}]}"#;
-        let result = parse_reply_tool(json);
+    fn parse_reply_output_missing_result_returns_error() {
+        let json = r#"{"session_id":"x"}"#;
+        let result = parse_reply_output(json);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing 'result'"));
+    }
+
+    #[test]
+    fn parse_reply_output_reply_to_message_id() {
+        let json = r#"{"result":{"content":"hi","reply_to_message_id":42,"media_paths":null}}"#;
+        let (output, _) = parse_reply_output(json).unwrap();
+        assert_eq!(output.reply_to_message_id, Some(42));
+    }
+
+    #[test]
+    fn parse_reply_output_media_paths() {
+        let json = r#"{"result":{"content":"hi","reply_to_message_id":null,"media_paths":["a.png"]}}"#;
+        let (output, _) = parse_reply_output(json).unwrap();
+        assert_eq!(output.media_paths.as_deref(), Some(["a.png"].as_slice()));
+    }
+
+    #[test]
+    fn parse_reply_output_array_result_returns_error() {
+        // Array instead of object should fail deserialization
+        let json = r#"{"result":[{"type":"text"}]}"#;
+        let result = parse_reply_output(json);
         assert!(result.is_err());
     }
 }
