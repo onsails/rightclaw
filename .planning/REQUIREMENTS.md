@@ -9,7 +9,7 @@
 ## BOT — Per-agent Telegram Bot
 
 - [x] **BOT-01**: `rightclaw bot --agent <name>` subcommand runs a teloxide long-polling bot for the given agent
-- [ ] **BOT-02**: Bot process is launched per-agent in process-compose, conditional on `telegram_token` being set in agent.yaml
+- [x] **BOT-02**: Bot process is launched per-agent in process-compose, conditional on `telegram_token` being set in agent.yaml
 - [x] **BOT-03**: Bot uses `CacheMe<Throttle<Bot>>` adaptor ordering to prevent Throttle deadlock (teloxide issue #516)
 - [x] **BOT-04**: Bot gracefully shuts down on SIGTERM — all in-flight claude -p subprocesses are killed (`kill_on_drop(true)`) before exit
 - [ ] **BOT-05**: `allowed_chat_ids` field in agent.yaml — messages from unlisted chat IDs are silently ignored
@@ -18,11 +18,11 @@
 ## SESSION — Conversation Session Management
 
 - [x] **SES-01**: `telegram_sessions` V2 migration added to memory.db: `(chat_id INT, thread_id INT NOT NULL DEFAULT 0, root_session_id TEXT NOT NULL, created_at, last_used_at, UNIQUE(chat_id, thread_id))`
-- [ ] **SES-02**: First message in a thread: bot generates a UUID, runs `claude -p --session-id <uuid>`, stores `(chat_id, effective_thread_id) → uuid` in telegram_sessions
-- [ ] **SES-03**: Subsequent messages: bot runs `claude -p --resume <root_session_id>` — root_session_id is NEVER updated on resume (guards against CC bug #8069)
-- [ ] **SES-04**: `effective_thread_id()` helper normalises Telegram General topic: `thread_id = Some(1)` → `0`; this normalised value is used for both session keying and reply routing
+- [x] **SES-02**: First message in a thread: bot generates a UUID, runs `claude -p --session-id <uuid>`, stores `(chat_id, effective_thread_id) → uuid` in telegram_sessions
+- [x] **SES-03**: Subsequent messages: bot runs `claude -p --resume <root_session_id>` — root_session_id is NEVER updated on resume (guards against CC bug #8069)
+- [x] **SES-04**: `effective_thread_id()` helper normalises Telegram General topic: `thread_id = Some(1)` → `0`; this normalised value is used for both session keying and reply routing
 - [ ] **SES-05**: Per-session `tokio::sync::mpsc` queue — concurrent messages to the same `(chat_id, thread_id)` are serialised; no concurrent claude -p calls on the same session
-- [ ] **SES-06**: `/reset` command clears the telegram_sessions row for the current `(chat_id, thread_id)`, forcing a new session on next message
+- [x] **SES-06**: `/reset` command clears the telegram_sessions row for the current `(chat_id, thread_id)`, forcing a new session on next message
 
 ## DISPATCH — Claude Subprocess Invocation
 
@@ -94,13 +94,13 @@
 | PROMPT-01 | Phase 24 | Complete |
 | PROMPT-02 | Phase 24 | Complete |
 | PROMPT-03 | Phase 24 | Pending |
-| BOT-02 | Phase 25 | Pending |
+| BOT-02 | Phase 25 | Complete |
 | BOT-06 | Phase 25 | Pending |
-| SES-02 | Phase 25 | Pending |
-| SES-03 | Phase 25 | Pending |
-| SES-04 | Phase 25 | Pending |
+| SES-02 | Phase 25 | Complete |
+| SES-03 | Phase 25 | Complete |
+| SES-04 | Phase 25 | Complete |
 | SES-05 | Phase 25 | Pending |
-| SES-06 | Phase 25 | Pending |
+| SES-06 | Phase 25 | Complete |
 | DIS-01 | Phase 25 | Pending |
 | DIS-02 | Phase 25 | Pending |
 | DIS-03 | Phase 25 | Pending |

@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Teloxide Bot Runtime
 status: executing
-stopped_at: Completed 24-system-prompt-codegen-02-PLAN.md
-last_updated: "2026-03-31T22:53:23.340Z"
-last_activity: 2026-03-31
+stopped_at: Completed 25-telegram-handler-cc-dispatch-01-PLAN.md
+last_updated: "2026-04-01T09:41:04.951Z"
+last_activity: 2026-04-01
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 10
+  completed_plans: 8
   percent: 14
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-26)
 
 **Core value:** Run multiple autonomous Claude Code agents safely -- each sandboxed by native OS-level isolation, orchestrated by a single CLI command.
-**Current focus:** Phase 24 — system-prompt-codegen
+**Current focus:** Phase 25 — telegram-handler-cc-dispatch
 
 ## Current Position
 
-Phase: 25
-Plan: Not started
+Phase: 25 (telegram-handler-cc-dispatch) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-03-31
+Last activity: 2026-04-01
 
 Progress: [█░░░░░░░░░] 14%
 
@@ -55,6 +55,7 @@ Progress: [█░░░░░░░░░] 14%
 | Phase 23-bot-skeleton P02 | 4 | 2 tasks | 9 files |
 | Phase 24-system-prompt-codegen P03 | 7 | 2 tasks | 3 files |
 | Phase 24-system-prompt-codegen P02 | 155 | 2 tasks | 2 files |
+| Phase 25-telegram-handler-cc-dispatch P01 | 25 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,8 @@ Recent decisions relevant to v2.3:
 - [Phase 24-system-prompt-codegen]: D-06: Communication and Cron Management sections moved from hardcoded codegen to AGENTS.md template
 - [Phase 24-system-prompt-codegen]: D-10/D-11: cmd_up writes agent_dir/.claude/system-prompt.txt via generate_system_prompt; no run/<agent>-prompt.md or shell wrapper written
 - [Phase 24-system-prompt-codegen]: cmd_pair writes system-prompt.txt itself before exec for standalone correctness
+- [Phase 25-01]: ThreadId in teloxide 0.17 wraps MessageId(i32) — match pattern must destructure both layers: Some(ThreadId(MessageId(n)))
+- [Phase 25-01]: tokio-util 0.7 rt feature (not sync) enables CancellationToken via tokio/sync transitively
 
 ### Roadmap Evolution
 
@@ -115,6 +118,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-31T22:44:13.822Z
-Stopped at: Completed 24-system-prompt-codegen-02-PLAN.md
+Last session: 2026-04-01T09:41:04.947Z
+Stopped at: Completed 25-telegram-handler-cc-dispatch-01-PLAN.md
 Resume file: None
