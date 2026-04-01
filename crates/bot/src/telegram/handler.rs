@@ -49,6 +49,8 @@ pub async fn handle_message(
     let chat_id = msg.chat.id;
     let eff_thread_id = effective_thread_id(&msg);
     let key: SessionKey = (chat_id.0, eff_thread_id);
+    let worker_exists = worker_map.contains_key(&key);
+    tracing::info!(?key, worker_exists, "handle_message: routing");
 
     let debounce_msg = DebounceMsg {
         message_id: msg.id.0,
