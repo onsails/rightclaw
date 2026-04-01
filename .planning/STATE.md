@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Teloxide Bot Runtime
-status: executing
-stopped_at: Completed 25.5-agent-definition-codegen-01-PLAN.md
-last_updated: "2026-04-01T13:30:43.986Z"
+status: verifying
+stopped_at: Completed 25.5-agent-definition-codegen-02-PLAN.md
+last_updated: "2026-04-01T13:35:58.959Z"
 last_activity: 2026-04-01
 progress:
   total_phases: 8
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 12
-  completed_plans: 11
+  completed_plans: 12
   percent: 14
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-03-26)
 
 Phase: 25.5 (agent-definition-codegen) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-01
 
 Progress: [█░░░░░░░░░] 14%
@@ -59,6 +59,7 @@ Progress: [█░░░░░░░░░] 14%
 | Phase 25-telegram-handler-cc-dispatch P02 | 7 | 2 tasks | 4 files |
 | Phase 25-telegram-handler-cc-dispatch P03 | 228 | 2 tasks | 5 files |
 | Phase 25.5-agent-definition-codegen P01 | 212 | 2 tasks | 6 files |
+| Phase 25.5-agent-definition-codegen P02 | 3 | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -105,6 +106,7 @@ Recent decisions relevant to v2.3:
 - [Phase 25-03]: kill_on_drop(true) in invoke_cc sufficient for BOT-04 — no children registry needed
 - [Phase 25.5-agent-definition-codegen]: agent_def.rs model field uses 'inherit' when AgentConfig.model is None — matches CC native agent convention
 - [Phase 25.5-agent-definition-codegen]: No tools: field in frontmatter per D-05 — CC infers tools from sandbox settings
+- [Phase 25.5-agent-definition-codegen]: [Phase 25.5-02]: --agent first call only (AGDEF-02/03); --json-schema both calls (D-01); ReplyOutput gains Debug+Deserialize; agent_name from agent_dir.file_name() at WorkerContext construction
 
 ### Roadmap Evolution
 
@@ -128,6 +130,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-01T13:30:43.983Z
-Stopped at: Completed 25.5-agent-definition-codegen-01-PLAN.md
+Last session: 2026-04-01T13:35:54.064Z
+Stopped at: Completed 25.5-agent-definition-codegen-02-PLAN.md
 Resume file: None

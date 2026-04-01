@@ -70,7 +70,7 @@ See [milestones/v2.5-ROADMAP.md](milestones/v2.5-ROADMAP.md)
 - [x] **Phase 23: Bot Skeleton** - rightclaw bot subcommand with env loading, DB open, and no-op teloxide dispatcher (completed 2026-03-31)
 - [x] **Phase 24: System Prompt Codegen** - Compose SOUL.md + USER.md + AGENTS.md into system-prompt.txt on rightclaw up; remove shell wrapper codegen (completed 2026-03-31)
 - [x] **Phase 25: Telegram Handler + CC Dispatch** - Full message dispatch loop with session continuity, per-thread mpsc queue, and CC subprocess invocation (completed 2026-04-01)
-- [ ] **Phase 25.5: Agent Definition Codegen** - Generate .claude/agents/<name>.md per agent; migrate bot to --agent + --json-schema structured output
+- [x] **Phase 25.5: Agent Definition Codegen** - Generate .claude/agents/<name>.md per agent; migrate bot to --agent + --json-schema structured output (completed 2026-04-01)
 - [ ] **Phase 26: PC Cutover** - Wire bot into rightclaw up lifecycle; atomic cutover removes CC channels flag and starts teloxide
 - [ ] **Phase 27: Cron Runtime** - tokio cron task loop reading crons/*.yaml and executing claude -p subprocesses
 - [ ] **Phase 28: Cronsync SKILL Rewrite** - Reduce cronsync SKILL.md to file management only; remove all execution logic
@@ -156,7 +156,7 @@ Plans:
 
 Plans:
 - [x] 25.5-01-PLAN.md — agent_def.rs codegen module + cmd_up/cmd_pair wiring + system_prompt.rs deletion
-- [ ] 25.5-02-PLAN.md — worker.rs invoke_cc rewrite + parse_reply_output + test updates
+- [x] 25.5-02-PLAN.md — worker.rs invoke_cc rewrite + parse_reply_output + test updates
 
 ### Phase 26: PC Cutover
 **Goal**: rightclaw up starts teloxide bot processes and removes all CC channels infrastructure atomically
@@ -170,7 +170,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 25.5-01-PLAN.md — agent_def.rs codegen module + cmd_up/cmd_pair wiring + system_prompt.rs deletion
+- [x] 25.5-01-PLAN.md — agent_def.rs codegen module + cmd_up/cmd_pair wiring + system_prompt.rs deletion
 - [ ] 25.5-02-PLAN.md — worker.rs invoke_cc rewrite + parse_reply_output + test updates
 
 ### Phase 27: Cron Runtime
