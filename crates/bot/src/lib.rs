@@ -62,7 +62,6 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
             allowed_chat_ids: vec![],
             telegram_token: None,
             telegram_token_file: None,
-            telegram_user_id: None,
             restart: Default::default(),
             max_restarts: 3,
             backoff_seconds: 5,

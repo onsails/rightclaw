@@ -83,9 +83,10 @@ pub enum Commands {
         /// Telegram bot token for channel setup (skip with Enter if interactive)
         #[arg(long)]
         telegram_token: Option<String>,
-        /// Telegram numeric user ID for auto-pairing (get from @userinfobot)
-        #[arg(long)]
-        telegram_user_id: Option<String>,
+        /// Comma-separated list of Telegram chat IDs allowed to use this bot
+        /// (e.g. --telegram-allowed-chat-ids 85743491,100200300)
+        #[arg(long, value_delimiter = ',')]
+        telegram_allowed_chat_ids: Vec<i64>,
     },
     /// List discovered agents and their status
     List,
@@ -173,7 +174,7 @@ async fn main() -> miette::Result<()> {
     )?;
 
     match cli.command {
-        Commands::Init { telegram_token, telegram_user_id } => cmd_init(&home, telegram_token.as_deref(), telegram_user_id.as_deref()),
+        Commands::Init { telegram_token, telegram_allowed_chat_ids } => cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids),
         Commands::List => cmd_list(&home),
         Commands::Doctor => cmd_doctor(&home),
         Commands::Up {
@@ -212,9 +213,9 @@ async fn main() -> miette::Result<()> {
     }
 }
 
-fn cmd_init(home: &Path, telegram_token: Option<&str>, telegram_user_id: Option<&str>) -> miette::Result<()> {
+fn cmd_init(home: &Path, telegram_token: Option<&str>, telegram_allowed_chat_ids: &[i64]) -> miette::Result<()> {
     // If --telegram-token flag provided, validate it upfront.
-    // Otherwise prompt interactively (per D-06, D-07).
+    // Otherwise prompt interactively.
     let token = match telegram_token {
         Some(t) => {
             rightclaw::init::validate_telegram_token(t)?;
@@ -223,23 +224,7 @@ fn cmd_init(home: &Path, telegram_token: Option<&str>, telegram_user_id: Option<
         None => rightclaw::init::prompt_telegram_token()?,
     };
 
-    // Telegram user ID is required when token is provided (needed for auto-pairing).
-    let user_id = match telegram_user_id {
-        Some(id) => Some(id.to_string()),
-        None if token.is_some() => {
-            let id = prompt_telegram_user_id()?;
-            if id.is_none() {
-                return Err(miette::miette!(
-                    help = "Get your numeric user ID from @userinfobot on Telegram",
-                    "Telegram user ID is required for auto-pairing. Use --telegram-user-id or enter it when prompted."
-                ));
-            }
-            id
-        }
-        None => None,
-    };
-
-    rightclaw::init::init_rightclaw_home(home, token.as_deref(), user_id.as_deref(), None)?;
+    rightclaw::init::init_rightclaw_home(home, token.as_deref(), telegram_allowed_chat_ids, None)?;
 
     println!("Initialized RightClaw at {}", home.display());
     println!(
@@ -248,32 +233,11 @@ fn cmd_init(home: &Path, telegram_token: Option<&str>, telegram_user_id: Option<
     );
     if token.is_some() {
         println!("Telegram channel configured and plugin auto-enabled.");
-        if user_id.is_some() {
-            println!("Telegram user pre-paired (no pairing step needed).");
-        }
+    }
+    if !telegram_allowed_chat_ids.is_empty() {
+        println!("Telegram chat ID allowlist configured.");
     }
     Ok(())
-}
-
-fn prompt_telegram_user_id() -> miette::Result<Option<String>> {
-    use std::io::{self, Write};
-    print!("Telegram numeric user ID for auto-pairing (get from @userinfobot, or Enter to skip): ");
-    io::stdout().flush().map_err(|e| miette::miette!("stdout flush failed: {e}"))?;
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .map_err(|e| miette::miette!("failed to read input: {e}"))?;
-    let id = input.trim();
-    if id.is_empty() {
-        return Ok(None);
-    }
-    if !id.chars().all(|c| c.is_ascii_digit()) {
-        return Err(miette::miette!(
-            help = "Get your numeric user ID from @userinfobot on Telegram",
-            "Invalid Telegram user ID — must be numeric"
-        ));
-    }
-    Ok(Some(id.to_string()))
 }
 
 fn cmd_doctor(home: &Path) -> miette::Result<()> {
