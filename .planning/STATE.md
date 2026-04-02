@@ -1,33 +1,34 @@
 ---
 gsd_state_version: 1.0
-milestone: v3.0
-milestone_name: Teloxide Bot Runtime
-status: verifying
-stopped_at: Completed 28.2-02-PLAN.md
-last_updated: "2026-04-01T21:58:48.941Z"
-last_activity: 2026-04-01
+milestone: v3.1
+milestone_name: Sandbox Fix & Verification
+status: requirements
+stopped_at: null
+last_updated: "2026-04-02T15:00:00.000Z"
+last_activity: 2026-04-02
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 17
-  completed_plans: 17
-  percent: 14
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-26)
+See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Run multiple autonomous Claude Code agents safely -- each sandboxed by native OS-level isolation, orchestrated by a single CLI command.
-**Current focus:** Phase 28.2 — v3-0-uat-fix-teloxide-native-tls-and-doctor-async-runtime
+**Current focus:** Defining requirements for v3.1 Sandbox Fix & Verification
 
 ## Current Position
 
-Phase: 28.2
-Plan: Not started
-Status: Phase complete — ready for verification
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-02 — Milestone v3.1 started
 Last activity: 2026-04-01
 
 Progress: [█░░░░░░░░░] 14%

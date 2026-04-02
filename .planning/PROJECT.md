@@ -8,16 +8,14 @@ RightClaw is a multi-agent runtime for Claude Code. Each agent runs as an indepe
 
 Run multiple autonomous Claude Code agents safely — each sandboxed by native OS-level isolation, each with its own sandbox configuration and identity, orchestrated by a single CLI command.
 
-## Current Milestone: v3.0 Teloxide Bot Runtime
+## Current Milestone: v3.1 Sandbox Fix & Verification
 
-**Goal:** Заменить Claude Code channels на per-agent Rust Telegram бот (teloxide), перенести крон в Rust runtime, и дать каждому агенту полный контроль над system prompt.
+**Goal:** Fix CC sandbox dependency detection for nix environments and verify all rightclaw functionality end-to-end with sandbox actually enabled.
 
 **Target features:**
-- Per-agent teloxide бот процесс управляется через process-compose
-- Telegram threads → независимые Claude сессии (thread_id → session_uuid в memory.db)
-- `claude -p --session-id / --resume` для stateless взаимодействия с continuity
-- Agent definition file per agent: `agent/.claude/agents/<name>.md` (YAML frontmatter + IDENTITY→SOUL→USER→AGENTS body) — replaces `system-prompt.txt`
-- Cron runtime в Rust (tokio task + file watcher), cronsync SKILL.md только для управления файлами
+- Fix sandbox so CC finds its dependencies when launched from rightclaw (nix vendored ripgrep path issue)
+- End-to-end verification of rightclaw up → bot → Telegram → cron flow with sandbox enabled
+- Doctor diagnostics detect and report sandbox dependency issues before launch
 
 ## Requirements
 
@@ -74,15 +72,17 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 - ✓ `startup_prompt` runs rightcron inline on main thread without Agent tool delegation — v2.5 Phase 21 (BOOT-01, BOOT-02)
 - ✓ cronsync SKILL.md CHECK/RECONCILE split with CRITICAL guard against Agent tool delegation — v2.5 Phase 21 (RECON-01, RECON-02)
 - ✓ `generate_system_prompt` replaces combined-prompt + shell-wrapper pipeline; writes IDENTITY→SOUL→USER→AGENTS concat to `agent/.claude/system-prompt.txt`; `start_prompt` removed from `AgentConfig`; `USER.md` template + AGENTS.md operational guidance delivered — v3.0 Phase 24 (PROMPT-01..03)
+- ✓ Per-agent teloxide Telegram bot process managed via process-compose — v3.0 Phase 23–26
+- ✓ Thread → session mapping in memory.db (`telegram_sessions` table) — v3.0 Phase 25
+- ✓ `claude -p --agent` structured output with reply-schema.json — v3.0 Phase 25.5
+- ✓ Cron scheduling/execution in Rust runtime (tokio task, file watcher, cron_runs table) — v3.0 Phase 27
+- ✓ Cronsync SKILL.md reduced to file management only — v3.0 Phase 28
 
 ### Active
 
-- [ ] Per-agent teloxide Telegram bot process (replaces Claude Code channels)
-- ~~Thread → session mapping in memory.db (new `telegram_sessions` table)~~ — Validated in Phase 25
-- [ ] `claude -p --session-id / --resume` session continuity per Telegram thread
-- ~~System prompt composition from SOUL.md + USER.md + AGENTS.md on `rightclaw up`~~ — Validated in Phase 24
-- ~~Cron scheduling/execution in Rust runtime (tokio task, file watcher)~~ — Validated in Phase 27
-- ~~Cronsync SKILL.md reduced to file management only (create/edit/delete YAML specs)~~ — Validated in Phase 28
+- [ ] CC sandbox works in nix environments (vendored ripgrep path resolution)
+- [ ] End-to-end verification: rightclaw up → bot → Telegram → cron with sandbox enabled
+- [ ] Doctor detects sandbox dependency issues before launch
 
 ### Out of Scope
 
@@ -173,4 +173,4 @@ This document evolves at phase transitions and milestone boundaries.
 - Tech debt: git absence warning in `verify_dependencies()` but not surfaced by `rightclaw doctor`
 
 ---
-*Last updated: 2026-04-01 — Phase 28.2 complete: UAT gap closure — teloxide rustls TLS backend, doctor async runtime fix (block_in_place). v3.0 milestone all phases done.*
+*Last updated: 2026-04-02 after milestone v3.1 start — Sandbox Fix & Verification*
