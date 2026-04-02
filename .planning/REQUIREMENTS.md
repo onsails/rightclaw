@@ -48,21 +48,21 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SBOX-01 | — | Pending |
-| SBOX-02 | — | Pending |
-| SBOX-03 | — | Pending |
-| SBOX-04 | — | Pending |
-| DOC-01 | — | Pending |
-| DOC-02 | — | Pending |
-| VER-01 | — | Pending |
-| VER-02 | — | Pending |
-| VER-03 | — | Pending |
+| SBOX-01 | Phase 29 | Pending |
+| SBOX-02 | Phase 29 | Pending |
+| SBOX-03 | Phase 29 | Pending |
+| SBOX-04 | Phase 29 | Pending |
+| DOC-01 | Phase 30 | Pending |
+| DOC-02 | Phase 30 | Pending |
+| VER-01 | Phase 31 | Pending |
+| VER-02 | Phase 31 | Pending |
+| VER-03 | Phase 31 | Pending |
 
 **Coverage:**
 - v3.1 requirements: 9 total
-- Mapped to phases: 0
-- Unmapped: 9 ⚠️
+- Mapped to phases: 9
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-02 after initial definition*
+*Last updated: 2026-04-02 — traceability filled after roadmap creation*
