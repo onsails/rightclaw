@@ -150,8 +150,18 @@ pub fn parse_reply_output(raw_json: &str) -> Result<(ReplyOutput, Option<String>
         .or_else(|| parsed.get("result"))
         .ok_or_else(|| "CC response missing both 'structured_output' and 'result' fields".to_string())?;
 
-    let output: ReplyOutput = serde_json::from_value(result_val.clone())
-        .map_err(|e| format!("failed to deserialize result: {e}"))?;
+    // CC sometimes returns result as a plain string (e.g. after multi-turn MCP tool use)
+    // instead of complying with --json-schema. Wrap it as ReplyOutput so the message is delivered.
+    let output: ReplyOutput = if let Some(text) = result_val.as_str() {
+        ReplyOutput {
+            content: if text.is_empty() { None } else { Some(text.to_string()) },
+            reply_to_message_id: None,
+            media_paths: None,
+        }
+    } else {
+        serde_json::from_value(result_val.clone())
+            .map_err(|e| format!("failed to deserialize result: {e}"))?
+    };
 
     if let Some(ref paths) = output.media_paths
         && !paths.is_empty()
@@ -363,9 +373,10 @@ async fn invoke_cc(
     let mut cmd = tokio::process::Command::new(&cc_bin);
     cmd.arg("-p");
     cmd.arg("--dangerously-skip-permissions");
-    if ctx.debug {
-        cmd.arg("--verbose");
-    }
+    // NOTE: --verbose is intentionally NOT passed even in debug mode.
+    // --verbose combined with --output-format json switches CC to stream-json array output,
+    // breaking parse_reply_output which expects a single JSON object.
+    // CC stderr is already captured and logged at debug level below.
     for arg in &cmd_args {
         cmd.arg(arg);
     }
@@ -587,6 +598,23 @@ mod tests {
         let (output, _) = parse_reply_output(json).unwrap();
         let paths = output.media_paths.unwrap();
         assert_eq!(paths, vec!["a.png".to_string()]);
+    }
+
+    #[test]
+    fn parse_reply_output_plain_string_result_wrapped_as_content() {
+        // CC sometimes returns "result": "plain text" after MCP tool use instead of complying
+        // with --json-schema. Must deliver the message rather than show an error.
+        let json = r#"{"session_id":"abc","result":"hello from plain result"}"#;
+        let (output, session_id) = parse_reply_output(json).unwrap();
+        assert_eq!(output.content.as_deref(), Some("hello from plain result"));
+        assert_eq!(session_id.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn parse_reply_output_empty_string_result_is_silent() {
+        let json = r#"{"result":""}"#;
+        let (output, _) = parse_reply_output(json).unwrap();
+        assert!(output.content.is_none());
     }
 
     #[test]
