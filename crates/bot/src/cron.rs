@@ -291,21 +291,23 @@ async fn execute_job(
     // CRON-reply: parse CC structured output and send to Telegram if content is non-null.
     // Only on success — non-zero exit means no valid structured JSON to parse.
     // Silent by default: content:null → no message sent. Failures are silent too.
-    if output.status.success() && reply_schema.is_some() && !notify_chat_ids.is_empty() {
-        if let Some(content) = parse_cron_reply_content(&output.stdout, reply_schema.is_some()) {
-            for &chat_id in notify_chat_ids {
-                // best-effort: cron Telegram delivery is fire-and-forget; send failures are
-                // logged but do not change job status (D-02 analogue for the delivery path)
-                if let Err(e) = bot
-                    .send_message(teloxide::types::ChatId(chat_id), &content)
-                    .await
-                {
-                    tracing::error!(
-                        job = %job_name,
-                        chat_id,
-                        "failed to send cron reply to Telegram: {e:#}"
-                    );
-                }
+    if output.status.success()
+        && reply_schema.is_some()
+        && !notify_chat_ids.is_empty()
+        && let Some(content) = parse_cron_reply_content(&output.stdout, reply_schema.is_some())
+    {
+        for &chat_id in notify_chat_ids {
+            // best-effort: cron Telegram delivery is fire-and-forget; send failures are
+            // logged but do not change job status (D-02 analogue for the delivery path)
+            if let Err(e) = bot
+                .send_message(teloxide::types::ChatId(chat_id), &content)
+                .await
+            {
+                tracing::error!(
+                    job = %job_name,
+                    chat_id,
+                    "failed to send cron reply to Telegram: {e:#}"
+                );
             }
         }
     }
