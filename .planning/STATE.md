@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Sandbox Fix & Verification
-status: verifying
-stopped_at: Phase 31 context gathered
-last_updated: "2026-04-02T21:56:11.974Z"
+status: executing
+stopped_at: Completed 31-01-PLAN.md
+last_updated: "2026-04-02T22:16:53.827Z"
 last_activity: 2026-04-02
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 2
+  total_plans: 3
   completed_plans: 2
   percent: 33
 ---
@@ -68,6 +68,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 28.2 P01 | 5 | 1 tasks | 2 files |
 | Phase 28.2-v3-0-uat-fix-teloxide-native-tls-and-doctor-async-runtime P02 | 2 | 2 tasks | 1 files |
 | Phase 30-doctor-diagnostics P01 | 4 | 2 tasks | 3 files |
+| Phase 31-e2e-verification P01 | 2 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -130,6 +131,8 @@ Recent decisions relevant to v2.3:
 - [Phase 29-01]: All 4 fix sites (settings.rs, worker.rs, cron.rs, devenv.nix) committed atomically per D-08
 - [Phase 30-01]: check_rg_in_path uses same Warn override pattern as sqlite3 (check_binary + DoctorCheck struct update)
 - [Phase 30-01]: check_ripgrep_in_settings is cross-platform (not Linux-gated) per DOC-02 requirement
+- [Phase 31-e2e-verification]: Tasks 1+2 collapsed: subshell cwd written directly in initial implementation
+- [Phase 31-e2e-verification]: Sandbox proof via exit code under failIfUnavailable:true (not brittle stderr parsing)
 
 ### Roadmap Evolution
 
@@ -158,6 +161,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-02T21:56:11.971Z
-Stopped at: Phase 31 context gathered
-Resume file: .planning/phases/31-e2e-verification/31-CONTEXT.md
+Last session: 2026-04-02T22:16:53.824Z
+Stopped at: Completed 31-01-PLAN.md
+Resume file: None
