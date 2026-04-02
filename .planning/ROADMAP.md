@@ -9,7 +9,8 @@
 - ✅ **v2.3 Memory System** - Phases 16-19 (shipped 2026-03-27)
 - ✅ **v2.4 Sandbox Telegram Fix** - Phase 20 (shipped 2026-03-28)
 - ✅ **v2.5 RightCron Reliability** - Phase 21 (shipped 2026-03-31)
-- 🚧 **v3.0 Teloxide Bot Runtime** - Phases 22-28 (in progress)
+- ✅ **v3.0 Teloxide Bot Runtime** - Phases 22-28.2 (shipped 2026-04-01)
+- 🚧 **v3.1 Sandbox Fix & Verification** - Phases 29-31 (in progress)
 
 ## Phases
 
@@ -62,22 +63,8 @@ See [milestones/v2.5-ROADMAP.md](milestones/v2.5-ROADMAP.md)
 
 </details>
 
-### 🚧 v3.0 Teloxide Bot Runtime (In Progress)
-
-**Milestone Goal:** Replace Claude Code Telegram channels with a per-agent Rust teloxide bot, move cron execution into a Rust runtime, and give each agent full control over its system prompt.
-
-- [x] **Phase 22: DB Schema** - Add telegram_sessions V2 migration to memory.db (completed 2026-03-31)
-- [x] **Phase 23: Bot Skeleton** - rightclaw bot subcommand with env loading, DB open, and no-op teloxide dispatcher (completed 2026-03-31)
-- [x] **Phase 24: System Prompt Codegen** - Compose SOUL.md + USER.md + AGENTS.md into system-prompt.txt on rightclaw up; remove shell wrapper codegen (completed 2026-03-31)
-- [x] **Phase 25: Telegram Handler + CC Dispatch** - Full message dispatch loop with session continuity, per-thread mpsc queue, and CC subprocess invocation (completed 2026-04-01)
-- [x] **Phase 25.5: Agent Definition Codegen** - Generate .claude/agents/<name>.md per agent; migrate bot to --agent + --json-schema structured output (completed 2026-04-01)
-- [x] **Phase 26: PC Cutover** - Wire bot into rightclaw up lifecycle; atomic cutover removes CC channels flag and starts teloxide (completed 2026-04-01)
-- [x] **Phase 27: Cron Runtime** - tokio cron task loop reading crons/*.yaml and executing claude -p subprocesses (completed 2026-04-01)
-- [x] **Phase 28: Cronsync SKILL Rewrite** - Reduce cronsync SKILL.md to file management only; remove all execution logic (completed 2026-04-01)
-- [ ] **Phase 28.1: v3.0 UAT** - Manual end-to-end testing of Teloxide bot, cron runtime, and rightclaw up flow (INSERTED)
-- [x] **Phase 28.2: v3.0 UAT Fix** - Fix teloxide missing native-tls (bot restart loop) and doctor nested tokio runtime panic (INSERTED) (completed 2026-04-01)
-
-## Phase Details
+<details>
+<summary>✅ v3.0 Teloxide Bot Runtime (Phases 22-28.2) — SHIPPED 2026-04-01</summary>
 
 ### Phase 22: DB Schema
 **Goal**: telegram_sessions table exists in memory.db with semantics correct for CC session continuity bugs
@@ -103,7 +90,6 @@ Plans:
   3. SIGTERM causes bot to shut down cleanly: all in-flight claude -p subprocesses receive kill signal before exit
   4. Messages from chat IDs not in allowed_chat_ids are silently dropped (no reply, no log entry)
 **Plans**: 3 plans
-**UI hint**: no
 
 Plans:
 - [x] 23-01-PLAN.md — Add allowed_chat_ids: Vec<i64> to AgentConfig (TDD)
@@ -137,7 +123,6 @@ Plans:
   5. claude -p non-zero exit or stderr output produces an error reply in Telegram; responses over 4096 chars are split into multiple messages
   6. Bot shows ChatAction::Typing indicator while claude -p subprocess is running
 **Plans**: 3 plans
-**UI hint**: no
 
 Plans:
 - [x] 25-01-PLAN.md — Add Cargo deps + session.rs DB CRUD with TDD (Wave 1)
@@ -203,38 +188,86 @@ Plans:
 Plans:
 - [x] 28-01-PLAN.md — Rewrite SKILL.md to file-management-only + MCP observability + format audit
 
-## Progress
-
-**Execution Order:**
-Phases execute in order: 22 → 23 (parallel with 24) → 25 → 26, 27 (parallel) → 28
-
-| Phase | Milestone | Plans Complete | Status | Completed |
-|-------|-----------|----------------|--------|-----------|
-| 22. DB Schema | v3.0 | 1/1 | Complete   | 2026-03-31 |
-| 23. Bot Skeleton | v3.0 | 3/3 | Complete    | 2026-03-31 |
-| 24. System Prompt Codegen | v3.0 | 3/3 | Complete    | 2026-03-31 |
-| 25. Telegram Handler + CC Dispatch | v3.0 | 3/3 | Complete    | 2026-04-01 |
-| 26. PC Cutover | v3.0 | 2/2 | Complete    | 2026-04-01 |
-| 27. Cron Runtime | v3.0 | 2/2 | Complete    | 2026-04-01 |
-| 28. Cronsync SKILL Rewrite | v3.0 | 1/1 | Complete    | 2026-04-01 |
-
-### Phase 28.1: v3.0 UAT: manual end-to-end testing of Teloxide bot, cron runtime, and rightclaw up flow (INSERTED)
-
-**Goal:** [Urgent work - to be planned]
+### Phase 28.1: v3.0 UAT (INSERTED)
+**Goal**: Manual end-to-end testing of Teloxide bot, cron runtime, and rightclaw up flow
+**Depends on**: Phase 28
 **Requirements**: TBD
-**Depends on:** Phase 28
-**Plans:** 0 plans
+**Success Criteria** (what must be TRUE):
+  1. Full rightclaw up → bot → Telegram → cron flow validated manually
+**Plans**: 0 plans (skipped — UAT moved into Phase 28.2)
 
-Plans:
-- [ ] TBD (run /gsd:plan-phase 28.1 to break down)
-
-### Phase 28.2: v3.0 UAT Fix: teloxide native-tls and doctor async runtime (INSERTED)
-
-**Goal:** Fix two bugs found in v3.0 UAT — bot cannot start due to missing TLS support, and rightclaw doctor panics with nested tokio runtime.
+### Phase 28.2: v3.0 UAT Fix (INSERTED)
+**Goal**: Fix two bugs found in v3.0 UAT — bot cannot start due to missing TLS support, and rightclaw doctor panics with nested tokio runtime
+**Depends on**: Phase 28.1
 **Requirements**: UAT-FIX-01, UAT-FIX-02
-**Depends on:** Phase 28.1
-**Plans:** 2/2 plans complete
+**Success Criteria** (what must be TRUE):
+  1. `rightclaw bot` starts without error; teloxide connects to Telegram API over TLS
+  2. `rightclaw doctor` completes without panic on systems with an active async runtime
+**Plans**: 2 plans
 
 Plans:
 - [x] 28.2-01-PLAN.md — Add native-tls feature to teloxide workspace dependency in Cargo.toml
 - [x] 28.2-02-PLAN.md — Fix fetch_webhook_url nested tokio runtime panic using block_in_place (TDD)
+
+</details>
+
+### 🚧 v3.1 Sandbox Fix & Verification (In Progress)
+
+**Milestone Goal:** Fix CC sandbox dependency detection for nix environments and verify all rightclaw functionality end-to-end with sandbox actually enabled.
+
+- [ ] **Phase 29: Sandbox Dependency Fix** - Inject system rg path into settings.json, fix USE_BUILTIN_RIPGREP env var, add failIfUnavailable, add ripgrep to devenv.nix
+- [ ] **Phase 30: Doctor Diagnostics** - Doctor checks ripgrep availability for agent process PATH and validates generated settings.json sandbox config
+- [ ] **Phase 31: E2E Verification** - Full flow verification (rightclaw up → doctor green → sandbox ON → Telegram → cron) with repeatable checklist
+
+## Phase Details
+
+### Phase 29: Sandbox Dependency Fix
+**Goal**: CC sandbox actually engages in nix/devenv environments — all four fix sites land atomically to avoid the failIfUnavailable restart-loop trap
+**Depends on**: Phase 28.2
+**Requirements**: SBOX-01, SBOX-02, SBOX-03, SBOX-04
+**Success Criteria** (what must be TRUE):
+  1. `rightclaw up` generates settings.json with `sandbox.ripgrep.command` set to the absolute path of system `rg` (resolved via `which::which("rg")` at launch time — not a nix store path)
+  2. `sandbox.failIfUnavailable: true` is present in every generated settings.json — sandbox failure is fatal, not silent
+  3. `USE_BUILTIN_RIPGREP` is set to `"0"` in CC subprocess invocations (worker.rs and cron.rs) — forces system rg, not the non-executable vendored binary
+  4. `devenv.nix` lists `pkgs.ripgrep` in packages — system rg is present in PATH for all development sessions
+**Plans**: TBD
+
+### Phase 30: Doctor Diagnostics
+**Goal**: `rightclaw doctor` accurately surfaces sandbox dependency state before agents launch, reflecting what agent processes will inherit — not just the developer shell
+**Depends on**: Phase 29
+**Requirements**: DOC-01, DOC-02
+**Success Criteria** (what must be TRUE):
+  1. `rightclaw doctor` reports a Warn (Linux) when `rg` is not reachable in the PATH that process-compose agent processes inherit
+  2. `rightclaw doctor` reads each agent's generated settings.json and reports Warn when `sandbox.ripgrep.command` is absent or points to a non-executable path
+**Plans**: TBD
+
+### Phase 31: E2E Verification
+**Goal**: Full rightclaw up → doctor green → CC sandbox ON → Telegram → cron flow is verified with all three sandbox dependencies (rg, socat, bwrap) explicitly confirmed
+**Depends on**: Phase 30
+**Requirements**: VER-01, VER-02, VER-03
+**Success Criteria** (what must be TRUE):
+  1. Bot subprocess (teloxide → `claude -p --agent`) completes a Telegram reply with CC stderr showing no sandbox warning or degradation message
+  2. Cron subprocess (`claude -p --agent`) fires on schedule with CC stderr showing no sandbox warning
+  3. A repeatable verification script or checklist exists in `tests/e2e/` covering rg, socat, and bwrap availability in the agent launch environment — re-runnable after CC version bumps
+**Plans**: TBD
+
+## Progress
+
+**Execution Order:**
+Phases execute in order: 29 → 30 → 31
+
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 22. DB Schema | v3.0 | 1/1 | Complete | 2026-03-31 |
+| 23. Bot Skeleton | v3.0 | 3/3 | Complete | 2026-03-31 |
+| 24. System Prompt Codegen | v3.0 | 3/3 | Complete | 2026-03-31 |
+| 25. Telegram Handler + CC Dispatch | v3.0 | 3/3 | Complete | 2026-04-01 |
+| 25.5. Agent Definition Codegen | v3.0 | 2/2 | Complete | 2026-04-01 |
+| 26. PC Cutover | v3.0 | 2/2 | Complete | 2026-04-01 |
+| 27. Cron Runtime | v3.0 | 2/2 | Complete | 2026-04-01 |
+| 28. Cronsync SKILL Rewrite | v3.0 | 1/1 | Complete | 2026-04-01 |
+| 28.1. v3.0 UAT | v3.0 | 0/0 | Complete | 2026-04-01 |
+| 28.2. v3.0 UAT Fix | v3.0 | 2/2 | Complete | 2026-04-01 |
+| 29. Sandbox Dependency Fix | v3.1 | 0/TBD | Not started | - |
+| 30. Doctor Diagnostics | v3.1 | 0/TBD | Not started | - |
+| 31. E2E Verification | v3.1 | 0/TBD | Not started | - |

@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Sandbox Fix & Verification
-status: requirements
+status: roadmap
 stopped_at: null
 last_updated: "2026-04-02T15:00:00.000Z"
 last_activity: 2026-04-02
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,21 +21,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Run multiple autonomous Claude Code agents safely -- each sandboxed by native OS-level isolation, orchestrated by a single CLI command.
-**Current focus:** Defining requirements for v3.1 Sandbox Fix & Verification
+**Current focus:** v3.1 Sandbox Fix & Verification — roadmap defined, ready for planning
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 29 (next to execute)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-04-02 — Milestone v3.1 started
-Last activity: 2026-04-01
+Status: Roadmap complete, awaiting plan-phase
+Last activity: 2026-04-02 — Roadmap created for v3.1
 
-Progress: [█░░░░░░░░░] 14%
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
-*Carried from v2.2 for reference:*
+*Carried from v3.0 for reference:*
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
@@ -132,15 +131,17 @@ Recent decisions relevant to v2.3:
 - Phase 19 added: HOME Isolation Hardening — plugin sharing, shell snapshot cleanup, fresh-init UAT
 - Phase 28.1 inserted after Phase 28: v3.0 UAT — manual end-to-end testing of Teloxide bot, cron runtime, and rightclaw up flow (URGENT)
 - Phase 28.2 inserted after Phase 28.1: v3.0 UAT Fix — teloxide missing native-tls (bot restart loop) and doctor nested tokio runtime panic (URGENT)
+- v3.1 roadmap created: Phases 29-31 — Sandbox Fix, Doctor Diagnostics, E2E Verification
 
 ### Pending Todos
 
-None yet.
+None.
 
 ### Blockers/Concerns
 
 - Phase 17 (injection scanning): Practical Rust implementation patterns sparse — needs research pass before coding SEC-01
 - OAuth broken under HOME override on Linux -- ANTHROPIC_API_KEY required for headless (carry-over from v2.2)
+- socat agent PATH inheritance: Verify socat is reachable from the env that agent processes inherit from process-compose (not just devenv shell) — Phase 29 execution must confirm this
 
 ### Quick Tasks Completed
 
@@ -152,6 +153,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-01T21:56:02.092Z
-Stopped at: Completed 28.2-02-PLAN.md
+Last session: 2026-04-02
+Stopped at: Roadmap created for v3.1
 Resume file: None
