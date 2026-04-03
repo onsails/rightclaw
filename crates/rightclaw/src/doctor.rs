@@ -116,6 +116,9 @@ pub fn run_doctor(home: &Path) -> Vec<DoctorCheck> {
     // Tunnel config presence check — Warn severity (D-03)
     checks.push(check_tunnel_config(home));
 
+    // MCP token status check — Warn when any agent has missing/expired tokens (REFRESH-03)
+    checks.push(check_mcp_tokens(home));
+
     checks
 }
 
@@ -646,6 +649,99 @@ fn check_tunnel_config(home: &Path) -> DoctorCheck {
             fix: None,
         },
     }
+}
+
+/// Check MCP OAuth token status across all agents. (REFRESH-03)
+///
+/// Aggregates missing/expired tokens into a single Warn check.
+/// Tokens with expires_at=0 (non-expiring) count as ok (REFRESH-04).
+/// Only synchronous file I/O — no HTTP calls.
+fn check_mcp_tokens_with_creds(home: &Path, credentials_path: &Path) -> DoctorCheck {
+    let agents_dir = home.join("agents");
+
+    if !agents_dir.exists() {
+        return DoctorCheck {
+            name: "mcp-tokens".to_string(),
+            status: CheckStatus::Pass,
+            detail: "all present".to_string(),
+            fix: None,
+        };
+    }
+
+    let entries = match std::fs::read_dir(&agents_dir) {
+        Ok(e) => e,
+        Err(_) => {
+            return DoctorCheck {
+                name: "mcp-tokens".to_string(),
+                status: CheckStatus::Pass,
+                detail: "all present".to_string(),
+                fix: None,
+            };
+        }
+    };
+
+    let mut problems: Vec<String> = vec![];
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let agent_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        let mcp_path = path.join(".mcp.json");
+        let statuses = match crate::mcp::detect::mcp_auth_status(&mcp_path, credentials_path) {
+            Ok(s) => s,
+            Err(_) => continue, // skip agents with unreadable .mcp.json
+        };
+
+        for s in statuses {
+            if matches!(
+                s.state,
+                crate::mcp::detect::AuthState::Missing | crate::mcp::detect::AuthState::Expired
+            ) {
+                problems.push(format!("{agent_name}/{}", s.name));
+            }
+        }
+    }
+
+    if problems.is_empty() {
+        DoctorCheck {
+            name: "mcp-tokens".to_string(),
+            status: CheckStatus::Pass,
+            detail: "all present".to_string(),
+            fix: None,
+        }
+    } else {
+        DoctorCheck {
+            name: "mcp-tokens".to_string(),
+            status: CheckStatus::Warn,
+            detail: format!("missing/expired: {}", problems.join(", ")),
+            fix: Some(
+                "Run /mcp auth <server> in Telegram to authenticate".to_string(),
+            ),
+        }
+    }
+}
+
+/// Thin public wrapper for check_mcp_tokens_with_creds using host credentials path.
+fn check_mcp_tokens(home: &Path) -> DoctorCheck {
+    let credentials_path = match dirs::home_dir() {
+        Some(h) => h.join(".claude").join(".credentials.json"),
+        None => {
+            return DoctorCheck {
+                name: "mcp-tokens".to_string(),
+                status: CheckStatus::Warn,
+                detail: "cannot determine home directory for credentials".to_string(),
+                fix: None,
+            }
+        }
+    };
+    check_mcp_tokens_with_creds(home, &credentials_path)
 }
 
 /// Generate fix guidance for bubblewrap sandbox failures.
