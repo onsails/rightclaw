@@ -146,7 +146,7 @@ Plans:
 **Plans**: 3 plans
 Plans:
 - [x] 35-01-PLAN.md — Extend CredentialToken with client_id/client_secret; backfill OAuth callback
-- [ ] 35-02-PLAN.md — mcp::refresh module: scheduler, per-token loop, refresh grant POST
+- [x] 35-02-PLAN.md — mcp::refresh module: scheduler, per-token loop, refresh grant POST
 - [ ] 35-03-PLAN.md — Bot integration: spawn scheduler; doctor check_mcp_tokens
 
 ## Progress
@@ -167,4 +167,4 @@ Plans:
 | 32. Credential Foundation | v3.2 | 1/1 | Complete    | 2026-04-03 |
 | 33. Auth Detection | v3.2 | 1/1 | Complete    | 2026-04-03 |
 | 34. Core OAuth Flow + Bot | v3.2 | 4/4 | Complete    | 2026-04-03 |
-| 35. Token Refresh | v3.2 | 1/3 | In Progress|  |
+| 35. Token Refresh | v3.2 | 2/3 | In Progress|  |

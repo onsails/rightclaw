@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: MCP OAuth
 status: executing
-stopped_at: Completed 35-01-PLAN.md
-last_updated: "2026-04-03T23:51:27.162Z"
+stopped_at: Completed 35-02-PLAN.md
+last_updated: "2026-04-03T23:55:17.717Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 9
-  completed_plans: 7
+  completed_plans: 8
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-03 after v3.1 milestone)
 ## Current Position
 
 Phase: 35 (token-refresh) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-04-03
 
@@ -48,6 +48,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 34 P03 | 6m | 2 tasks | 9 files |
 | Phase 34 P04 | 12min | 4 tasks | 6 files |
 | Phase 35 P01 | 4m | 2 tasks | 3 files |
+| Phase 35 P02 | 3m | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -77,6 +78,8 @@ Recent decisions relevant to v3.2:
 - [Phase 34]: write_credential takes (path, server_name, server_url, token) and derives key internally; plan interface mismatch auto-corrected
 - [Phase 34]: exchange_token arg order: (client, endpoint, code, redirect_uri, client_id, secret, verifier) — not as documented in plan
 - [Phase 35]: client_id stored as Some(String) always — PendingAuth.client_id is non-optional (DCR or static fallback guarantees it); client_secret is Option to handle public/confidential clients
+- [Phase 35]: deadline_from_unix returns None for expires_at=0 (REFRESH-04), underflow guard, and within-buffer — all mean refresh immediately or never
+- [Phase 35]: refresh_token fallback: keep old token if provider doesn't return new one — handles both rotating and non-rotating providers
 
 ### Pending Todos
 
@@ -90,6 +93,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-03T23:51:27.158Z
-Stopped at: Completed 35-01-PLAN.md
+Last session: 2026-04-03T23:55:17.714Z
+Stopped at: Completed 35-02-PLAN.md
 Resume file: None
