@@ -1,9 +1,11 @@
-//! Teloxide endpoint handlers: message dispatch + /reset command.
+//! Teloxide endpoint handlers: message dispatch + /reset command + /mcp + /doctor.
 //!
 //! handle_message: routes incoming text to the per-session worker via DashMap.
 //! handle_reset: deletes the session row for the current thread.
+//! handle_mcp: MCP server management (list/auth/add/remove).
+//! handle_doctor: runs rightclaw doctor and returns results.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -12,6 +14,7 @@ use teloxide::prelude::*;
 use teloxide::types::Message;
 use teloxide::RequestError;
 
+use super::oauth_callback::PendingAuthMap;
 use super::session::{delete_session, effective_thread_id};
 use super::worker::{DebounceMsg, SessionKey, WorkerContext, spawn_worker};
 use super::BotType;
@@ -155,5 +158,456 @@ pub async fn handle_reset(
     }
     send.await?;
 
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// /mcp command handler
+// ---------------------------------------------------------------------------
+
+/// Handle the /mcp command — routes to subcommands: list, auth, add, remove.
+///
+/// Teloxide captures everything after `/mcp` as a single String (RESEARCH.md Pitfall 9).
+/// We split manually and dispatch.
+pub async fn handle_mcp(
+    bot: BotType,
+    msg: Message,
+    args: String,
+    agent_dir: Arc<PathBuf>,
+    pending_auth: PendingAuthMap,
+    home: Arc<PathBuf>,
+) -> ResponseResult<()> {
+    let parts: Vec<&str> = args.trim().split_whitespace().collect();
+    let result = match parts.first().copied() {
+        None | Some("list") => handle_mcp_list(&bot, &msg, &agent_dir).await,
+        Some("auth") => {
+            let server = match parts.get(1) {
+                Some(s) => *s,
+                None => {
+                    bot.send_message(msg.chat.id, "Usage: /mcp auth <server>").await?;
+                    return Ok(());
+                }
+            };
+            handle_mcp_auth(&bot, &msg, server, &agent_dir, pending_auth, &home).await
+        }
+        Some("add") => {
+            let rest = parts[1..].join(" ");
+            handle_mcp_add(&bot, &msg, &rest, &agent_dir).await
+        }
+        Some("remove") => {
+            let server = match parts.get(1) {
+                Some(s) => *s,
+                None => {
+                    bot.send_message(msg.chat.id, "Usage: /mcp remove <server>").await?;
+                    return Ok(());
+                }
+            };
+            handle_mcp_remove(&bot, &msg, server, &agent_dir).await
+        }
+        Some(unknown) => {
+            bot.send_message(
+                msg.chat.id,
+                format!("Unknown /mcp subcommand: {unknown}\nUsage: /mcp [list|auth|add|remove]"),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|e| e)
+        }
+    };
+    result.map_err(|e| to_request_err(format!("{e:#}")))?;
+    Ok(())
+}
+
+/// `/mcp list` — show auth status for all MCP servers with URLs.
+async fn handle_mcp_list(
+    bot: &BotType,
+    msg: &Message,
+    agent_dir: &Path,
+) -> Result<(), RequestError> {
+    let mcp_path = agent_dir.join(".mcp.json");
+    let cred_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".claude")
+        .join(".credentials.json");
+
+    let statuses = match rightclaw::mcp::detect::mcp_auth_status(&mcp_path, &cred_path) {
+        Ok(s) => s,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("Error reading MCP status: {e:#}"))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if statuses.is_empty() {
+        bot.send_message(msg.chat.id, "No MCP servers with URLs configured.")
+            .await?;
+        return Ok(());
+    }
+
+    let mut text = String::from("MCP Server Status:\n\n");
+    for s in &statuses {
+        let icon = match s.state {
+            rightclaw::mcp::detect::AuthState::Present => "OK",
+            rightclaw::mcp::detect::AuthState::Missing => "MISSING",
+            rightclaw::mcp::detect::AuthState::Expired => "EXPIRED",
+        };
+        text.push_str(&format!("  {} -- {}\n", s.name, icon));
+    }
+    bot.send_message(msg.chat.id, text).await?;
+    Ok(())
+}
+
+/// `/mcp auth <server>` — initiate OAuth flow for the named server.
+///
+/// Full sequence (D-06):
+/// 1. Read .mcp.json for server URL
+/// 2. Read tunnel config (required)
+/// 3. Check cloudflared binary (OAUTH-04)
+/// 4. AS discovery
+/// 5. DCR or static clientId
+/// 6. Generate PKCE + state
+/// 7. Tunnel ROOT healthcheck (OAUTH-05)
+/// 8. Store PendingAuth
+/// 9. Send auth URL to user
+async fn handle_mcp_auth(
+    bot: &BotType,
+    msg: &Message,
+    server_name: &str,
+    agent_dir: &Path,
+    pending_auth: PendingAuthMap,
+    home: &Path,
+) -> Result<(), RequestError> {
+    // 1. Read .mcp.json to find server URL and optional static clientId
+    let mcp_path = agent_dir.join(".mcp.json");
+    let mcp_content = match std::fs::read_to_string(&mcp_path) {
+        Ok(c) => c,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("Cannot read .mcp.json: {e:#}")).await?;
+            return Ok(());
+        }
+    };
+    let mcp_json: serde_json::Value = match serde_json::from_str(&mcp_content) {
+        Ok(v) => v,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("Cannot parse .mcp.json: {e:#}")).await?;
+            return Ok(());
+        }
+    };
+    let server = match mcp_json.get("mcpServers").and_then(|s| s.get(server_name)) {
+        Some(s) => s.clone(),
+        None => {
+            bot.send_message(
+                msg.chat.id,
+                format!("Server '{server_name}' not found in .mcp.json"),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    let server_url = match server.get("url").and_then(|v| v.as_str()) {
+        Some(u) => u.to_string(),
+        None => {
+            bot.send_message(
+                msg.chat.id,
+                format!("Server '{server_name}' has no url field — not an OAuth server"),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    let static_client_id = server
+        .get("clientId")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // 2. Read tunnel config
+    let global_config = match rightclaw::config::read_global_config(home) {
+        Ok(c) => c,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("Cannot read config.yaml: {e:#}")).await?;
+            return Ok(());
+        }
+    };
+    let tunnel = match global_config.tunnel.as_ref() {
+        Some(t) => t.clone(),
+        None => {
+            bot.send_message(
+                msg.chat.id,
+                "Tunnel not configured. Run:\n  rightclaw init --tunnel-token TOKEN --tunnel-url HOSTNAME",
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // 3. Check cloudflared binary (OAUTH-04)
+    if which::which("cloudflared").is_err() {
+        bot.send_message(
+            msg.chat.id,
+            "Error: cloudflared binary not found in PATH. Install cloudflared first.",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    // 4. AS discovery (OAUTH-02)
+    let http_client = reqwest::Client::new();
+    bot.send_message(
+        msg.chat.id,
+        format!("Discovering OAuth endpoints for {server_name}..."),
+    )
+    .await?;
+
+    let metadata = match rightclaw::mcp::oauth::discover_as(&http_client, &server_url).await {
+        Ok(m) => m,
+        Err(e) => {
+            bot.send_message(
+                msg.chat.id,
+                format!("AS discovery failed for {server_name}: {e:#}"),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // 5. DCR or static clientId (OAUTH-03)
+    let agent_name = agent_dir
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let redirect_uri = format!("https://{}/oauth/{}/callback", tunnel.url, agent_name);
+    let (client_id, client_secret) = match rightclaw::mcp::oauth::register_client_or_fallback(
+        &http_client,
+        &metadata,
+        static_client_id.as_deref(),
+        &redirect_uri,
+    )
+    .await
+    {
+        Ok(pair) => pair,
+        Err(e) => {
+            bot.send_message(
+                msg.chat.id,
+                format!("Client registration failed: {e:#}"),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // 6. Generate PKCE + state
+    let (code_verifier, code_challenge) = rightclaw::mcp::oauth::generate_pkce();
+    let state = rightclaw::mcp::oauth::generate_state();
+
+    // 7. Tunnel healthcheck (OAUTH-05) — hit tunnel ROOT to verify cloudflared is running.
+    //    Any HTTP response (including 404 from catch-all) = tunnel is alive.
+    //    Connection refused or timeout = cloudflared is down.
+    let healthcheck_url = format!("https://{}/", tunnel.url);
+    match http_client
+        .get(&healthcheck_url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_server_error() => {
+            bot.send_message(
+                msg.chat.id,
+                format!(
+                    "Tunnel healthcheck returned {} — cloudflared may be misconfigured",
+                    resp.status()
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+        Ok(_) => {} // 2xx/3xx/4xx = tunnel is reachable
+        Err(e) => {
+            bot.send_message(
+                msg.chat.id,
+                format!("Tunnel healthcheck failed: {e:#}\nIs cloudflared running?"),
+            )
+            .await?;
+            return Ok(());
+        }
+    }
+
+    // 8. Store PendingAuth (OAUTH-06)
+    let pending = rightclaw::mcp::oauth::PendingAuth {
+        server_name: server_name.to_string(),
+        server_url: server_url.clone(),
+        code_verifier,
+        state: state.clone(),
+        token_endpoint: metadata.token_endpoint.clone(),
+        client_id: client_id.clone(),
+        client_secret,
+        redirect_uri: redirect_uri.clone(),
+        created_at: std::time::Instant::now(),
+    };
+    pending_auth.lock().await.insert(state.clone(), pending);
+
+    // 9. Build and send auth URL
+    let auth_url =
+        rightclaw::mcp::oauth::build_auth_url(&metadata, &client_id, &redirect_uri, &state, &code_challenge, None);
+    bot.send_message(
+        msg.chat.id,
+        format!("Authenticate {server_name}:\n\n{auth_url}"),
+    )
+    .await?;
+    Ok(())
+}
+
+/// `/mcp add <name> <url> [clientId]` — add a server entry to .mcp.json.
+async fn handle_mcp_add(
+    bot: &BotType,
+    msg: &Message,
+    config_str: &str,
+    agent_dir: &Path,
+) -> Result<(), RequestError> {
+    let parts: Vec<&str> = config_str.split_whitespace().collect();
+    if parts.len() < 2 {
+        bot.send_message(msg.chat.id, "Usage: /mcp add <name> <url> [clientId]")
+            .await?;
+        return Ok(());
+    }
+    let name = parts[0];
+    let url = parts[1];
+    let client_id = parts.get(2).copied();
+
+    let mcp_path = agent_dir.join(".mcp.json");
+    let mut root: serde_json::Value = if mcp_path.exists() {
+        match std::fs::read_to_string(&mcp_path).and_then(|s| {
+            serde_json::from_str(&s).map_err(|e| std::io::Error::other(e.to_string()))
+        }) {
+            Ok(v) => v,
+            Err(e) => {
+                bot.send_message(msg.chat.id, format!("Cannot read .mcp.json: {e:#}")).await?;
+                return Ok(());
+            }
+        }
+    } else {
+        serde_json::json!({})
+    };
+
+    {
+        let servers = root
+            .as_object_mut()
+            .and_then(|o| {
+                let entry = o.entry("mcpServers").or_insert_with(|| serde_json::json!({}));
+                entry.as_object_mut()
+            });
+        match servers {
+            Some(s) => {
+                let mut entry = serde_json::json!({"url": url});
+                if let Some(cid) = client_id {
+                    entry
+                        .as_object_mut()
+                        .unwrap()
+                        .insert("clientId".to_string(), serde_json::json!(cid));
+                }
+                s.insert(name.to_string(), entry);
+            }
+            None => {
+                bot.send_message(msg.chat.id, "Error: .mcp.json root or mcpServers is not an object").await?;
+                return Ok(());
+            }
+        }
+    }
+
+    match serde_json::to_string_pretty(&root)
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        .and_then(|s| std::fs::write(&mcp_path, s))
+    {
+        Ok(_) => {
+            bot.send_message(msg.chat.id, format!("Added MCP server: {name}"))
+                .await?;
+        }
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("Failed to write .mcp.json: {e:#}"))
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+/// `/mcp remove <server>` — remove a server entry from .mcp.json.
+async fn handle_mcp_remove(
+    bot: &BotType,
+    msg: &Message,
+    server_name: &str,
+    agent_dir: &Path,
+) -> Result<(), RequestError> {
+    let mcp_path = agent_dir.join(".mcp.json");
+    if !mcp_path.exists() {
+        bot.send_message(msg.chat.id, "No .mcp.json found.").await?;
+        return Ok(());
+    }
+
+    let content = match std::fs::read_to_string(&mcp_path) {
+        Ok(c) => c,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("Cannot read .mcp.json: {e:#}")).await?;
+            return Ok(());
+        }
+    };
+    let mut root: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("Cannot parse .mcp.json: {e:#}")).await?;
+            return Ok(());
+        }
+    };
+
+    let removed = root
+        .get_mut("mcpServers")
+        .and_then(|s| s.as_object_mut())
+        .and_then(|s| s.remove(server_name));
+
+    if removed.is_some() {
+        match serde_json::to_string_pretty(&root)
+            .map_err(|e| std::io::Error::other(e.to_string()))
+            .and_then(|s| std::fs::write(&mcp_path, s))
+        {
+            Ok(_) => {
+                bot.send_message(msg.chat.id, format!("Removed MCP server: {server_name}"))
+                    .await?;
+            }
+            Err(e) => {
+                bot.send_message(msg.chat.id, format!("Failed to write .mcp.json: {e:#}"))
+                    .await?;
+            }
+        }
+    } else {
+        bot.send_message(
+            msg.chat.id,
+            format!("Server '{server_name}' not found in .mcp.json"),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// /doctor command handler
+// ---------------------------------------------------------------------------
+
+/// Handle the /doctor command — run all doctor checks and return results.
+pub async fn handle_doctor(
+    bot: BotType,
+    msg: Message,
+    home: Arc<PathBuf>,
+) -> ResponseResult<()> {
+    let checks = rightclaw::doctor::run_doctor(&home);
+    let mut text = String::from("Doctor results:\n\n");
+    for check in &checks {
+        text.push_str(&format!("{check}\n"));
+    }
+    let pass_count = checks
+        .iter()
+        .filter(|c| matches!(c.status, rightclaw::doctor::CheckStatus::Pass))
+        .count();
+    text.push_str(&format!("\n{pass_count}/{} checks passed", checks.len()));
+    bot.send_message(msg.chat.id, text).await?;
     Ok(())
 }
