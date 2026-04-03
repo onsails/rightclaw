@@ -1,5 +1,17 @@
 # Milestones
 
+## v3.1 Sandbox Fix & Verification (Shipped: 2026-04-03)
+
+**Phases completed:** 3 phases, 3 plans, 4 tasks
+
+**Key accomplishments:**
+
+- Fix CC sandbox silent disable in nix by injecting system rg path, failIfUnavailable flag, correcting USE_BUILTIN_RIPGREP polarity, and adding ripgrep to devenv
+- DOC-01: `check_rg_in_path() -> DoctorCheck`
+- 4-stage bash pipeline in tests/e2e/verify-sandbox.sh confirms CC sandbox engagement via doctor pre-flight, dependency PATH check, settings.json pre-flight, and CC smoke test with failIfUnavailable:true exit-code proof
+
+---
+
 ## v2.5 RightCron Reliability (Shipped: 2026-03-31)
 
 **Phases:** 1 complete, 1 cancelled | **Plans:** 2 | **Code changes:** 3 files, +53/-8 lines
