@@ -75,10 +75,49 @@
 
 ---
 
+## Milestone: v3.1 — Sandbox Fix & Verification
+
+**Shipped:** 2026-04-03
+**Phases:** 3 | **Plans:** 3 | **Sessions:** 2
+
+### What Was Built
+- `sandbox.ripgrep.command` injected into per-agent settings.json via `which::which("rg")` at `rightclaw up` time; `USE_BUILTIN_RIPGREP` polarity corrected; `failIfUnavailable:true` added unconditionally
+- `rightclaw doctor` extended with `check_rg_in_path()` (Linux, Warn) and `check_ripgrep_in_settings()` (cross-platform, per-agent Warn); tests extracted to `doctor_tests.rs` per 900-line rule
+- `tests/e2e/verify-sandbox.sh` — 4-stage bash pipeline proving CC sandbox engagement via exit-code strategy under `failIfUnavailable:true`; live-confirmed 2026-04-03
+
+### What Worked
+- **Fail-fast over silent-fail design:** Adding `failIfUnavailable:true` unconditionally (even with `--no-sandbox`) means broken sandbox configs fail loudly at CC launch — much easier to diagnose than the previous silent degradation
+- **Exit-code proof for E2E:** Rejecting stderr grep in favour of exit-code-under-failIfUnavailable was the right call. Stderr messages are brittle across CC versions; exit code is stable. Caught by audit: VER-01 comment overclaims, but proof is solid.
+- **TDD for doctor checks:** All 41 doctor tests pass. The test-first approach for check_ripgrep_in_settings caught edge cases (absent key, non-executable path, invalid JSON) that were easy to miss.
+- **Live run during execute-phase:** Running verify-sandbox.sh immediately after execution rather than deferring to a separate verification phase caught the `claude` → `claude-bun` binary issue right away.
+
+### What Was Inefficient
+- **`rightclaw up` for settings regeneration requires a TTY:** Had to use `--detach` workaround to regenerate settings.json during E2E testing. A `rightclaw regen-settings` or similar standalone command would be cleaner.
+- **Phase 31 plan didn't account for `claude-bun` binary:** The plan hardcoded `claude` in Stage 4. The fix was trivial (1 line) but the gap should have been caught in planning since `claude-bun` is documented in project memory.
+- **Merge conflict from worktree execution:** The parallel executor worktree had stale data for `completed_phases` and `total_plans` in STATE.md, requiring manual conflict resolution. The gsd-tools `begin-phase` call (which runs before the worktree forks) and the worktree's completion should reconcile more cleanly.
+
+### Patterns Established
+- **E2E scripts live in `tests/e2e/`**, `last-run.log` excluded via `.gitignore` — first entry in this directory
+- **CC binary resolution:** Always use `which("claude").or_else(|_| which("claude-bun"))` pattern — mirrors `worker.rs` and handles nix vs system installs
+- **Sandbox proof via failIfUnavailable:** Exit 0 under `failIfUnavailable:true` is the canonical way to prove sandbox engagement — document this as the pattern for future verification scripts
+
+### Key Lessons
+1. **Live run immediately:** Don't defer E2E testing to a separate verification phase. Run the script right after execution — catches environment issues (missing binaries, missing settings.json fields) while context is fresh.
+2. **Plan environment assumptions explicitly:** `claude-bun` vs `claude` is documented in memory but wasn't in the plan. Plan steps that invoke external binaries should explicitly note fallback binary names.
+3. **failIfUnavailable is your friend:** Make sandbox failures fatal early. Silent degradation is the worst failure mode for security-relevant features — it masks real problems and creates false confidence.
+
+### Cost Observations
+- Small, focused milestone: 3 phases, 3 plans, 2 days
+- Most expensive part was the E2E script execution (CC API calls cost ~$0.06 per smoke test run)
+- Doctor check extraction to `doctor_tests.rs` was overhead but necessary for 900-line compliance
+
+---
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | What Shipped | Outcome |
 |-----------|--------|-------|-------------|---------|
+| v3.1 Sandbox Fix & Verification | 3 | 3 | rg injection, failIfUnavailable, doctor, E2E script | ✓ Full delivery, live-confirmed |
 | v2.5 RightCron Reliability | 1+1cancelled | 2 | Inline bootstrap + CHECK/RECONCILE redesign | ✓ Code shipped, E2E deferred |
 | v2.4 Sandbox Telegram Fix | 1 | 1 | CC channels bug diagnosis | Deferred fix to CC |
 | v2.3 Memory System | 4 | 9 | SQLite memory, MCP server, CLI inspection | ✓ Full delivery |

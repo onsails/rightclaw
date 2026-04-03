@@ -8,9 +8,9 @@ RightClaw is a multi-agent runtime for Claude Code. Each agent runs as an indepe
 
 Run multiple autonomous Claude Code agents safely — each sandboxed by native OS-level isolation, each with its own sandbox configuration and identity, orchestrated by a single CLI command.
 
-## Current Milestone: v3.1 Sandbox Fix & Verification
+## Current Milestone: v3.2 (TBD)
 
-**Goal:** Fix CC sandbox dependency detection for nix environments and verify all rightclaw functionality end-to-end with sandbox actually enabled.
+**Goal:** Next milestone — to be defined.
 
 **Target features:**
 - Fix sandbox so CC finds its dependencies when launched from rightclaw (nix vendored ripgrep path issue)
@@ -132,6 +132,9 @@ None — v3.1 milestone complete.
 | Generated system prompt for CronSync | Non-editable, regenerated on each `up` | ✓ Good |
 | Inline bootstrap on main thread (v2.5) | CronCreate is main-thread-only; subagents can't call it | ✓ Good |
 | CRITICAL guard + CHECK/RECONCILE split (v2.5) | Structural prevention of Agent tool delegation in reconciler | ✓ Good |
+| sandbox.failIfUnavailable: true unconditional (v3.1) | Silent sandbox degradation caused invisible failures; fatal is safer than silent | ✓ Good |
+| Exit-code proof for E2E sandbox verification (v3.1) | Stderr grep is brittle across CC versions; exit 0 under failIfUnavailable is definitive | ✓ Good |
+| claude → claude-bun binary fallback in verify-sandbox.sh (v3.1) | Nix installs `claude-bun`, not `claude`; mirrors worker.rs which() fallback pattern | ✓ Good |
 
 ## Evolution
 
@@ -152,11 +155,12 @@ This document evolves at phase transitions and milestone boundaries.
 
 ## Current State
 
-**v3.1 in progress** — Phase 30 complete (2026-04-02): Doctor diagnostics. `check_rg_in_path()` (Linux, Warn) and `check_ripgrep_in_settings()` (cross-platform, per-agent `sandbox-rg/{name}`) added to `rightclaw doctor`. Tests extracted to `doctor_tests.rs` (900-line compliance). DOC-01, DOC-02 validated. Phase 29 complete (2026-04-02): Sandbox dependency fix — system `rg` path injected into CC sandbox settings.json, `USE_BUILTIN_RIPGREP` polarity fixed, `failIfUnavailable: true` added, ripgrep added to devenv.nix.
+**v3.1 shipped** (2026-04-03). Sandbox Fix & Verification complete.
 
-**v3.0 complete** (2026-04-01). Teloxide Bot Runtime — Phase 28.2 complete: UAT gap closure. teloxide TLS backend fixed (rustls added to workspace dep). `fetch_webhook_url` in doctor.rs fixed via `tokio::task::block_in_place` — no more nested runtime panic. All 5 must-haves verified. Phase 28 complete: cronsync skill rewrite. `skills/cronsync/SKILL.md` rewritten from 295-line reconciler to 117-line file-management skill. All CronCreate/CronDelete/CronList references, bootstrap, reconciliation, state.json, and lock guard wrapper removed. Added `## Checking Run History` section documenting `cron_list_runs`/`cron_show_run` MCP tools. SKILL-01–SKILL-03 validated. Phase 27 complete: Cron runtime. `cron.rs` tokio task polls `crons/*.yaml` every 60s, runs `claude -p --agent` subprocesses on schedule, records run history in `cron_runs` table (V3 migration). Lock files prevent duplicate runs; stale locks auto-cleared. MCP server renamed to "rightclaw" with `cron_list_runs`/`cron_show_run` tools. CRON-01–CRON-06 validated. Phase 26 complete: PC cutover. `rightclaw up` now generates bot-only process-compose.yaml (BotProcessAgent, no CC channels, no is_interactive). deleteWebhook called on bot startup (fatal if fails). Doctor warns on active webhooks. PC-01–PC-05 validated. Phase 25.5 complete: Agent definition codegen. `rightclaw up` now writes `.claude/agents/<name>.md` + `reply-schema.json` per agent; `worker.rs` migrated to `--agent`/`--json-schema` structured output; `system_prompt.rs` deleted. Phase 25 complete: Telegram handler + CC dispatch. session.rs CRUD, worker.rs (debounce + CC subprocess), handler.rs + dispatch.rs (DashMap worker map, BotCommand, SIGTERM shutdown).
-
-**v2.5 shipped** (2026-03-31). RightCron Reliability — fixed startup_prompt Agent tool delegation (bootstrap now runs inline on main thread with CronCreate access), restructured cronsync SKILL.md with CRITICAL guard and CHECK/RECONCILE phase split. Phase 22 (E2E verification) cancelled — user chose new milestone approach. [Full archive](milestones/v2.5-ROADMAP.md)
+- System `rg` path injected into CC sandbox settings.json via `which::which("rg")` at `rightclaw up` time; `USE_BUILTIN_RIPGREP` polarity fixed to `"0"`; `failIfUnavailable: true` added unconditionally
+- `rightclaw doctor` now surfaces ripgrep PATH availability (Linux, Warn) and validates settings.json sandbox.ripgrep.command per-agent (cross-platform, Warn)
+- `tests/e2e/verify-sandbox.sh` — 4-stage repeatable verification script; live-run confirmed all checks pass against real agent (2026-04-03)
+- CC binary resolved as `claude` → `claude-bun` fallback (mirrors `worker.rs` `which()` pattern)
 
 **Shipped versions:**
 - v1.0 (2026-03-23): Core runtime — CLI, process-compose, OpenShell sandbox, Telegram, skills, RightCron
@@ -166,14 +170,16 @@ This document evolves at phase transitions and milestone boundaries.
 - v2.3 (2026-03-27): Memory system — per-agent SQLite, MCP server, CLI inspection
 - v2.4 (2026-03-28): Telegram diagnosis — iv6/M6 gap identified, fix deferred to CC upstream
 - v2.5 (2026-03-31): RightCron reliability — inline bootstrap + CHECK/RECONCILE skill redesign
+- v3.0 (2026-04-01): Teloxide bot runtime — native Rust bot, CC agent dispatch, cron runtime, PC cutover
+- v3.1 (2026-04-03): Sandbox fix — nix ripgrep path, failIfUnavailable enforcement, doctor diagnostics, E2E verification script
 
 **Known limitations:**
 - SEED-002: BOOTSTRAP.md onboarding doesn't trigger via Telegram
 - SEED-011: CC channels bug (iv6/M6 gap) — Telegram stops responding after SubagentStop; waiting for CC upstream fix
-- VER-01 (rightcron E2E verification) not yet validated — cancelled from v2.5, may be addressed in next milestone
 - `rightclaw restart` status unknown — changed `is_tty` to `is_interactive`; restart may now work
 - `test_status_no_running_instance` integration test fails (pre-existing)
 - Tech debt: git absence warning in `verify_dependencies()` but not surfaced by `rightclaw doctor`
+- VER-01 description in verify-sandbox.sh slightly overclaims — matches cron.rs pattern, not worker.rs `--resume` path (sandbox correctness unaffected)
 
 ---
-*Last updated: 2026-04-03
+*Last updated: 2026-04-03 after v3.1 milestone*
