@@ -98,7 +98,9 @@ See [milestones/v3.1-ROADMAP.md](milestones/v3.1-ROADMAP.md)
   1. Unit test `mcp_oauth_key("notion", "http", "https://mcp.notion.com/mcp") == "notion|eac663db915250e7"` passes — key formula is verified against live CC credential data
   2. Concurrent `rightclaw` invocations writing to `.credentials.json` do not corrupt the file — atomic tmp+rename write with backup before modification
   3. Writing an MCP token never removes or modifies `claudeAiOauth` or other unrelated keys already in the file
-**Plans**: TBD
+**Plans**: 1 plan
+Plans:
+- [ ] 32-01-PLAN.md — mcp/credentials module: key derivation + atomic write with backup rotation
 
 ### Phase 33: Auth Detection
 **Goal**: Operators can see which MCP servers need OAuth and get warned before launching agents with unauthenticated servers
@@ -162,7 +164,7 @@ See [milestones/v3.1-ROADMAP.md](milestones/v3.1-ROADMAP.md)
 | 29. Sandbox Dependency Fix | v3.1 | 1/1 | Complete | 2026-04-02 |
 | 30. Doctor Diagnostics | v3.1 | 1/1 | Complete | 2026-04-02 |
 | 31. E2E Verification | v3.1 | 1/1 | Complete | 2026-04-03 |
-| 32. Credential Foundation | v3.2 | 0/? | Not started | - |
+| 32. Credential Foundation | v3.2 | 0/1 | Not started | - |
 | 33. Auth Detection | v3.2 | 0/? | Not started | - |
 | 34. Core OAuth Flow | v3.2 | 0/? | Not started | - |
 | 35. Token Refresh | v3.2 | 0/? | Not started | - |
