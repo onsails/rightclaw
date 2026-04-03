@@ -27,8 +27,8 @@
 
 ### REFRESH — Token Refresh
 
-- [ ] **REFRESH-01**: Operator can run `rightclaw mcp refresh [<server>] [--agent <name>]` to on-demand refresh an MCP OAuth token without user interaction (uses `refresh_token`, no browser)
-- [ ] **REFRESH-02**: `rightclaw up` proactively refreshes tokens with expired `expiresAt` before launching agents (non-fatal — logs Warn if refresh fails, continues launch)
+- ~~[ ] **REFRESH-01**: Operator can run `rightclaw mcp refresh [<server>] [--agent <name>]` to on-demand refresh an MCP OAuth token without user interaction (uses `refresh_token`, no browser)~~ *(superseded by D-01 — bot scheduler owns all refresh logic)*
+- ~~[ ] **REFRESH-02**: `rightclaw up` proactively refreshes tokens with expired `expiresAt` before launching agents (non-fatal — logs Warn if refresh fails, continues launch)~~ *(superseded by D-02 — bot startup handles refresh; `rightclaw up` retains Warn-only detection from DETECT-02)*
 - [ ] **REFRESH-03**: `rightclaw doctor` reports missing/expired MCP OAuth tokens per agent (Warn severity) and checks that `cloudflared` binary is available in PATH (Warn severity)
 - [ ] **REFRESH-04**: Tokens with `expiresAt=0` are skipped by the refresh loop and treated as non-expiring (handles Linear and similar providers)
 
@@ -80,8 +80,8 @@
 | OAUTH-05 | Phase 34 | Complete |
 | OAUTH-06 | Phase 34 | Complete |
 | OAUTH-07 | Phase 34 | Complete |
-| REFRESH-01 | Phase 35 | Pending |
-| REFRESH-02 | Phase 35 | Pending |
+| REFRESH-01 | Phase 35 | Superseded (D-01) |
+| REFRESH-02 | Phase 35 | Superseded (D-02) |
 | REFRESH-03 | Phase 35 | Pending |
 | REFRESH-04 | Phase 35 | Pending |
 | BOT-01 | Phase 34 | Complete |
