@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use crate::mcp::credentials::{read_credential, write_credential, CredentialError, CredentialToken};
+use crate::mcp::credentials::{read_credential, CredentialError};
+
+#[cfg(test)]
+use crate::mcp::credentials::{write_credential, CredentialToken};
 
 /// Auth state for an MCP server's OAuth token.
 #[derive(Debug, Clone, PartialEq)]
