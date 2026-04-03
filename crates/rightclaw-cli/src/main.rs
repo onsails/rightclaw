@@ -98,6 +98,12 @@ pub enum Commands {
         /// (e.g. --telegram-allowed-chat-ids 12345678,100200300)
         #[arg(long, value_delimiter = ',')]
         telegram_allowed_chat_ids: Vec<i64>,
+        /// Cloudflare Tunnel token (from Cloudflare dashboard — used for OAuth callbacks)
+        #[arg(long)]
+        tunnel_token: Option<String>,
+        /// Tunnel public URL (operator-managed subdomain, e.g. rightclaw.example.com)
+        #[arg(long)]
+        tunnel_url: Option<String>,
     },
     /// List discovered agents and their status
     List,
@@ -193,7 +199,7 @@ async fn main() -> miette::Result<()> {
     )?;
 
     match cli.command {
-        Commands::Init { telegram_token, telegram_allowed_chat_ids } => cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids),
+        Commands::Init { telegram_token, telegram_allowed_chat_ids, tunnel_token, tunnel_url } => cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids, tunnel_token.as_deref(), tunnel_url.as_deref()),
         Commands::List => cmd_list(&home),
         Commands::Doctor => cmd_doctor(&home),
         Commands::Up {
@@ -236,7 +242,23 @@ async fn main() -> miette::Result<()> {
     }
 }
 
-fn cmd_init(home: &Path, telegram_token: Option<&str>, telegram_allowed_chat_ids: &[i64]) -> miette::Result<()> {
+fn cmd_init(
+    home: &Path,
+    telegram_token: Option<&str>,
+    telegram_allowed_chat_ids: &[i64],
+    tunnel_token: Option<&str>,
+    tunnel_url: Option<&str>,
+) -> miette::Result<()> {
+    // Validate tunnel args before doing any work — both or neither.
+    match (tunnel_token, tunnel_url) {
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(miette::miette!(
+                "both --tunnel-token and --tunnel-url are required together"
+            ));
+        }
+        _ => {}
+    }
+
     // If --telegram-token flag provided, validate it upfront.
     // Otherwise prompt interactively.
     let token = match telegram_token {
@@ -260,6 +282,19 @@ fn cmd_init(home: &Path, telegram_token: Option<&str>, telegram_allowed_chat_ids
     if !telegram_allowed_chat_ids.is_empty() {
         println!("Telegram chat ID allowlist configured.");
     }
+
+    // Write tunnel config if both flags provided.
+    if let (Some(t_token), Some(t_url)) = (tunnel_token, tunnel_url) {
+        let config = rightclaw::config::GlobalConfig {
+            tunnel: Some(rightclaw::config::TunnelConfig {
+                token: t_token.to_string(),
+                url: t_url.to_string(),
+            }),
+        };
+        rightclaw::config::write_global_config(home, &config)?;
+        println!("Tunnel config written to {}/config.yaml", home.display());
+    }
+
     Ok(())
 }
 
