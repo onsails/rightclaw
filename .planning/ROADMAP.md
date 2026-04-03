@@ -11,7 +11,7 @@
 - ✅ **v2.5 RightCron Reliability** - Phase 21 (shipped 2026-03-31)
 - ✅ **v3.0 Teloxide Bot Runtime** - Phases 22-28.2 (shipped 2026-04-01)
 - ✅ **v3.1 Sandbox Fix & Verification** - Phases 29-31 (shipped 2026-04-03)
-- 🚧 **v3.2 MCP OAuth** - Phases 32-36 (in progress)
+- 🚧 **v3.2 MCP OAuth** - Phases 32-35 (in progress)
 
 ## Phases
 
@@ -84,9 +84,8 @@ See [milestones/v3.1-ROADMAP.md](milestones/v3.1-ROADMAP.md)
 
 - [x] **Phase 32: Credential Foundation** - Correct key formula + atomic credential writes (completed 2026-04-03)
 - [x] **Phase 33: Auth Detection** - Per-agent MCP auth status surface and pre-flight warning (completed 2026-04-03)
-- [ ] **Phase 34: Core OAuth Flow** - Full OAuth 2.1 + PKCE with cloudflared tunnel + agent restart
+- [ ] **Phase 34: Core OAuth Flow + Bot MCP Commands** - Full OAuth 2.1 + PKCE with cloudflared named tunnel + bot commands (merged with former Phase 36)
 - [ ] **Phase 35: Token Refresh** - On-demand refresh, pre-flight refresh, doctor integration
-- [ ] **Phase 36: Telegram Bot MCP Commands** - /mcp and /doctor commands via Teloxide bot
 
 ## Phase Details
 
@@ -114,19 +113,24 @@ Plans:
 Plans:
 - [x] 33-01-PLAN.md — mcp::detect module + CLI wiring for mcp status + cmd_up warn
 
-### Phase 34: Core OAuth Flow
-**Goal**: Operators can complete a full OAuth 2.1 + PKCE flow for any named MCP server via `rightclaw mcp auth`, with tokens written to CC's credential store and the agent restarted automatically
+### Phase 34: Core OAuth Flow + Bot MCP Commands
+**Goal**: Operators can complete a full OAuth 2.1 + PKCE flow for any named MCP server via Telegram bot `/mcp auth`, with tokens written to CC's credential store and the agent restarted automatically. All MCP management commands (/mcp list, /mcp auth, /mcp add, /mcp remove, /doctor) are available in Telegram. cloudflared named tunnel provides stable callback URL.
 **Depends on**: Phase 33
 **Requirements**: OAUTH-01, OAUTH-02, OAUTH-03, OAUTH-04, OAUTH-05, OAUTH-06, OAUTH-07
 **Success Criteria** (what must be TRUE):
-  1. `rightclaw mcp auth <server> [--agent <name>]` completes the full flow end-to-end: AS discovery → DCR (or static client fallback) → PKCE auth URL → cloudflared tunnel → callback → token write → agent restart
+  1. `/mcp auth <server>` via Telegram completes the full flow end-to-end: AS discovery -> DCR (or static client fallback) -> PKCE auth URL -> cloudflared tunnel -> callback -> token write -> agent restart
   2. AS discovery tries RFC 9728 (resource metadata) first, then RFC 8414 (AS metadata), then OIDC well-known — visible in debug output and confirmed by unit test
   3. If the MCP server has no `registration_endpoint`, the flow falls back to the static `clientId` from `.mcp.json` without error
-  4. If `cloudflared` binary is absent, the command exits with a clear error before any OAuth state is created
-  5. Tunnel healthcheck fails before presenting auth URL if the cloudflared URL is not reachable — command aborts with error
-  6. PKCE verifier and state are persisted to file before browser opens; axum callback server on a random loopback port receives the redirect through the tunnel
+  4. If `cloudflared` binary is absent, the bot replies with a clear error before any OAuth state is created
+  5. Tunnel healthcheck fails before presenting auth URL if the cloudflared URL is not reachable — bot replies with error
+  6. PKCE verifier and state are stored in-process; axum callback server on a Unix socket receives the redirect through the tunnel
   7. After successful token exchange, the token appears in `~/.claude/.credentials.json` under the correct key and the agent process is restarted via process-compose REST API
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+- [ ] 34-01-PLAN.md — Foundation: workspace deps, OAuth types, GlobalConfig, init --tunnel-token/--tunnel-url
+- [ ] 34-02-PLAN.md — OAuth engine: AS discovery, DCR, PKCE, token exchange
+- [ ] 34-03-PLAN.md — cloudflared integration: config generation, process-compose entry, doctor checks
+- [ ] 34-04-PLAN.md — Bot integration: axum UDS callback server, /mcp and /doctor commands
 
 ### Phase 35: Token Refresh
 **Goal**: Operators can refresh MCP OAuth tokens without re-authenticating, and `rightclaw up` proactively refreshes expired tokens before launching agents
@@ -137,18 +141,6 @@ Plans:
   2. `rightclaw up` refreshes tokens with expired `expiresAt` before launching agents; if refresh fails, logs Warn and continues (does not abort launch)
   3. `rightclaw doctor` reports missing or expired MCP OAuth tokens per agent (Warn severity) and confirms `cloudflared` is available in PATH (Warn severity)
   4. Tokens with `expiresAt=0` are skipped by the refresh loop and treated as non-expiring (Linear and similar providers)
-**Plans**: TBD
-
-### Phase 36: Telegram Bot MCP Commands
-**Goal**: Users can manage MCP server authentication and configuration for an agent directly from Telegram without CLI access
-**Depends on**: Phase 35
-**Requirements**: BOT-01, BOT-02, BOT-03, BOT-04, BOT-05
-**Success Criteria** (what must be TRUE):
-  1. Sending `/mcp` in Telegram returns a list of MCP servers for the agent with their current auth status (present / missing / expired)
-  2. Sending `/mcp auth <server>` triggers the OAuth flow — bot replies with the auth URL; after the user completes the flow, bot confirms success or reports the specific tunnel/auth error
-  3. Sending `/mcp add <config>` adds a new MCP server entry to the agent's `.mcp.json` with the same syntax as `claude mcp add`
-  4. Sending `/mcp remove <server>` removes the named server from the agent's `.mcp.json`
-  5. Sending `/doctor` runs `rightclaw doctor` and returns the full output in chat, including tunnel availability and MCP token status per server
 **Plans**: TBD
 
 ## Progress
@@ -168,6 +160,5 @@ Plans:
 | 31. E2E Verification | v3.1 | 1/1 | Complete | 2026-04-03 |
 | 32. Credential Foundation | v3.2 | 1/1 | Complete    | 2026-04-03 |
 | 33. Auth Detection | v3.2 | 1/1 | Complete    | 2026-04-03 |
-| 34. Core OAuth Flow | v3.2 | 0/? | Not started | - |
+| 34. Core OAuth Flow + Bot | v3.2 | 0/4 | Not started | - |
 | 35. Token Refresh | v3.2 | 0/? | Not started | - |
-| 36. Telegram Bot MCP Commands | v3.2 | 0/? | Not started | - |
