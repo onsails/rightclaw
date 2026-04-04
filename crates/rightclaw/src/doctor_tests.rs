@@ -814,3 +814,36 @@ fn check_mcp_tokens_nonexpiring_is_ok() {
     assert_eq!(result.status, CheckStatus::Pass, "expires_at=0 must be Pass");
     assert_eq!(result.name, "mcp-tokens");
 }
+
+// ── tunnel-token checks (D-09) ───────────────────────────────────────────────
+
+#[test]
+fn tunnel_token_valid_jwt_passes() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let payload =
+        URL_SAFE_NO_PAD.encode(r#"{"t":"aaaabbbb-0000-1111-2222-ccccddddeeee"}"#.as_bytes());
+    let token = format!("hdr.{payload}.sig");
+    let cfg = rightclaw::config::TunnelConfig { token, hostname: "example.com".to_string() };
+    let check = check_tunnel_token(&cfg);
+    assert_eq!(check.status, CheckStatus::Pass);
+    assert!(
+        check.detail.contains("aaaabbbb-0000-1111-2222-ccccddddeeee"),
+        "detail: {}",
+        check.detail
+    );
+}
+
+#[test]
+fn tunnel_token_invalid_warns() {
+    let cfg = rightclaw::config::TunnelConfig {
+        token: "not.a.valid.token.at.all".to_string(),
+        hostname: "example.com".to_string(),
+    };
+    let check = check_tunnel_token(&cfg);
+    assert_eq!(check.status, CheckStatus::Warn);
+    assert!(
+        check.detail.contains("cannot extract tunnel UUID"),
+        "detail: {}",
+        check.detail
+    );
+}
