@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: MCP OAuth
-status: completed
+status: executing
 stopped_at: Phase 37 context gathered
-last_updated: "2026-04-04T22:13:33.580Z"
-last_activity: 2026-04-04 -- Phase 36 execution started
+last_updated: "2026-04-04T22:24:03.726Z"
+last_activity: 2026-04-04 -- Phase 37 planning complete
 progress:
   total_phases: 5
   completed_phases: 5
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-04-03 after v3.1 milestone)
 
 Phase: 36 (auto-derive-cfargotunnel-hostname-from-tunnel-token-jwt) — COMPLETE
 Plan: 1 of 1
-Status: Milestone v3.2 MCP OAuth — all phases complete
-Last activity: 2026-04-04 -- Phase 36 execution started
+Status: Ready to execute
+Last activity: 2026-04-04 -- Phase 37 planning complete
 
 Progress: [░░░░░░░░░░] 0%
 
