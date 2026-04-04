@@ -43,23 +43,21 @@ fn restart_policy_str(policy: &RestartPolicy) -> &'static str {
 /// Only agents with `telegram_token` or `telegram_token_file` configured produce
 /// a bot process entry. Agents without a Telegram token are excluded entirely.
 ///
-/// When `tunnel_token` and `cloudflared_config_path` are both `Some`, a `cloudflared`
-/// process entry is added to the config. cloudflared runs alongside agent bot processes
-/// using the named tunnel token and the pre-generated ingress config.
+/// When `cloudflared_script_path` is `Some`, a `cloudflared` process entry is added
+/// to the config. The entry's command is the script path — the script handles DNS
+/// routing and tunnel startup.
 ///
 /// # Arguments
 ///
 /// * `agents` — all discovered agents (filtered internally by Telegram token presence)
 /// * `exe_path` — absolute path to the rightclaw binary
 /// * `debug` — pass `--debug` to each bot process
-/// * `tunnel_token` — optional cloudflare tunnel token from `GlobalConfig`
-/// * `cloudflared_config_path` — optional path to generated cloudflared-config.yml
+/// * `cloudflared_script_path` — optional path to the generated cloudflared-start.sh script
 pub fn generate_process_compose(
     agents: &[AgentDef],
     exe_path: &Path,
     debug: bool,
-    tunnel_token: Option<&str>,
-    cloudflared_config_path: Option<&str>,
+    cloudflared_script_path: Option<&str>,
 ) -> miette::Result<String> {
     let bot_agents: Vec<BotProcessAgent> = agents
         .iter()
@@ -106,8 +104,7 @@ pub fn generate_process_compose(
 
     tmpl.render(context! {
         agents => bot_agents,
-        tunnel_token => tunnel_token,
-        cloudflared_config_path => cloudflared_config_path,
+        cloudflared_script_path => cloudflared_script_path,
     })
     .map_err(|e| miette::miette!("template render error: {e:#}"))
 }
