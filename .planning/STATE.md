@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: MCP OAuth
 status: verifying
-stopped_at: Completed 35-03-PLAN.md
-last_updated: "2026-04-04T00:02:48.132Z"
+stopped_at: Phase 36 context gathered
+last_updated: "2026-04-04T20:19:03.583Z"
 last_activity: 2026-04-04
 progress:
-  total_phases: 4
+  total_phases: 5
   completed_phases: 4
   total_plans: 9
   completed_plans: 9
-  percent: 0
+  percent: 100
 ---
 
 # Project State
@@ -52,6 +52,10 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 35 P03 | 5m | 2 tasks | 3 files |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 36 added: Auto-derive cfargotunnel hostname from tunnel token JWT
 
 ### Decisions
 
@@ -95,6 +99,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-03T23:59:38.934Z
-Stopped at: Completed 35-03-PLAN.md
-Resume file: None
+Last session: 2026-04-04T20:19:03.580Z
+Stopped at: Phase 36 context gathered
+Resume file: .planning/phases/36-auto-derive-cfargotunnel-hostname-from-tunnel-token-jwt/36-CONTEXT.md
