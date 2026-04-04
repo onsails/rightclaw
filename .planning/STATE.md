@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: MCP OAuth
-status: complete
-stopped_at: Phase 36 complete
-last_updated: "2026-04-04T21:00:00.000Z"
-last_activity: 2026-04-04 -- Phase 36 complete
+status: completed
+stopped_at: Phase 37 context gathered
+last_updated: "2026-04-04T22:13:33.580Z"
+last_activity: 2026-04-04 -- Phase 36 execution started
 progress:
   total_phases: 5
   completed_phases: 5
@@ -56,6 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 ### Roadmap Evolution
 
 - Phase 36 added: Auto-derive cfargotunnel hostname from tunnel token JWT
+- Phase 37 added: Fix v3.2 UAT gaps: tunnel setup flow (--tunnel-hostname, DNS routing wrapper, doctor checks), MCP tracing logs, mcp status labels, rightclaw up warning visibility
 
 ### Decisions
 
@@ -99,6 +100,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-04T20:19:03.580Z
-Stopped at: Phase 36 context gathered
-Resume file: .planning/phases/36-auto-derive-cfargotunnel-hostname-from-tunnel-token-jwt/36-CONTEXT.md
+Last session: 2026-04-04T22:13:33.576Z
+Stopped at: Phase 37 context gathered
+Resume file: .planning/phases/37-fix-v3-2-uat-gaps-tunnel-setup-flow-tunnel-hostname-dns-rout/37-CONTEXT.md
