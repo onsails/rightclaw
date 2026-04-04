@@ -759,6 +759,28 @@ fn check_mcp_tokens_with_creds(home: &Path, credentials_path: &Path) -> DoctorCh
     }
 }
 
+/// Return MCP auth issues for display in `rightclaw up` before TUI takes over (D-13).
+///
+/// Returns `Some(problems)` when any agent has missing/expired MCP tokens, `None` when all ok.
+/// Uses the same logic as the doctor mcp-tokens check.
+pub fn mcp_auth_issues(home: &Path) -> Option<Vec<String>> {
+    let check = check_mcp_tokens(home);
+    if check.status == CheckStatus::Warn {
+        // Extract the problem list from "missing/expired: agent1/notion, agent2/linear"
+        let problems: Vec<String> = check
+            .detail
+            .strip_prefix("missing/expired: ")
+            .unwrap_or(&check.detail)
+            .split(", ")
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+        if problems.is_empty() { None } else { Some(problems) }
+    } else {
+        None
+    }
+}
+
 /// Thin public wrapper for check_mcp_tokens_with_creds using host credentials path.
 fn check_mcp_tokens(home: &Path) -> DoctorCheck {
     let credentials_path = match dirs::home_dir() {

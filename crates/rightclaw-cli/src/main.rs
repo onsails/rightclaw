@@ -533,19 +533,45 @@ async fn cmd_up(
     let global_config = rightclaw::config::read_global_config(home)?;
     let tunnel = global_config.tunnel.as_ref();
 
-    // Generate cloudflared ingress config if tunnel is configured (D-09).
-    if let Some(tunnel_cfg) = tunnel {
+    // Generate cloudflared ingress config and DNS routing wrapper script if tunnel is configured (D-09).
+    let cloudflared_script_path: Option<std::path::PathBuf> = if let Some(tunnel_cfg) = tunnel {
         let agent_pairs: Vec<(String, std::path::PathBuf)> = agents
             .iter()
             .map(|a| (a.name.clone(), a.path.clone()))
             .collect();
-        let cf_config =
-            rightclaw::codegen::cloudflared::generate_cloudflared_config(&agent_pairs, &tunnel_cfg.hostname)?;
+        let cf_config = rightclaw::codegen::cloudflared::generate_cloudflared_config(
+            &agent_pairs,
+            &tunnel_cfg.hostname,
+        )?;
         let cf_config_path = home.join("cloudflared-config.yml");
         std::fs::write(&cf_config_path, &cf_config)
             .map_err(|e| miette::miette!("write cloudflared config: {e:#}"))?;
         tracing::info!(path = %cf_config_path.display(), "cloudflared config written");
-    }
+
+        // Write DNS routing wrapper script (D-06, D-07).
+        let scripts_dir = home.join("scripts");
+        std::fs::create_dir_all(&scripts_dir)
+            .map_err(|e| miette::miette!("create scripts dir: {e:#}"))?;
+        let uuid = tunnel_cfg.tunnel_uuid()?;
+        let hostname = &tunnel_cfg.hostname;
+        let token = &tunnel_cfg.token;
+        let script_content = format!(
+            "#!/bin/sh\nset -e\ncloudflared tunnel route dns {uuid} {hostname}\nexec cloudflared tunnel run --token {token}\n"
+        );
+        let script_path = scripts_dir.join("cloudflared-start.sh");
+        std::fs::write(&script_path, &script_content)
+            .map_err(|e| miette::miette!("write cloudflared-start.sh: {e:#}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| miette::miette!("chmod cloudflared-start.sh: {e:#}"))?;
+        }
+        tracing::info!(path = %script_path.display(), "cloudflared wrapper script written");
+        Some(script_path)
+    } else {
+        None
+    };
 
     // Generate process-compose.yaml (bot-only entries, Phase 26).
     let has_bot_agents = agents.iter().any(|a| {
@@ -558,14 +584,21 @@ async fn cmd_up(
         eprintln!("rightclaw: no agents have Telegram tokens configured — nothing to start");
         return Err(miette::miette!("no agents have Telegram tokens configured"));
     }
-    let tunnel_token = tunnel.map(|t| t.token.as_str());
-    let cf_config_path_str = tunnel.map(|_| home.join("cloudflared-config.yml").to_string_lossy().into_owned());
+
+    // Warn about MCP auth issues before TUI takes over stdout (D-13).
+    if let Some(issues) = rightclaw::doctor::mcp_auth_issues(home) {
+        eprintln!("warn: MCP auth required: {}", issues.join(", "));
+    }
+
+    let script_path_str = cloudflared_script_path
+        .as_ref()
+        .and_then(|p| p.to_str())
+        .map(|s| s.to_string());
     let pc_config = rightclaw::codegen::generate_process_compose(
         &agents,
         &self_exe,
         debug,
-        tunnel_token,
-        cf_config_path_str.as_deref(),
+        script_path_str.as_deref(),
     )?;
     let config_path = run_dir.join("process-compose.yaml");
     std::fs::write(&config_path, &pc_config)
