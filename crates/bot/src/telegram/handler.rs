@@ -187,6 +187,7 @@ pub async fn handle_mcp(
     pending_auth: PendingAuthMap,
     home: Arc<RightclawHome>,
 ) -> ResponseResult<()> {
+    tracing::info!(agent_dir = %agent_dir.0.display(), "mcp: dispatching");
     let parts: Vec<&str> = args.split_whitespace().collect();
     let result = match parts.first().copied() {
         None | Some("list") => handle_mcp_list(&bot, &msg, &agent_dir.0).await,
@@ -233,6 +234,7 @@ async fn handle_mcp_list(
     msg: &Message,
     agent_dir: &Path,
 ) -> Result<(), RequestError> {
+    tracing::info!(agent_dir = %agent_dir.display(), "mcp list");
     let mcp_path = agent_dir.join(".mcp.json");
     let cred_path = dirs::home_dir()
         .unwrap_or_default()
@@ -287,6 +289,7 @@ async fn handle_mcp_auth(
     pending_auth: PendingAuthMap,
     home: &Path,
 ) -> Result<(), RequestError> {
+    tracing::info!(agent_dir = %agent_dir.display(), server = %server_name, "mcp auth");
     // 1. Read .mcp.json to find server URL and optional static clientId
     let mcp_path = agent_dir.join(".mcp.json");
     let mcp_content = match std::fs::read_to_string(&mcp_path) {
@@ -483,6 +486,7 @@ async fn handle_mcp_add(
     config_str: &str,
     agent_dir: &Path,
 ) -> Result<(), RequestError> {
+    tracing::info!(agent_dir = %agent_dir.display(), "mcp add");
     let parts: Vec<&str> = config_str.split_whitespace().collect();
     if parts.len() < 2 {
         bot.send_message(msg.chat.id, "Usage: /mcp add <name> <url> [clientId]")
@@ -556,6 +560,7 @@ async fn handle_mcp_remove(
     server_name: &str,
     agent_dir: &Path,
 ) -> Result<(), RequestError> {
+    tracing::info!(agent_dir = %agent_dir.display(), server = %server_name, "mcp remove");
     let mcp_path = agent_dir.join(".mcp.json");
     if !mcp_path.exists() {
         bot.send_message(msg.chat.id, "No .mcp.json found.").await?;
