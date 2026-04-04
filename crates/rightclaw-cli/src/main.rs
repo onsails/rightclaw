@@ -101,9 +101,6 @@ pub enum Commands {
         /// Cloudflare Tunnel token (from Cloudflare dashboard — used for OAuth callbacks)
         #[arg(long)]
         tunnel_token: Option<String>,
-        /// Tunnel public URL (operator-managed subdomain, e.g. rightclaw.example.com)
-        #[arg(long)]
-        tunnel_url: Option<String>,
     },
     /// List discovered agents and their status
     List,
@@ -199,7 +196,7 @@ async fn main() -> miette::Result<()> {
     )?;
 
     match cli.command {
-        Commands::Init { telegram_token, telegram_allowed_chat_ids, tunnel_token, tunnel_url } => cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids, tunnel_token.as_deref(), tunnel_url.as_deref()),
+        Commands::Init { telegram_token, telegram_allowed_chat_ids, tunnel_token } => cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids, tunnel_token.as_deref()),
         Commands::List => cmd_list(&home),
         Commands::Doctor => cmd_doctor(&home),
         Commands::Up {
@@ -247,18 +244,7 @@ fn cmd_init(
     telegram_token: Option<&str>,
     telegram_allowed_chat_ids: &[i64],
     tunnel_token: Option<&str>,
-    tunnel_url: Option<&str>,
 ) -> miette::Result<()> {
-    // Validate tunnel args before doing any work — both or neither.
-    match (tunnel_token, tunnel_url) {
-        (Some(_), None) | (None, Some(_)) => {
-            return Err(miette::miette!(
-                "both --tunnel-token and --tunnel-url are required together"
-            ));
-        }
-        _ => {}
-    }
-
     // If --telegram-token flag provided, validate it upfront.
     // Otherwise prompt interactively.
     let token = match telegram_token {
@@ -283,16 +269,19 @@ fn cmd_init(
         println!("Telegram chat ID allowlist configured.");
     }
 
-    // Write tunnel config if both flags provided.
-    if let (Some(t_token), Some(t_url)) = (tunnel_token, tunnel_url) {
+    // Write tunnel config and print derived hostname if token provided (per D-11).
+    if let Some(t_token) = tunnel_token {
+        let tunnel_config = rightclaw::config::TunnelConfig {
+            token: t_token.to_string(),
+        };
+        // Validate token and derive hostname before writing — fail fast (per D-11)
+        let derived_hostname = tunnel_config.hostname()?;
         let config = rightclaw::config::GlobalConfig {
-            tunnel: Some(rightclaw::config::TunnelConfig {
-                token: t_token.to_string(),
-                url: t_url.to_string(),
-            }),
+            tunnel: Some(tunnel_config),
         };
         rightclaw::config::write_global_config(home, &config)?;
         println!("Tunnel config written to {}/config.yaml", home.display());
+        println!("Tunnel hostname: {derived_hostname}");
     }
 
     Ok(())
@@ -604,7 +593,7 @@ async fn cmd_up(
     }
 
     // Read global config for optional cloudflared tunnel integration (D-03, D-09).
-    let global_config = rightclaw::config::read_global_config(&home)?;
+    let global_config = rightclaw::config::read_global_config(home)?;
     let tunnel = global_config.tunnel.as_ref();
 
     // Generate cloudflared ingress config if tunnel is configured (D-09).
@@ -614,7 +603,7 @@ async fn cmd_up(
             .map(|a| (a.name.clone(), a.path.clone()))
             .collect();
         let cf_config =
-            rightclaw::codegen::cloudflared::generate_cloudflared_config(&agent_pairs, &tunnel_cfg.url)?;
+            rightclaw::codegen::cloudflared::generate_cloudflared_config(&agent_pairs, &tunnel_cfg.hostname()?)?;
         let cf_config_path = home.join("cloudflared-config.yml");
         std::fs::write(&cf_config_path, &cf_config)
             .map_err(|e| miette::miette!("write cloudflared config: {e:#}"))?;

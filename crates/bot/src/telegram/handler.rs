@@ -177,7 +177,7 @@ pub async fn handle_mcp(
     pending_auth: PendingAuthMap,
     home: Arc<PathBuf>,
 ) -> ResponseResult<()> {
-    let parts: Vec<&str> = args.trim().split_whitespace().collect();
+    let parts: Vec<&str> = args.split_whitespace().collect();
     let result = match parts.first().copied() {
         None | Some("list") => handle_mcp_list(&bot, &msg, &agent_dir).await,
         Some("auth") => {
@@ -211,7 +211,6 @@ pub async fn handle_mcp(
             )
             .await
             .map(|_| ())
-            .map_err(|e| e)
         }
     };
     result.map_err(|e| to_request_err(format!("{e:#}")))?;
@@ -334,7 +333,7 @@ async fn handle_mcp_auth(
         None => {
             bot.send_message(
                 msg.chat.id,
-                "Tunnel not configured. Run:\n  rightclaw init --tunnel-token TOKEN --tunnel-url HOSTNAME",
+                "Tunnel not configured. Run:\n  rightclaw init --tunnel-token TOKEN",
             )
             .await?;
             return Ok(());
@@ -377,7 +376,14 @@ async fn handle_mcp_auth(
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    let redirect_uri = format!("https://{}/oauth/{}/callback", tunnel.url, agent_name);
+    let tunnel_hostname = match tunnel.hostname() {
+        Ok(h) => h,
+        Err(e) => {
+            bot.send_message(msg.chat.id, format!("Cannot derive tunnel hostname: {e:#}")).await?;
+            return Ok(());
+        }
+    };
+    let redirect_uri = format!("https://{tunnel_hostname}/oauth/{agent_name}/callback");
     let (client_id, client_secret) = match rightclaw::mcp::oauth::register_client_or_fallback(
         &http_client,
         &metadata,
@@ -404,7 +410,7 @@ async fn handle_mcp_auth(
     // 7. Tunnel healthcheck (OAUTH-05) — hit tunnel ROOT to verify cloudflared is running.
     //    Any HTTP response (including 404 from catch-all) = tunnel is alive.
     //    Connection refused or timeout = cloudflared is down.
-    let healthcheck_url = format!("https://{}/", tunnel.url);
+    let healthcheck_url = format!("https://{tunnel_hostname}/");
     match http_client
         .get(&healthcheck_url)
         .timeout(std::time::Duration::from_secs(5))
