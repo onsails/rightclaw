@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tokio::time::{sleep_until, Instant};
@@ -117,7 +117,7 @@ pub async fn post_refresh_grant(
 /// Returns the new `expires_at` unix timestamp on success.
 pub async fn refresh_token_for_server(
     http_client: &reqwest::Client,
-    credentials_path: &PathBuf,
+    credentials_path: &Path,
     server_name: &str,
     server_url: &str,
 ) -> Result<u64, RefreshError> {

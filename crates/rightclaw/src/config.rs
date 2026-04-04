@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 
 /// Resolve RIGHTCLAW_HOME: cli_home > env_home > ~/.rightclaw
@@ -21,11 +22,36 @@ pub struct GlobalConfig {
     pub tunnel: Option<TunnelConfig>,
 }
 
-/// Cloudflare Named Tunnel configuration (per D-03).
+/// Cloudflare Named Tunnel configuration (per D-04).
 #[derive(Debug, Clone)]
 pub struct TunnelConfig {
     pub token: String,
-    pub hostname: String,
+}
+
+impl TunnelConfig {
+    /// Derive the public hostname from the JWT tunnel token.
+    ///
+    /// Cloudflare named tunnel tokens are JWTs (`header.payload.signature`).
+    /// The payload is base64url-encoded JSON with a `"t"` field containing
+    /// the tunnel UUID. Returns `<uuid>.cfargotunnel.com` (per D-05, D-08, D-09).
+    pub fn hostname(&self) -> miette::Result<String> {
+        let parts: Vec<&str> = self.token.split('.').collect();
+        if parts.len() != 3 {
+            return Err(miette::miette!(
+                "tunnel token has wrong number of segments (expected 3, got {})",
+                parts.len()
+            ));
+        }
+        let payload_bytes = URL_SAFE_NO_PAD
+            .decode(parts[1])
+            .map_err(|e| miette::miette!("tunnel token base64 decode failed: {e}"))?;
+        let payload: serde_json::Value = serde_json::from_slice(&payload_bytes)
+            .map_err(|e| miette::miette!("tunnel token JSON parse failed: {e:#}"))?;
+        let uuid = payload["t"]
+            .as_str()
+            .ok_or_else(|| miette::miette!("tunnel token payload missing 't' field"))?;
+        Ok(format!("{uuid}.cfargotunnel.com"))
+    }
 }
 
 /// Helper structs for YAML deserialization via serde-saphyr.
@@ -34,10 +60,11 @@ struct RawGlobalConfig {
     tunnel: Option<RawTunnelConfig>,
 }
 
+/// serde-saphyr silently ignores unknown fields by default.
+/// Old `config.yaml` files with a `hostname:` field are safe to read (per D-02).
 #[derive(Debug, Deserialize)]
 struct RawTunnelConfig {
     token: String,
-    hostname: String,
 }
 
 /// Read global config from `<home>/config.yaml`.
@@ -53,27 +80,22 @@ pub fn read_global_config(home: &Path) -> miette::Result<GlobalConfig> {
     let raw: RawGlobalConfig = serde_saphyr::from_str(&content)
         .map_err(|e| miette::miette!("parse config.yaml: {e:#}"))?;
     Ok(GlobalConfig {
-        tunnel: raw.tunnel.map(|t| TunnelConfig {
-            token: t.token,
-            hostname: t.hostname,
-        }),
+        tunnel: raw.tunnel.map(|t| TunnelConfig { token: t.token }),
     })
 }
 
 /// Write global config to `<home>/config.yaml`.
 ///
 /// Note: serde-saphyr is deserialize-only — YAML is written manually.
-/// The schema is small and stable so this is not a maintenance burden.
+/// Writes only `token` field under `tunnel:` — hostname is derived at runtime (per D-06).
 pub fn write_global_config(home: &Path, config: &GlobalConfig) -> miette::Result<()> {
     let path = home.join("config.yaml");
     let mut content = String::new();
     if let Some(ref tunnel) = config.tunnel {
         content.push_str("tunnel:\n");
-        // Escape quotes in token/hostname defensively
+        // Escape quotes in token defensively
         let token = tunnel.token.replace('"', "\\\"");
-        let hostname = tunnel.hostname.replace('"', "\\\"");
         content.push_str(&format!("  token: \"{token}\"\n"));
-        content.push_str(&format!("  hostname: \"{hostname}\"\n"));
     }
     std::fs::write(&path, &content)
         .map_err(|e| miette::miette!("write config.yaml: {e:#}"))?;
