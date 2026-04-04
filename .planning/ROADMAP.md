@@ -153,10 +153,10 @@ Plans:
 **Goal**: Remove `--tunnel-hostname` CLI arg entirely; derive public hostname automatically from the JWT tunnel token by decoding the base64url payload and extracting the `"t"` (UUID) field to construct `<uuid>.cfargotunnel.com`
 **Requirements**: TUNL-01 (update to remove manual hostname requirement)
 **Depends on:** Phase 35
-**Plans:** 1 plan
+**Plans:** 1/1 plans complete
 
 Plans:
-- [ ] 36-01-PLAN.md — JWT decode in TunnelConfig::hostname(), remove --tunnel-hostname from cmd_init, update cmd_up caller
+- [x] 36-01-PLAN.md — JWT decode in TunnelConfig::hostname(), remove --tunnel-hostname from cmd_init, update cmd_up caller
 
 ## Progress
 
@@ -177,4 +177,4 @@ Plans:
 | 33. Auth Detection | v3.2 | 1/1 | Complete    | 2026-04-03 |
 | 34. Core OAuth Flow + Bot | v3.2 | 4/4 | Complete    | 2026-04-03 |
 | 35. Token Refresh | v3.2 | 3/3 | Complete    | 2026-04-04 |
-| 36. JWT hostname derivation | v3.2 | 0/1 | In progress | — |
+| 36. JWT hostname derivation | v3.2 | 1/1 | Complete   | 2026-04-04 |

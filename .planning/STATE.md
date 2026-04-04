@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v3.2
 milestone_name: MCP OAuth
-status: verifying
-stopped_at: Phase 36 context gathered
-last_updated: "2026-04-04T20:19:03.583Z"
-last_activity: 2026-04-04
+status: complete
+stopped_at: Phase 36 complete
+last_updated: "2026-04-04T21:00:00.000Z"
+last_activity: 2026-04-04 -- Phase 36 complete
 progress:
   total_phases: 5
-  completed_phases: 4
-  total_plans: 9
-  completed_plans: 9
+  completed_phases: 5
+  total_plans: 10
+  completed_plans: 10
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-03 after v3.1 milestone)
 
 **Core value:** Run multiple autonomous Claude Code agents safely -- each sandboxed by native OS-level isolation, orchestrated by a single CLI command.
-**Current focus:** Phase 35 — token-refresh
+**Current focus:** Phase 36 — COMPLETE
 
 ## Current Position
 
-Phase: 35
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-04-04
+Phase: 36 (auto-derive-cfargotunnel-hostname-from-tunnel-token-jwt) — COMPLETE
+Plan: 1 of 1
+Status: Milestone v3.2 MCP OAuth — all phases complete
+Last activity: 2026-04-04 -- Phase 36 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
