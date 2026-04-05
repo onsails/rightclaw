@@ -23,8 +23,6 @@ use tokio::sync::Mutex;
 
 use rightclaw::mcp::credentials::{write_bearer_to_mcp_json, write_oauth_metadata, OAuthMetadata};
 use rightclaw::mcp::oauth::{exchange_token, verify_state, PendingAuth};
-use rightclaw::runtime::pc_client::PcClient;
-pub use rightclaw::runtime::pc_client::PC_PORT;
 
 /// Shared in-memory map of OAuth state → pending auth session.
 /// Key is the PKCE state parameter (random, one-shot).
@@ -43,14 +41,10 @@ pub struct CallbackParams {
 #[derive(Clone)]
 pub struct OAuthCallbackState {
     pub pending_auth: PendingAuthMap,
-    /// Path to ~/.claude/.credentials.json (or agent-specific equivalent)
-    pub credentials_path: PathBuf,
-    /// Path to <agent_dir>/.mcp.json (for reading server_type)
+    /// Path to <agent_dir>/.mcp.json (for Bearer token + OAuth metadata storage)
     pub mcp_json_path: PathBuf,
-    /// Agent name (used for restart via process-compose)
+    /// Agent name (for logging and notifications)
     pub agent_name: String,
-    /// process-compose TCP port (default PC_PORT, override via RC_PC_PORT env var)
-    pub pc_port: u16,
     /// Telegram Bot for sending notifications
     pub bot: teloxide::Bot,
     /// Chat IDs to notify after OAuth completes
@@ -171,7 +165,7 @@ async fn handle_oauth_callback(
         axum::http::StatusCode::OK,
         axum::response::Html(
             "<!DOCTYPE html><html><body><h1>Authentication complete</h1>\
-             <p>You may close this window. The agent will be restarted automatically.</p></body></html>",
+             <p>You may close this window. The token has been saved.</p></body></html>",
         ),
     )
         .into_response()
@@ -237,30 +231,14 @@ async fn complete_oauth_flow(
         "credential written"
     );
 
-    // Notify Telegram
+    // Notify Telegram — no agent restart needed (CC uses `claude -p` per message)
     notify_telegram(
         &cb_state.bot,
         &cb_state.notify_chat_ids,
         &format!(
-            "OAuth complete for {}. Restarting agent {}...",
-            pending.server_name, agent_name
+            "OAuth complete for {} (agent {agent_name}). Token written to .mcp.json.",
+            pending.server_name,
         ),
-    )
-    .await;
-
-    // Restart agent via process-compose REST API
-    let pc = PcClient::new(cb_state.pc_port)
-        .map_err(|e| miette::miette!("PcClient::new failed: {e:#}"))?;
-    pc.restart_process(agent_name)
-        .await
-        .map_err(|e| miette::miette!("restart_process failed: {e:#}"))?;
-
-    tracing::info!(agent = %agent_name, "agent restart requested after OAuth");
-
-    notify_telegram(
-        &cb_state.bot,
-        &cb_state.notify_chat_ids,
-        &format!("Agent {} restarted after OAuth for {}.", agent_name, pending.server_name),
     )
     .await;
 
@@ -361,10 +339,8 @@ mod tests {
     fn dummy_state(map: PendingAuthMap) -> OAuthCallbackState {
         OAuthCallbackState {
             pending_auth: map,
-            credentials_path: PathBuf::from("/tmp/fake-creds.json"),
             mcp_json_path: PathBuf::from("/tmp/fake-mcp.json"),
             agent_name: "test-agent".to_string(),
-            pc_port: PC_PORT,
             bot: teloxide::Bot::new("0:fake_token_for_tests"),
             notify_chat_ids: vec![],
         }

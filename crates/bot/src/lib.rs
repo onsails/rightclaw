@@ -149,20 +149,9 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
 
     let pending_auth: PendingAuthMap = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
 
-    // Derive pc_port from env with constant fallback
-    let pc_port: u16 = std::env::var("RC_PC_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(rightclaw::runtime::pc_client::PC_PORT);
-
     // Read tunnel/global config
     let global_config = rightclaw::config::read_global_config(&home)?;
     let _ = global_config; // used for future tunnel config; notify_chat_ids passed below
-
-    let credentials_path = dirs::home_dir()
-        .ok_or_else(|| miette::miette!("cannot determine home directory for credentials"))?
-        .join(".claude")
-        .join(".credentials.json");
 
     // Spawn refresh scheduler — proactively refreshes MCP OAuth tokens before expiry (Phase 35)
     let refresh_agent_dir = agent_dir.clone();
@@ -181,10 +170,8 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
 
     let oauth_state = OAuthCallbackState {
         pending_auth: Arc::clone(&pending_auth),
-        credentials_path,
         mcp_json_path: agent_dir.join(".mcp.json"),
         agent_name: agent_name.clone(),
-        pc_port,
         bot: notify_bot,
         notify_chat_ids,
     };
