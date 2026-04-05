@@ -9,7 +9,7 @@ use std::path::Path;
 /// - `binary` is written verbatim into the `command` field — pass `current_exe()` result
 ///   so agents can always find the rightclaw binary regardless of PATH.
 /// - `agent_name` is injected as `RC_AGENT_NAME` in the env section (D-04).
-pub fn generate_mcp_config(agent_path: &Path, binary: &Path, agent_name: &str) -> miette::Result<()> {
+pub fn generate_mcp_config(agent_path: &Path, binary: &Path, agent_name: &str, rightclaw_home: &Path) -> miette::Result<()> {
     let mcp_path = agent_path.join(".mcp.json");
 
     let mut root: serde_json::Value = if mcp_path.exists() {
@@ -42,7 +42,8 @@ pub fn generate_mcp_config(agent_path: &Path, binary: &Path, agent_name: &str) -
             "command": binary.to_string_lossy(),
             "args": ["memory-server"],
             "env": {
-                "RC_AGENT_NAME": agent_name
+                "RC_AGENT_NAME": agent_name,
+                "RC_RIGHTCLAW_HOME": rightclaw_home.to_string_lossy().as_ref()
             }
         }),
     );
@@ -63,7 +64,7 @@ mod tests {
     #[test]
     fn creates_mcp_json_when_absent() {
         let dir = tempdir().unwrap();
-        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent").unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent", Path::new("/tmp/rc")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -88,7 +89,7 @@ mod tests {
         )
         .unwrap();
 
-        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent").unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent", Path::new("/tmp/rc")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -112,7 +113,7 @@ mod tests {
         )
         .unwrap();
 
-        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent").unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent", Path::new("/tmp/rc")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -136,7 +137,7 @@ mod tests {
         )
         .unwrap();
 
-        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent").unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent", Path::new("/tmp/rc")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -155,8 +156,8 @@ mod tests {
     #[test]
     fn idempotent_on_repeated_calls() {
         let dir = tempdir().unwrap();
-        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent").unwrap();
-        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent").unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent", Path::new("/tmp/rc")).unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent", Path::new("/tmp/rc")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -181,7 +182,7 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join(".mcp.json"), r#"{"telegram": true}"#).unwrap();
 
-        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent").unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent", Path::new("/tmp/rc")).unwrap();
 
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
@@ -199,7 +200,7 @@ mod tests {
     #[test]
     fn uses_provided_binary_path() {
         let dir = tempdir().unwrap();
-        generate_mcp_config(dir.path(), Path::new("/usr/local/bin/rightclaw"), "test-agent").unwrap();
+        generate_mcp_config(dir.path(), Path::new("/usr/local/bin/rightclaw"), "test-agent", Path::new("/tmp/rc")).unwrap();
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
@@ -212,13 +213,27 @@ mod tests {
     #[test]
     fn mcp_config_env_contains_agent_name() {
         let dir = tempdir().unwrap();
-        generate_mcp_config(dir.path(), Path::new("rightclaw"), "myagent").unwrap();
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "myagent", Path::new("/home/user/.rightclaw")).unwrap();
         let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
             parsed["mcpServers"]["rightmemory"]["env"]["RC_AGENT_NAME"],
             "myagent",
             "RC_AGENT_NAME must be injected into env"
+        );
+    }
+
+    #[test]
+    fn mcp_config_env_contains_rightclaw_home() {
+        let dir = tempdir().unwrap();
+        let home = Path::new("/home/user/.rightclaw");
+        generate_mcp_config(dir.path(), Path::new("rightclaw"), "myagent", home).unwrap();
+        let content = std::fs::read_to_string(dir.path().join(".mcp.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["mcpServers"]["rightmemory"]["env"]["RC_RIGHTCLAW_HOME"],
+            "/home/user/.rightclaw",
+            "RC_RIGHTCLAW_HOME must be injected into env"
         );
     }
 }

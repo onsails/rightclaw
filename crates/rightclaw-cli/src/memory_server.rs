@@ -59,15 +59,24 @@ pub struct MemoryServer {
     tool_router: ToolRouter<Self>,
     conn: Arc<Mutex<rusqlite::Connection>>,
     agent_name: String,
+    agent_dir: std::path::PathBuf,
+    rightclaw_home: std::path::PathBuf,
 }
 
 #[tool_router]
 impl MemoryServer {
-    pub fn new(conn: rusqlite::Connection, agent_name: String) -> Self {
+    pub fn new(
+        conn: rusqlite::Connection,
+        agent_name: String,
+        agent_dir: std::path::PathBuf,
+        rightclaw_home: std::path::PathBuf,
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             conn: Arc::new(Mutex::new(conn)),
             agent_name,
+            agent_dir,
+            rightclaw_home,
         }
     }
 
@@ -312,7 +321,17 @@ pub async fn run_memory_server() -> miette::Result<()> {
         }
     };
 
-    let server = MemoryServer::new(conn, agent_name);
+    let agent_dir = home.clone();
+
+    let rightclaw_home = match std::env::var("RC_RIGHTCLAW_HOME") {
+        Ok(p) if !p.is_empty() => std::path::PathBuf::from(p),
+        _ => {
+            tracing::warn!("RC_RIGHTCLAW_HOME not set — mcp_auth tunnel commands will be unavailable");
+            std::path::PathBuf::from(".")
+        }
+    };
+
+    let server = MemoryServer::new(conn, agent_name, agent_dir, rightclaw_home);
     let service = server
         .serve(stdio())
         .await
@@ -333,7 +352,12 @@ mod tests {
     fn setup_server() -> (MemoryServer, tempfile::TempDir) {
         let dir = tempdir().expect("tempdir");
         let conn = rightclaw::memory::open_connection(dir.path()).expect("open_connection");
-        let server = MemoryServer::new(conn, "test-agent".to_string());
+        let server = MemoryServer::new(
+            conn,
+            "test-agent".to_string(),
+            dir.path().to_path_buf(),
+            dir.path().to_path_buf(),
+        );
         (server, dir)
     }
 

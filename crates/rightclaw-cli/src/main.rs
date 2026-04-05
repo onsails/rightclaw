@@ -698,7 +698,7 @@ async fn cmd_up(
         tracing::debug!(agent = %agent.name, "memory.db initialized");
 
         // 11. Generate .mcp.json with rightmemory MCP server entry (Phase 17, SKILL-05).
-        rightclaw::codegen::generate_mcp_config(&agent.path, &self_exe, &agent.name)?;
+        rightclaw::codegen::generate_mcp_config(&agent.path, &self_exe, &agent.name, home)?;
         tracing::debug!(agent = %agent.name, "wrote .mcp.json with rightmemory entry");
     }
 
