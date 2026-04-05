@@ -52,6 +52,29 @@ pub struct CronShowRunParams {
     pub run_id: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpAddParams {
+    #[schemars(description = "MCP server identifier (e.g. 'notion', 'linear')")]
+    pub name: String,
+    #[schemars(description = "HTTP MCP server URL (must start with https://)")]
+    pub url: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpRemoveParams {
+    #[schemars(description = "MCP server name to remove from .claude.json")]
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpListParams {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct McpAuthParams {
+    #[schemars(description = "MCP server name to initiate OAuth for (must exist in .claude.json)")]
+    pub server_name: String,
+}
+
 // --- Server struct ---
 
 #[derive(Clone)]
@@ -246,6 +269,146 @@ impl MemoryServer {
             Err(e) => Err(McpError::internal_error(format!("{e:#}"), None)),
         }
     }
+
+    #[tool(description = "Add an HTTP MCP server to this agent's .claude.json. The server becomes available after the next agent restart.")]
+    async fn mcp_add(
+        &self,
+        Parameters(params): Parameters<McpAddParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if !params.url.starts_with("https://") {
+            return Err(McpError::invalid_params(
+                format!("URL must start with 'https://' — got: {}", params.url),
+                None,
+            ));
+        }
+        let claude_json_path = self.agent_dir.join(".claude.json");
+        let agent_path_key = self
+            .agent_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.agent_dir.clone())
+            .display()
+            .to_string();
+        rightclaw::mcp::credentials::add_http_server_to_claude_json(
+            &claude_json_path,
+            &agent_path_key,
+            &params.name,
+            &params.url,
+        )
+        .map_err(|e| McpError::internal_error(format!("{e:#}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Added MCP server '{}' ({}). Restart agent for it to take effect.",
+            params.name, params.url
+        ))]))
+    }
+
+    #[tool(description = "Remove an HTTP MCP server from this agent's .claude.json. The 'rightmemory' server is protected and cannot be removed. Only removes servers in .claude.json — servers in .mcp.json must be edited manually.")]
+    async fn mcp_remove(
+        &self,
+        Parameters(params): Parameters<McpRemoveParams>,
+    ) -> Result<CallToolResult, McpError> {
+        if params.name == rightclaw::mcp::PROTECTED_MCP_SERVER {
+            return Err(McpError::invalid_params(
+                format!(
+                    "Cannot remove '{}' — required for core agent functionality",
+                    params.name
+                ),
+                None,
+            ));
+        }
+        let claude_json_path = self.agent_dir.join(".claude.json");
+        let agent_path_key = self
+            .agent_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.agent_dir.clone())
+            .display()
+            .to_string();
+        match rightclaw::mcp::credentials::remove_http_server_from_claude_json(
+            &claude_json_path,
+            &agent_path_key,
+            &params.name,
+        ) {
+            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
+                "Removed MCP server '{}'. Restart agent for change to take effect.",
+                params.name
+            ))])),
+            Err(rightclaw::mcp::credentials::CredentialError::ServerNotFound(_)) => {
+                Err(McpError::invalid_params(
+                    format!(
+                        "Server '{}' not found in .claude.json. If it was added via .mcp.json, edit that file directly.",
+                        params.name
+                    ),
+                    None,
+                ))
+            }
+            Err(e) => Err(McpError::internal_error(format!("{e:#}"), None)),
+        }
+    }
+
+    #[tool(description = "List all configured MCP servers for this agent. Shows name, URL, auth state (present/auth required), source (.claude.json or .mcp.json), and kind (http/stdio). Never exposes token values.")]
+    async fn mcp_list(
+        &self,
+        Parameters(_params): Parameters<McpListParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let statuses = rightclaw::mcp::detect::mcp_auth_status(&self.agent_dir)
+            .map_err(|e| McpError::internal_error(format!("{e:#}"), None))?;
+        let items: Vec<serde_json::Value> = statuses
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "name": s.name,
+                    "url": s.url,
+                    "auth": s.state.to_string(),
+                    "source": s.source.to_string(),
+                    "kind": s.kind.to_string(),
+                })
+            })
+            .collect();
+        let output = serde_json::to_string_pretty(&items)
+            .map_err(|e| McpError::internal_error(format!("serialization error: {e:#}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(output)]))
+    }
+
+    #[tool(description = "Discover the OAuth authorization server for an HTTP MCP server and return its authorization endpoint URL. Use this to confirm the server supports OAuth. To complete authentication, use the Telegram bot command: /mcp auth <server_name>")]
+    async fn mcp_auth(
+        &self,
+        Parameters(params): Parameters<McpAuthParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let claude_json_path = self.agent_dir.join(".claude.json");
+        let agent_path_key = self
+            .agent_dir
+            .canonicalize()
+            .unwrap_or_else(|_| self.agent_dir.clone())
+            .display()
+            .to_string();
+        let servers = rightclaw::mcp::credentials::list_http_servers_from_claude_json(
+            &claude_json_path,
+            &agent_path_key,
+        )
+        .map_err(|e| McpError::internal_error(format!("{e:#}"), None))?;
+        let server_url = servers
+            .iter()
+            .find(|(name, _)| name == &params.server_name)
+            .map(|(_, url)| url.clone())
+            .ok_or_else(|| {
+                McpError::invalid_params(
+                    format!(
+                        "Server '{}' not found in .claude.json. Add it first with mcp_add.",
+                        params.server_name
+                    ),
+                    None,
+                )
+            })?;
+
+        let http_client = reqwest::Client::new();
+        let metadata = rightclaw::mcp::oauth::discover_as(&http_client, &server_url)
+            .await
+            .map_err(|e| McpError::internal_error(format!("{e:#}"), None))?;
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Server '{}' supports OAuth. Authorization endpoint: {}\n\nTo authenticate, run in Telegram: /mcp auth {}",
+            params.server_name, metadata.authorization_endpoint, params.server_name
+        ))]))
+    }
 }
 
 #[tool_handler]
@@ -257,7 +420,7 @@ impl rmcp::ServerHandler for MemoryServer {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(
-                "RightClaw tools: store, recall, search, forget, cron_list_runs, cron_show_run",
+                "RightClaw tools: store, recall, search, forget, cron_list_runs, cron_show_run, mcp_add, mcp_remove, mcp_list, mcp_auth",
             )
     }
 }
