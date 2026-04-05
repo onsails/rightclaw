@@ -108,3 +108,14 @@ Plans:
 
 Plans:
 - [x] 40-01-PLAN.md — Wire cloudflared-start.sh into process-compose template; add binary pre-flight check in cmd_up
+
+### Phase 41: MCP OAuth Bearer token in .mcp.json headers
+
+**Goal:** Write OAuth Bearer token directly into .mcp.json Authorization header instead of .credentials.json, eliminating CC key derivation mismatch.
+**Requirements**: OAUTH-HEADER-01, OAUTH-HEADER-02, OAUTH-HEADER-03, OAUTH-HEADER-04, OAUTH-HEADER-05, OAUTH-HEADER-06
+**Depends on:** Phase 40
+**Plans:** 2 plans
+
+Plans:
+- [ ] 41-01-PLAN.md — Rewrite credentials.rs and detect.rs to read/write .mcp.json headers instead of .credentials.json
+- [ ] 41-02-PLAN.md — Wire .mcp.json header storage into refresh, OAuth callback, bot startup, and doctor
