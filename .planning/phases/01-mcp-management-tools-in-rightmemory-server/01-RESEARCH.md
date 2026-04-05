@@ -305,21 +305,24 @@ Ok(CallToolResult::success(vec![Content::text(auth_url)]))
 
 **Note:** D-05 says `mcp_auth` only returns the URL. The token exchange happens in the bot callback. However, without `client_id` (requires DCR or static config), `build_auth_url` cannot be called. The planner must address whether DCR (`register_client_or_fallback`) runs as part of Phase 1 or if `mcp_auth` relies on a static `clientId` param.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **How does mcp_auth get the tunnel hostname?**
    - What we know: `HOME` is overridden to agent dir; `dirs::home_dir()` returns agent dir; global config is at `~/.rightclaw/config.yaml` (real user home).
    - What's unclear: Current `generate_mcp_config()` only injects `RC_AGENT_NAME`. No `RC_RIGHTCLAW_HOME` env var is injected.
    - Recommendation: Either (a) add `redirect_uri` as a required param to `mcp_auth` (agent passes it), or (b) inject `RC_RIGHTCLAW_HOME` env var in `generate_mcp_config()` and read it in `run_memory_server()`. Option (a) is simpler and avoids a codegen change; option (b) is cleaner for the agent UX.
+   - RESOLVED: Option (b) chosen — inject `RC_RIGHTCLAW_HOME` in `generate_mcp_config()`; read in `run_memory_server()` and store as `rightclaw_home: PathBuf` field on `MemoryServer`. Plan 01 implements this in `generate_mcp_config()` and `MemoryServer::new()`.
 
 2. **Does mcp_auth run DCR (Dynamic Client Registration) in Phase 1?**
    - What we know: `build_auth_url` requires `client_id`. Getting `client_id` requires either DCR (`register_client_or_fallback`) or a static value from `.claude.json`.
    - What's unclear: D-05 says "AS discovery + auth URL construction" — does that include DCR?
    - Recommendation: Yes, include DCR as part of Phase 1 `mcp_auth`. It is a prerequisite for building the URL. The bot does both in one operation (steps 4 and 5 at handler.rs:352-403).
+   - RESOLVED: DCR is excluded. `mcp_auth` returns the AS `authorization_endpoint` URL only (from `discover_as()`). PKCE and DCR are not run because `code_verifier` cannot be shared with the bot's `PendingAuthMap` (lives in a different process). The agent returns this URL as a hint; the user triggers the full auth flow via Telegram bot which owns the PKCE state machine.
 
 3. **Does mcp_remove target only .claude.json or also .mcp.json?**
    - CONTEXT.md leaves this to Claude's discretion.
    - Recommendation: `.claude.json` only (mirrors `mcp_add` behavior). Error message should mention ".mcp.json" as alternative if the server is not found.
+   - RESOLVED: `.claude.json` only. Clear error message directs user to edit `.mcp.json` manually if needed.
 
 ## Environment Availability
 
