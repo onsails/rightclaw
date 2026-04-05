@@ -108,10 +108,6 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
     // Warn about unauthenticated MCP servers at startup (UAT gap — test 8).
     match rightclaw::mcp::detect::mcp_auth_status(
         &agent_dir.join(".mcp.json"),
-        &dirs::home_dir()
-            .unwrap_or_default()
-            .join(".claude")
-            .join(".credentials.json"),
     ) {
         Ok(statuses) => {
             for s in &statuses {

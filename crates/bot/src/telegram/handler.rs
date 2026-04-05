@@ -236,12 +236,8 @@ async fn handle_mcp_list(
 ) -> Result<(), RequestError> {
     tracing::info!(agent_dir = %agent_dir.display(), "mcp list");
     let mcp_path = agent_dir.join(".mcp.json");
-    let cred_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".claude")
-        .join(".credentials.json");
 
-    let statuses = match rightclaw::mcp::detect::mcp_auth_status(&mcp_path, &cred_path) {
+    let statuses = match rightclaw::mcp::detect::mcp_auth_status(&mcp_path) {
         Ok(s) => s,
         Err(e) => {
             bot.send_message(msg.chat.id, format!("Error reading MCP status: {e:#}"))

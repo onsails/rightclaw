@@ -21,7 +21,7 @@ use serde::Deserialize;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 
-use rightclaw::mcp::credentials::{write_credential, CredentialToken};
+use rightclaw::mcp::credentials::{write_bearer_to_mcp_json, write_oauth_metadata, OAuthMetadata};
 use rightclaw::mcp::oauth::{exchange_token, verify_state, PendingAuth};
 use rightclaw::runtime::pc_client::PcClient;
 pub use rightclaw::runtime::pc_client::PC_PORT;
@@ -207,7 +207,7 @@ async fn complete_oauth_flow(
         "token exchange succeeded"
     );
 
-    // Build CredentialToken
+    // Compute expires_at from token response
     let expires_at = token_resp.expires_in.map(|secs| {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -216,20 +216,19 @@ async fn complete_oauth_flow(
             + secs
     }).unwrap_or(0);
 
-    let cred_token = CredentialToken {
-        access_token: token_resp.access_token,
+    // Write Bearer token into .mcp.json headers
+    write_bearer_to_mcp_json(&cb_state.mcp_json_path, &pending.server_name, &token_resp.access_token)
+        .map_err(|e| miette::miette!("write_bearer_to_mcp_json failed: {e:#}"))?;
+
+    // Write OAuth metadata for refresh
+    let oauth_metadata = OAuthMetadata {
         refresh_token: token_resp.refresh_token,
-        token_type: token_resp.token_type,
-        scope: token_resp.scope,
         expires_at,
         client_id: Some(pending.client_id.clone()),
         client_secret: pending.client_secret.clone(),
     };
-
-    // Write credential (atomic, backup rotation)
-    // write_credential derives the key internally from server_name + server_url
-    write_credential(&cb_state.credentials_path, &pending.server_name, &pending.server_url, &cred_token)
-        .map_err(|e| miette::miette!("write_credential failed: {e:#}"))?;
+    write_oauth_metadata(&cb_state.mcp_json_path, &pending.server_name, &oauth_metadata)
+        .map_err(|e| miette::miette!("write_oauth_metadata failed: {e:#}"))?;
 
     tracing::info!(
         agent = %agent_name,

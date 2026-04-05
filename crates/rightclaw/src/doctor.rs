@@ -694,7 +694,7 @@ fn check_tunnel_credentials_file(tunnel_cfg: &crate::config::TunnelConfig) -> Do
 /// Aggregates missing/expired tokens into a single Warn check.
 /// Tokens with expires_at=0 (non-expiring) count as ok (REFRESH-04).
 /// Only synchronous file I/O — no HTTP calls.
-fn check_mcp_tokens_with_creds(home: &Path, credentials_path: &Path) -> DoctorCheck {
+fn check_mcp_tokens_with_creds(home: &Path, _credentials_path: &Path) -> DoctorCheck {
     let agents_dir = home.join("agents");
 
     if !agents_dir.exists() {
@@ -732,7 +732,7 @@ fn check_mcp_tokens_with_creds(home: &Path, credentials_path: &Path) -> DoctorCh
         };
 
         let mcp_path = path.join(".mcp.json");
-        let statuses = match crate::mcp::detect::mcp_auth_status(&mcp_path, credentials_path) {
+        let statuses = match crate::mcp::detect::mcp_auth_status(&mcp_path) {
             Ok(s) => s,
             Err(_) => continue, // skip agents with unreadable .mcp.json
         };
