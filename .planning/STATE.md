@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 40 context gathered
-last_updated: "2026-04-05T16:05:37.063Z"
+stopped_at: Completed 41-01-PLAN.md
+last_updated: "2026-04-05T20:13:41.021Z"
 last_activity: 2026-04-05
 progress:
-  total_phases: 1
+  total_phases: 2
   completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 100
+  total_plans: 3
+  completed_plans: 2
+  percent: 67
 ---
 
 # Project State
@@ -74,6 +74,7 @@ Progress: [██████████] 100%
 | Phase 38-tunnel-refactor P03 | 12 | 2 tasks | 6 files |
 | Phase 39-cloudflared-auto-tunnel P01 | 25 | 2 tasks | 3 files |
 | 40 | 1 | - | - |
+| Phase 41 P01 | 9 | 2 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -144,6 +145,7 @@ Recent decisions relevant to v2.3:
 - [Phase 38-tunnel-refactor]: cloudflared_script_path suppressed with let _ — future phase wires it into process-compose template
 - [Phase 39-cloudflared-auto-tunnel]: cert.pem as login signal — absent means skip tunnel setup with info message; credentials_file points to ~/.cloudflared/<uuid>.json directly (no copy)
 - [Phase 39-cloudflared-auto-tunnel]: tunnel_uuid_from_credentials_file removed; UUID now from tunnel list/create JSON output via TunnelListEntry struct
+- [Phase 41]: Replaced .credentials.json key-derivation with direct .mcp.json Authorization header injection; updated all callers in Plan 01 (Rule 3 deviation)
 
 ### Roadmap Evolution
 
@@ -153,6 +155,7 @@ Recent decisions relevant to v2.3:
 - v3.1 roadmap created: Phases 29-31 — Sandbox Fix, Doctor Diagnostics, E2E Verification
 - Phase 38 added: tunnel-refactor — credentials-file based cloudflared tunnel config (replaces JWT/token approach)
 - Phase 40 added: wire-cloudflared-into-process-compose — wire cloudflared_script_path into PC template so rightclaw up starts tunnel process (gap found during phase 39 UAT)
+- Phase 41 added: MCP OAuth Bearer token in .mcp.json headers — write token to Authorization header instead of .credentials.json (eliminates CC key derivation mismatch)
 
 ### Pending Todos
 
@@ -174,6 +177,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-04-05T12:50:45.942Z
-Stopped at: Phase 40 context gathered
-Resume file: .planning/phases/40-wire-cloudflared-into-process-compose/40-CONTEXT.md
+Last session: 2026-04-05T20:13:41.018Z
+Stopped at: Completed 41-01-PLAN.md
+Resume file: None
