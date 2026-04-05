@@ -8,16 +8,14 @@ RightClaw is a multi-agent runtime for Claude Code. Each agent runs as an indepe
 
 Run multiple autonomous Claude Code agents safely — each sandboxed by native OS-level isolation, each with its own sandbox configuration and identity, orchestrated by a single CLI command.
 
-## Current Milestone: v3.2 MCP OAuth
+## Current Milestone: v3.2 (TBD)
 
-**Goal:** Automate MCP OAuth authentication for agents — detect unauthenticated servers and complete the OAuth flow without requiring interactive `/mcp` inside Claude Code.
+**Goal:** Next milestone — to be defined.
 
 **Target features:**
-- MCP authentication detection — check which servers in .mcp.json need OAuth
-- OAuth callback server — local HTTP server to receive redirect from OAuth provider
-- Tunnel integration — ngrok or Cloudflare tunnel to expose callback URL externally
-- Credential storage — write tokens to Claude's internal MCP OAuth credential files
-- Token refresh — detect expiry and refresh automatically (or prompt when needed)
+- Fix sandbox so CC finds its dependencies when launched from rightclaw (nix vendored ripgrep path issue)
+- End-to-end verification of rightclaw up → bot → Telegram → cron flow with sandbox enabled
+- Doctor diagnostics detect and report sandbox dependency issues before launch
 
 ## Requirements
 
@@ -82,14 +80,10 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 - ✓ `sandbox.ripgrep.command` injected into per-agent settings.json with resolved system rg path; `USE_BUILTIN_RIPGREP=0` corrected in worker.rs + cron.rs; `failIfUnavailable:true` set — v3.1 Phase 29 (SBOX-01..04)
 - ✓ `rightclaw doctor` checks rg in PATH + validates settings.json ripgrep.command (cross-platform) — v3.1 Phase 30 (DOC-01, DOC-02)
 - ✓ `tests/e2e/verify-sandbox.sh` — repeatable 4-stage script proving sandbox engagement via exit-code strategy under `failIfUnavailable:true`; live-run confirmed 2026-04-03 — v3.1 Phase 31 (VER-01..03)
-- ✓ `mcp::credentials` module — `mcp_oauth_key` deterministic key derivation (Notion test vector locked), `write_credential` atomic tmp+rename with 5-slot backup rotation, `read_credential`; CRED-01, CRED-02 — v3.2 Phase 32
-- ✓ `mcp::detect` module — `AuthState` enum (present/missing/expired), `mcp_auth_status` reads .mcp.json + credentials.json; `rightclaw mcp status [--agent NAME]` CLI; `rightclaw up` pre-launch warn; DETECT-01, DETECT-02 — v3.2 Phase 33
-- ✓ MCP OAuth 2.1 engine — AS discovery (RFC 9728→8414→OIDC), DCR with static clientId fallback, PKCE S256, token exchange; cloudflared named tunnel integration with ingress codegen; Telegram bot commands /mcp list/auth/add/remove + /doctor; PendingAuth one-shot state with 10-min cleanup; post-auth credential write + agent restart — v3.2 Phase 34
-- ✓ Token refresh scheduler — `mcp::refresh` module: `deadline_from_unix` guard, `post_refresh_grant` form POST, per-server retry loop (3×5min backoff), `run_refresh_scheduler` spawns one tokio task per qualifying server at bot startup; `check_mcp_tokens` doctor check; `client_id`/`client_secret` backfilled into `CredentialToken`; REFRESH-01..04 — v3.2 Phase 35
 
 ### Active
 
-(none — v3.2 milestone complete)
+None — v3.1 milestone complete.
 
 ### Out of Scope
 
@@ -161,7 +155,7 @@ This document evolves at phase transitions and milestone boundaries.
 
 ## Current State
 
-**v3.2 Phase 33 shipped** (2026-04-03). MCP auth detection complete.
+**v3.1 shipped** (2026-04-03). Sandbox Fix & Verification complete.
 
 - System `rg` path injected into CC sandbox settings.json via `which::which("rg")` at `rightclaw up` time; `USE_BUILTIN_RIPGREP` polarity fixed to `"0"`; `failIfUnavailable: true` added unconditionally
 - `rightclaw doctor` now surfaces ripgrep PATH availability (Linux, Warn) and validates settings.json sandbox.ripgrep.command per-agent (cross-platform, Warn)
@@ -188,4 +182,4 @@ This document evolves at phase transitions and milestone boundaries.
 - VER-01 description in verify-sandbox.sh slightly overclaims — matches cron.rs pattern, not worker.rs `--resume` path (sandbox correctness unaffected)
 
 ---
-*Last updated: 2026-04-03 — Phase 33 complete (auth-detection)*
+*Last updated: 2026-04-03 after v3.1 milestone*

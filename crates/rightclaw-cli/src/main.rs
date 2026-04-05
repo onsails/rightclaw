@@ -76,17 +76,6 @@ pub enum MemoryCommands {
     },
 }
 
-/// Subcommands for `rightclaw mcp`.
-#[derive(Subcommand)]
-pub enum McpCommands {
-    /// Show MCP OAuth auth status for all agents (or a single agent)
-    Status {
-        /// Filter to a single agent by name
-        #[arg(long)]
-        agent: Option<String>,
-    },
-}
-
 #[derive(Subcommand)]
 pub enum Commands {
     /// Initialize RightClaw home directory with default agent
@@ -98,12 +87,6 @@ pub enum Commands {
         /// (e.g. --telegram-allowed-chat-ids 12345678,100200300)
         #[arg(long, value_delimiter = ',')]
         telegram_allowed_chat_ids: Vec<i64>,
-        /// Cloudflare Tunnel token (from Cloudflare dashboard — used for OAuth callbacks)
-        #[arg(long)]
-        tunnel_token: Option<String>,
-        /// Public hostname for the tunnel (e.g. example.com — required with --tunnel-token)
-        #[arg(long)]
-        tunnel_hostname: Option<String>,
     },
     /// List discovered agents and their status
     List,
@@ -161,11 +144,6 @@ pub enum Commands {
         #[arg(long)]
         debug: bool,
     },
-    /// Inspect MCP OAuth token status
-    Mcp {
-        #[command(subcommand)]
-        command: McpCommands,
-    },
 }
 
 #[tokio::main]
@@ -199,8 +177,7 @@ async fn main() -> miette::Result<()> {
     )?;
 
     match cli.command {
-        Commands::Init { telegram_token, telegram_allowed_chat_ids, tunnel_token, tunnel_hostname } =>
-            cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids, tunnel_token.as_deref(), tunnel_hostname.as_deref()),
+        Commands::Init { telegram_token, telegram_allowed_chat_ids } => cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids),
         Commands::List => cmd_list(&home),
         Commands::Doctor => cmd_doctor(&home),
         Commands::Up {
@@ -237,19 +214,10 @@ async fn main() -> miette::Result<()> {
             })
             .await
         }
-        Commands::Mcp { command } => match command {
-            McpCommands::Status { agent } => cmd_mcp_status(&home, agent.as_deref()),
-        },
     }
 }
 
-fn cmd_init(
-    home: &Path,
-    telegram_token: Option<&str>,
-    telegram_allowed_chat_ids: &[i64],
-    tunnel_token: Option<&str>,
-    tunnel_hostname: Option<&str>,
-) -> miette::Result<()> {
+fn cmd_init(home: &Path, telegram_token: Option<&str>, telegram_allowed_chat_ids: &[i64]) -> miette::Result<()> {
     // If --telegram-token flag provided, validate it upfront.
     // Otherwise prompt interactively.
     let token = match telegram_token {
@@ -273,42 +241,6 @@ fn cmd_init(
     if !telegram_allowed_chat_ids.is_empty() {
         println!("Telegram chat ID allowlist configured.");
     }
-
-    // Write tunnel config if provided.
-    match (tunnel_token, tunnel_hostname) {
-        (Some(t_token), Some(t_hostname)) => {
-            // Validate hostname is bare domain (no scheme prefix)
-            if t_hostname.starts_with("https://") || t_hostname.starts_with("http://") {
-                return Err(miette::miette!(
-                    "--tunnel-hostname must be a bare domain (e.g. example.com), not a URL"
-                ));
-            }
-            let tunnel_config = rightclaw::config::TunnelConfig {
-                token: t_token.to_string(),
-                hostname: t_hostname.to_string(),
-            };
-            // Validate token is decodable and extract UUID for confirmation printout
-            let uuid = tunnel_config.tunnel_uuid()?;
-            let config = rightclaw::config::GlobalConfig {
-                tunnel: Some(tunnel_config),
-            };
-            rightclaw::config::write_global_config(home, &config)?;
-            println!("Tunnel config written to {}/config.yaml", home.display());
-            println!("Tunnel UUID: {uuid} (hostname: {t_hostname})");
-        }
-        (Some(_), None) => {
-            return Err(miette::miette!(
-                "--tunnel-hostname is required when --tunnel-token is provided"
-            ));
-        }
-        (None, Some(_)) => {
-            return Err(miette::miette!(
-                "--tunnel-token is required when --tunnel-hostname is provided"
-            ));
-        }
-        (None, None) => {} // No tunnel config — skip
-    }
-
     Ok(())
 }
 
@@ -548,93 +480,6 @@ async fn cmd_up(
         tracing::debug!(agent = %agent.name, "wrote .mcp.json with rightmemory entry");
     }
 
-    // Read global config for optional cloudflared tunnel integration (D-03, D-09).
-    let global_config = rightclaw::config::read_global_config(home)?;
-    let tunnel = global_config.tunnel.as_ref();
-
-    // Generate cloudflared ingress config and DNS routing wrapper script if tunnel is configured (D-09).
-    // Guard: tunnel token present but hostname empty means config.yaml was written by a pre-v3.2
-    // version that didn't store hostname. Guide the user to re-run init before launching.
-    if let Some(ref tc) = tunnel {
-        if tc.hostname.is_empty() {
-            return Err(miette::miette!(
-                help = "run: rightclaw init --tunnel-token TOKEN --tunnel-hostname HOSTNAME",
-                "Tunnel hostname is missing from config.yaml — re-run `rightclaw init` to set it"
-            ));
-        }
-    }
-    let cloudflared_script_path: Option<std::path::PathBuf> = if let Some(tunnel_cfg) = tunnel {
-        let agent_pairs: Vec<(String, std::path::PathBuf)> = agents
-            .iter()
-            .map(|a| (a.name.clone(), a.path.clone()))
-            .collect();
-
-        // Detect cloudflared credentials file in ~/.cloudflared/*.json.
-        // When found, embed tunnel: + credentials-file: in the config so cloudflared
-        // honours local ingress rules. Without this, --token mode fetches remote config
-        // from the Cloudflare dashboard and ignores local ingress entirely (breaking
-        // OAuth callback routing to unix sockets).
-        let token_uuid = tunnel_cfg.tunnel_uuid()?;
-        let cf_creds = detect_cloudflared_credentials(&token_uuid);
-        if cf_creds.is_none() {
-            tracing::warn!(
-                "no cloudflared credentials file found in ~/.cloudflared/ — \
-                 OAuth callback ingress rules may not apply (remote config takes precedence)"
-            );
-        }
-        let creds_arg = cf_creds.as_ref().map(|(uuid, path)| {
-            rightclaw::codegen::cloudflared::CloudflaredCredentials {
-                tunnel_uuid: uuid.clone(),
-                credentials_file: path.clone(),
-            }
-        });
-
-        let cf_config = rightclaw::codegen::cloudflared::generate_cloudflared_config(
-            &agent_pairs,
-            &tunnel_cfg.hostname,
-            creds_arg.as_ref(),
-        )?;
-        let cf_config_path = home.join("cloudflared-config.yml");
-        std::fs::write(&cf_config_path, &cf_config)
-            .map_err(|e| miette::miette!("write cloudflared config: {e:#}"))?;
-        tracing::info!(path = %cf_config_path.display(), "cloudflared config written");
-
-        // Write DNS routing wrapper script (D-06, D-07).
-        let scripts_dir = home.join("scripts");
-        std::fs::create_dir_all(&scripts_dir)
-            .map_err(|e| miette::miette!("create scripts dir: {e:#}"))?;
-        // Use the credentials tunnel UUID if available (may differ from JWT token UUID).
-        let effective_uuid = cf_creds
-            .as_ref()
-            .map(|(u, _)| u.as_str())
-            .unwrap_or(token_uuid.as_str());
-        let hostname = &tunnel_cfg.hostname;
-        let token = &tunnel_cfg.token;
-        let cf_config_path_str = cf_config_path.display();
-        let run_cmd = if cf_creds.is_some() {
-            // Credentials embedded in config — no --token needed.
-            format!("exec cloudflared tunnel --config {cf_config_path_str} run\n")
-        } else {
-            format!("exec cloudflared tunnel --config {cf_config_path_str} run --token {token}\n")
-        };
-        let script_content = format!(
-            "#!/bin/sh\nset -e\ncloudflared tunnel route dns {effective_uuid} {hostname}\n{run_cmd}"
-        );
-        let script_path = scripts_dir.join("cloudflared-start.sh");
-        std::fs::write(&script_path, &script_content)
-            .map_err(|e| miette::miette!("write cloudflared-start.sh: {e:#}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
-                .map_err(|e| miette::miette!("chmod cloudflared-start.sh: {e:#}"))?;
-        }
-        tracing::info!(path = %script_path.display(), "cloudflared wrapper script written");
-        Some(script_path)
-    } else {
-        None
-    };
-
     // Generate process-compose.yaml (bot-only entries, Phase 26).
     let has_bot_agents = agents.iter().any(|a| {
         a.config
@@ -646,22 +491,7 @@ async fn cmd_up(
         eprintln!("rightclaw: no agents have Telegram tokens configured — nothing to start");
         return Err(miette::miette!("no agents have Telegram tokens configured"));
     }
-
-    // Warn about MCP auth issues before TUI takes over stdout (D-13).
-    if let Some(issues) = rightclaw::doctor::mcp_auth_issues(home) {
-        eprintln!("warn: MCP auth required: {}", issues.join(", "));
-    }
-
-    let script_path_str = cloudflared_script_path
-        .as_ref()
-        .and_then(|p| p.to_str())
-        .map(|s| s.to_string());
-    let pc_config = rightclaw::codegen::generate_process_compose(
-        &agents,
-        &self_exe,
-        debug,
-        script_path_str.as_deref(),
-    )?;
+    let pc_config = rightclaw::codegen::generate_process_compose(&agents, &self_exe, debug)?;
     let config_path = run_dir.join("process-compose.yaml");
     std::fs::write(&config_path, &pc_config)
         .map_err(|e| miette::miette!("failed to write process-compose.yaml: {e:#}"))?;
@@ -798,427 +628,6 @@ fn cmd_attach(_home: &Path) -> miette::Result<()> {
         .exec();
 
     Err(miette::miette!("Failed to attach: {err}"))
-}
-
-const MANAGED_SETTINGS_DIR: &str = "/etc/claude-code";
-const MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
-
-/// Write managed-settings.json to the given dir/path (extracted for testability).
-fn write_managed_settings(dir: &str, path: &str) -> miette::Result<()> {
-    std::fs::create_dir_all(dir).map_err(|e| {
-        miette::miette!(
-            help = "Run with elevated privileges: sudo rightclaw config strict-sandbox",
-            "Permission denied creating {dir}: {e:#}"
-        )
-    })?;
-    std::fs::write(path, "{\"allowManagedDomainsOnly\": true}\n").map_err(|e| {
-        miette::miette!(
-            help = "Run with elevated privileges: sudo rightclaw config strict-sandbox",
-            "Permission denied writing {path}: {e:#}"
-        )
-    })?;
-    Ok(())
-}
-
-fn cmd_config_strict_sandbox() -> miette::Result<()> {
-    write_managed_settings(MANAGED_SETTINGS_DIR, MANAGED_SETTINGS_PATH)?;
-    println!("Wrote {MANAGED_SETTINGS_PATH} — machine-wide domain blocking enabled.");
-    Ok(())
-}
-
-/// Truncate content to at most `max_chars` characters, appending '…' if truncated.
-/// Uses char-safe slicing (avoids byte-boundary panic on multi-byte UTF-8).
-fn truncate_content(s: &str, max_chars: usize) -> String {
-    let mut chars = s.chars();
-    let prefix: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{prefix}…")
-    } else {
-        prefix
-    }
-}
-
-/// Auto-scale byte count to human-readable size string.
-fn format_size(bytes: u64) -> String {
-    if bytes < 1_024 {
-        format!("{bytes} B")
-    } else if bytes < 1_048_576 {
-        format!("{:.1} KB", bytes as f64 / 1_024.0)
-    } else {
-        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
-    }
-}
-
-/// Resolve agent directory and open its memory database.
-///
-/// Returns a live `Connection` or a fatal miette error.
-fn resolve_agent_db(home: &Path, agent: &str) -> miette::Result<rusqlite::Connection> {
-    let agent_path = home.join("agents").join(agent);
-    if !agent_path.exists() {
-        return Err(miette::miette!(
-            "agent '{}' not found at {}",
-            agent,
-            agent_path.display()
-        ));
-    }
-    let db_path = agent_path.join("memory.db");
-    if !db_path.exists() {
-        return Err(miette::miette!(
-            "no memory database for agent '{}' — run `rightclaw up` first",
-            agent
-        ));
-    }
-    rightclaw::memory::open_connection(&agent_path)
-        .map_err(|e| miette::miette!("failed to open memory.db for '{}': {e:#}", agent))
-}
-
-fn cmd_memory_list(
-    home: &Path,
-    agent: &str,
-    limit: i64,
-    offset: i64,
-    json: bool,
-) -> miette::Result<()> {
-    let conn = resolve_agent_db(home, agent)?;
-    let entries = rightclaw::memory::list_memories(&conn, limit, offset)
-        .map_err(|e| miette::miette!("failed to list memories: {e:#}"))?;
-
-    if json {
-        for entry in &entries {
-            println!(
-                "{}",
-                serde_json::to_string(entry)
-                    .map_err(|e| miette::miette!("JSON serialization failed: {e:#}"))?
-            );
-        }
-        return Ok(());
-    }
-
-    if entries.is_empty() {
-        println!("No memories for agent '{agent}'.");
-        return Ok(());
-    }
-
-    println!("{:<6} {:<61} {:<20} CREATED_AT", "ID", "CONTENT", "STORED_BY");
-    for entry in &entries {
-        let truncated = truncate_content(&entry.content, 60);
-        let stored_by = entry.stored_by.as_deref().unwrap_or("(unknown)");
-        println!(
-            "{:<6} {:<61} {:<20} {}",
-            entry.id, truncated, stored_by, entry.created_at
-        );
-    }
-
-    // Pagination footer (text mode only, when result count == limit)
-    if entries.len() as i64 == limit {
-        let total: i64 = conn
-            .query_row(
-                "SELECT count(*) FROM memories WHERE deleted_at IS NULL",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| miette::miette!("failed to count memories: {e:#}"))?;
-        println!(
-            "\n{} of {} entries shown  (--offset {} for next page)",
-            limit,
-            total,
-            offset + limit
-        );
-    }
-
-    Ok(())
-}
-
-fn cmd_memory_stats(home: &Path, agent: &str, json: bool) -> miette::Result<()> {
-    // resolve_agent_db validates agent dir and memory.db existence before opening.
-    let conn = resolve_agent_db(home, agent)?;
-
-    // db_path needed only for fs metadata (file size) — derive from home, not conn.
-    let db_path = home.join("agents").join(agent).join("memory.db");
-    let db_size = std::fs::metadata(&db_path)
-        .map_err(|e| miette::miette!("failed to stat memory.db: {e:#}"))?
-        .len();
-
-    let (total_entries, oldest, newest): (i64, Option<String>, Option<String>) = conn
-        .query_row(
-            "SELECT count(*), min(created_at), max(created_at) \
-             FROM memories WHERE deleted_at IS NULL",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .map_err(|e| miette::miette!("failed to query stats: {e:#}"))?;
-
-    if json {
-        let obj = serde_json::json!({
-            "agent": agent,
-            "db_size_bytes": db_size,
-            "total_entries": total_entries,
-            "oldest": oldest,
-            "newest": newest,
-        });
-        println!("{obj}");
-        return Ok(());
-    }
-
-    println!("Agent:         {agent}");
-    println!("DB size:       {}", format_size(db_size));
-    println!("Total entries: {total_entries}");
-    println!("Oldest:        {}", oldest.as_deref().unwrap_or("(none)"));
-    println!("Newest:        {}", newest.as_deref().unwrap_or("(none)"));
-
-    Ok(())
-}
-
-fn cmd_memory_search(
-    home: &Path,
-    agent: &str,
-    query: &str,
-    limit: i64,
-    offset: i64,
-    json: bool,
-) -> miette::Result<()> {
-    let conn = resolve_agent_db(home, agent)?;
-    let entries = rightclaw::memory::search_memories_paged(&conn, query, limit, offset)
-        .map_err(|e| {
-            // FTS5 query syntax errors are common — give a helpful hint.
-            miette::miette!(
-                help = "FTS5 syntax: use simple words or phrases. Avoid special chars like * at start.",
-                "search failed: {e:#}"
-            )
-        })?;
-
-    if json {
-        for entry in &entries {
-            println!(
-                "{}",
-                serde_json::to_string(entry)
-                    .map_err(|e| miette::miette!("JSON serialization failed: {e:#}"))?
-            );
-        }
-        return Ok(());
-    }
-
-    if entries.is_empty() {
-        println!("No memories match '{query}' for agent '{agent}'.");
-        return Ok(());
-    }
-
-    println!("{:<6} {:<61} {:<20} CREATED_AT", "ID", "CONTENT", "STORED_BY");
-    for entry in &entries {
-        let truncated = truncate_content(&entry.content, 60);
-        let stored_by = entry.stored_by.as_deref().unwrap_or("(unknown)");
-        println!(
-            "{:<6} {:<61} {:<20} {}",
-            entry.id, truncated, stored_by, entry.created_at
-        );
-    }
-
-    // Pagination footer (text mode only)
-    if entries.len() as i64 == limit {
-        println!(
-            "\n{} results shown  (--offset {} for next page)",
-            limit,
-            offset + limit
-        );
-    }
-
-    Ok(())
-}
-
-fn cmd_memory_delete(home: &Path, agent: &str, id: i64) -> miette::Result<()> {
-    use rusqlite::OptionalExtension;
-    use std::io::{self, Write};
-
-    let conn = resolve_agent_db(home, agent)?;
-
-    // Check soft-deleted rows too (hard-delete works on any existing row).
-    let any_row: Option<(String, Option<String>)> = conn
-        .query_row(
-            "SELECT content, stored_by FROM memories WHERE id = ?1",
-            [id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(|e| miette::miette!("DB query failed: {e:#}"))?;
-
-    match any_row {
-        None => {
-            return Err(miette::miette!("memory entry {id} not found for agent '{agent}'"));
-        }
-        Some((content, stored_by)) => {
-            println!("  id:        {id}");
-            println!("  content:   {}", truncate_content(&content, 60));
-            println!("  stored_by: {}", stored_by.as_deref().unwrap_or("(unknown)"));
-        }
-    }
-
-    print!("Hard-delete this entry? [y/N]: ");
-    io::stdout()
-        .flush()
-        .map_err(|e| miette::miette!("stdout flush failed: {e}"))?;
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .map_err(|e| miette::miette!("failed to read input: {e}"))?;
-
-    if input.trim().to_lowercase() != "y" {
-        println!("Aborted.");
-        return Ok(());
-    }
-
-    rightclaw::memory::hard_delete_memory(&conn, id).map_err(|e| match e {
-        rightclaw::memory::MemoryError::NotFound(n) => {
-            miette::miette!("memory entry {n} not found for agent '{agent}'")
-        }
-        other => miette::miette!("failed to delete memory: {other:#}"),
-    })?;
-
-    println!("Deleted memory entry {id}.");
-    Ok(())
-}
-
-fn cmd_pair(home: &Path, agent_name: Option<&str>) -> miette::Result<()> {
-    let agent_name = agent_name.unwrap_or("right");
-
-    let agents_dir = home.join("agents");
-    let all_agents = rightclaw::agent::discover_agents(&agents_dir)?;
-
-    let agent = all_agents
-        .iter()
-        .find(|a| a.name == agent_name)
-        .ok_or_else(|| {
-            let available: Vec<&str> = all_agents.iter().map(|a| a.name.as_str()).collect();
-            miette::miette!(
-                "agent '{}' not found. Available agents: {}",
-                agent_name,
-                available.join(", ")
-            )
-        })?;
-
-    // Generate agent definition .md before exec (function may run without prior cmd_up).
-    let claude_dir = agent.path.join(".claude");
-    std::fs::create_dir_all(&claude_dir)
-        .map_err(|e| miette::miette!("failed to create .claude dir for '{}': {e:#}", agent_name))?;
-    let agent_def_content = rightclaw::codegen::generate_agent_definition(agent)?;
-    let agents_dir = claude_dir.join("agents");
-    std::fs::create_dir_all(&agents_dir)
-        .map_err(|e| miette::miette!("failed to create .claude/agents dir for '{}': {e:#}", agent_name))?;
-    std::fs::write(agents_dir.join(format!("{}.md", agent.name)), &agent_def_content)
-        .map_err(|e| miette::miette!("failed to write agent definition for '{}': {e:#}", agent_name))?;
-
-    // Write reply-schema.json (D-01).
-    std::fs::write(claude_dir.join("reply-schema.json"), rightclaw::codegen::REPLY_SCHEMA_JSON)
-        .map_err(|e| miette::miette!("failed to write reply-schema.json for '{}': {e:#}", agent_name))?;
-
-    let claude_bin = which::which("claude")
-        .or_else(|_| which::which("claude-bun"))
-        .map_err(|_| {
-            miette::miette!("claude CLI not found in PATH (tried: claude, claude-bun)")
-        })?;
-
-    use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(claude_bin)
-        .arg("--agent")
-        .arg(&agent.name)
-        .arg("--dangerously-skip-permissions")
-        .arg("-p")
-        .arg(&agent.path)
-        .exec();
-
-    Err(miette::miette!("failed to launch claude: {err}"))
-}
-
-/// Find a cloudflared credentials file in `~/.cloudflared/`.
-///
-/// Prefers `~/.cloudflared/<token_uuid>.json` (matching the configured token tunnel).
-/// Falls back to the first `*.json` file that contains a `TunnelID` field.
-/// Returns `(tunnel_uuid, credentials_path)` or `None` if nothing is found.
-fn detect_cloudflared_credentials(token_uuid: &str) -> Option<(String, std::path::PathBuf)> {
-    let cf_dir = dirs::home_dir()?.join(".cloudflared");
-
-    // First: look for a credentials file that matches the token tunnel UUID.
-    let matching = cf_dir.join(format!("{token_uuid}.json"));
-    if matching.exists() {
-        return Some((token_uuid.to_string(), matching));
-    }
-
-    // Fallback: any *.json file with a TunnelID field.
-    let entries = std::fs::read_dir(&cf_dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) else {
-            continue;
-        };
-        if let Some(uuid) = v["TunnelID"].as_str() {
-            tracing::info!(
-                credentials = %path.display(),
-                credentials_uuid = %uuid,
-                token_uuid = %token_uuid,
-                "using cloudflared credentials file for local ingress mode"
-            );
-            return Some((uuid.to_string(), path));
-        }
-    }
-    None
-}
-
-fn cmd_mcp_status(home: &Path, agent_filter: Option<&str>) -> miette::Result<()> {
-    use rightclaw::mcp::detect::mcp_auth_status;
-
-    let agents_dir = home.join("agents");
-    let credentials_path = dirs::home_dir()
-        .ok_or_else(|| miette::miette!("cannot determine home directory"))?
-        .join(".claude")
-        .join(".credentials.json");
-
-    // Collect agent dirs — either all or filtered to one
-    let entries: Vec<std::path::PathBuf> = if let Some(name) = agent_filter {
-        let dir = agents_dir.join(name);
-        if !dir.is_dir() {
-            return Err(miette::miette!("agent not found: {name}"));
-        }
-        vec![dir]
-    } else {
-        let rd = std::fs::read_dir(&agents_dir)
-            .map_err(|e| miette::miette!("cannot read agents dir: {e:#}"))?;
-        let mut dirs: Vec<_> = rd
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.is_dir())
-            .collect();
-        dirs.sort();
-        dirs
-    };
-
-    let mut any = false;
-    for agent_dir in &entries {
-        let agent_name = agent_dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("?");
-        let mcp_path = agent_dir.join(".mcp.json");
-        let statuses = mcp_auth_status(&mcp_path, &credentials_path)
-            .map_err(|e| miette::miette!("mcp_auth_status for {agent_name}: {e:#}"))?;
-        for s in &statuses {
-            let icon = match s.state {
-                rightclaw::mcp::detect::AuthState::Present => "✅",
-                rightclaw::mcp::detect::AuthState::Missing => "❌",
-                rightclaw::mcp::detect::AuthState::Expired => "⚠️",
-            };
-            println!("{agent_name}  {icon} {}  {}", s.name, s.state);
-            any = true;
-        }
-    }
-    if !any {
-        println!("No HTTP MCP servers configured.");
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1575,46 +984,332 @@ mod tests {
         // Either Ok or NotFound error — never panics
         assert!(result.is_ok() || result.unwrap_err().kind() == std::io::ErrorKind::NotFound);
     }
+}
 
-    // ---- McpCommands variant existence (compile-time) ----
+const MANAGED_SETTINGS_DIR: &str = "/etc/claude-code";
+const MANAGED_SETTINGS_PATH: &str = "/etc/claude-code/managed-settings.json";
 
-    #[test]
-    fn mcp_commands_status_variant_exists() {
-        use super::McpCommands;
-        let _ = McpCommands::Status { agent: None };
-        let _ = McpCommands::Status { agent: Some("right".to_string()) };
-    }
+/// Write managed-settings.json to the given dir/path (extracted for testability).
+fn write_managed_settings(dir: &str, path: &str) -> miette::Result<()> {
+    std::fs::create_dir_all(dir).map_err(|e| {
+        miette::miette!(
+            help = "Run with elevated privileges: sudo rightclaw config strict-sandbox",
+            "Permission denied creating {dir}: {e:#}"
+        )
+    })?;
+    std::fs::write(path, "{\"allowManagedDomainsOnly\": true}\n").map_err(|e| {
+        miette::miette!(
+            help = "Run with elevated privileges: sudo rightclaw config strict-sandbox",
+            "Permission denied writing {path}: {e:#}"
+        )
+    })?;
+    Ok(())
+}
 
-    // ---- cmd_mcp_status error paths ----
+fn cmd_config_strict_sandbox() -> miette::Result<()> {
+    write_managed_settings(MANAGED_SETTINGS_DIR, MANAGED_SETTINGS_PATH)?;
+    println!("Wrote {MANAGED_SETTINGS_PATH} — machine-wide domain blocking enabled.");
+    Ok(())
+}
 
-    #[test]
-    fn cmd_mcp_status_errors_on_nonexistent_agent() {
-        use super::cmd_mcp_status;
-        let tmp = TempDir::new().unwrap();
-        // Create agents dir but no "nonexistent" subdir
-        let agents_dir = tmp.path().join("agents");
-        fs::create_dir_all(&agents_dir).unwrap();
-
-        let result = cmd_mcp_status(tmp.path(), Some("nonexistent"));
-        let err = result.expect_err("should fail when agent not found");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("agent not found"),
-            "error must mention 'agent not found', got: {msg}"
-        );
-    }
-
-    #[test]
-    fn cmd_mcp_status_returns_ok_with_no_mcp_json() {
-        use super::cmd_mcp_status;
-        let tmp = TempDir::new().unwrap();
-        // Create a valid agent dir with no .mcp.json
-        let agent_dir = tmp.path().join("agents").join("myagent");
-        fs::create_dir_all(&agent_dir).unwrap();
-
-        // Should succeed and print "No HTTP MCP servers configured."
-        let result = cmd_mcp_status(tmp.path(), Some("myagent"));
-        assert!(result.is_ok(), "should succeed when .mcp.json absent");
+/// Truncate content to at most `max_chars` characters, appending '…' if truncated.
+/// Uses char-safe slicing (avoids byte-boundary panic on multi-byte UTF-8).
+fn truncate_content(s: &str, max_chars: usize) -> String {
+    let mut chars = s.chars();
+    let prefix: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{prefix}…")
+    } else {
+        prefix
     }
 }
 
+/// Auto-scale byte count to human-readable size string.
+fn format_size(bytes: u64) -> String {
+    if bytes < 1_024 {
+        format!("{bytes} B")
+    } else if bytes < 1_048_576 {
+        format!("{:.1} KB", bytes as f64 / 1_024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    }
+}
+
+/// Resolve agent directory and open its memory database.
+///
+/// Returns a live `Connection` or a fatal miette error.
+fn resolve_agent_db(home: &Path, agent: &str) -> miette::Result<rusqlite::Connection> {
+    let agent_path = home.join("agents").join(agent);
+    if !agent_path.exists() {
+        return Err(miette::miette!(
+            "agent '{}' not found at {}",
+            agent,
+            agent_path.display()
+        ));
+    }
+    let db_path = agent_path.join("memory.db");
+    if !db_path.exists() {
+        return Err(miette::miette!(
+            "no memory database for agent '{}' — run `rightclaw up` first",
+            agent
+        ));
+    }
+    rightclaw::memory::open_connection(&agent_path)
+        .map_err(|e| miette::miette!("failed to open memory.db for '{}': {e:#}", agent))
+}
+
+fn cmd_memory_list(
+    home: &Path,
+    agent: &str,
+    limit: i64,
+    offset: i64,
+    json: bool,
+) -> miette::Result<()> {
+    let conn = resolve_agent_db(home, agent)?;
+    let entries = rightclaw::memory::list_memories(&conn, limit, offset)
+        .map_err(|e| miette::miette!("failed to list memories: {e:#}"))?;
+
+    if json {
+        for entry in &entries {
+            println!(
+                "{}",
+                serde_json::to_string(entry)
+                    .map_err(|e| miette::miette!("JSON serialization failed: {e:#}"))?
+            );
+        }
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!("No memories for agent '{agent}'.");
+        return Ok(());
+    }
+
+    println!("{:<6} {:<61} {:<20} CREATED_AT", "ID", "CONTENT", "STORED_BY");
+    for entry in &entries {
+        let truncated = truncate_content(&entry.content, 60);
+        let stored_by = entry.stored_by.as_deref().unwrap_or("(unknown)");
+        println!(
+            "{:<6} {:<61} {:<20} {}",
+            entry.id, truncated, stored_by, entry.created_at
+        );
+    }
+
+    // Pagination footer (text mode only, when result count == limit)
+    if entries.len() as i64 == limit {
+        let total: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM memories WHERE deleted_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| miette::miette!("failed to count memories: {e:#}"))?;
+        println!(
+            "\n{} of {} entries shown  (--offset {} for next page)",
+            limit,
+            total,
+            offset + limit
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_memory_stats(home: &Path, agent: &str, json: bool) -> miette::Result<()> {
+    // resolve_agent_db validates agent dir and memory.db existence before opening.
+    let conn = resolve_agent_db(home, agent)?;
+
+    // db_path needed only for fs metadata (file size) — derive from home, not conn.
+    let db_path = home.join("agents").join(agent).join("memory.db");
+    let db_size = std::fs::metadata(&db_path)
+        .map_err(|e| miette::miette!("failed to stat memory.db: {e:#}"))?
+        .len();
+
+    let (total_entries, oldest, newest): (i64, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT count(*), min(created_at), max(created_at) \
+             FROM memories WHERE deleted_at IS NULL",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|e| miette::miette!("failed to query stats: {e:#}"))?;
+
+    if json {
+        let obj = serde_json::json!({
+            "agent": agent,
+            "db_size_bytes": db_size,
+            "total_entries": total_entries,
+            "oldest": oldest,
+            "newest": newest,
+        });
+        println!("{obj}");
+        return Ok(());
+    }
+
+    println!("Agent:         {agent}");
+    println!("DB size:       {}", format_size(db_size));
+    println!("Total entries: {total_entries}");
+    println!("Oldest:        {}", oldest.as_deref().unwrap_or("(none)"));
+    println!("Newest:        {}", newest.as_deref().unwrap_or("(none)"));
+
+    Ok(())
+}
+
+fn cmd_memory_search(
+    home: &Path,
+    agent: &str,
+    query: &str,
+    limit: i64,
+    offset: i64,
+    json: bool,
+) -> miette::Result<()> {
+    let conn = resolve_agent_db(home, agent)?;
+    let entries = rightclaw::memory::search_memories_paged(&conn, query, limit, offset)
+        .map_err(|e| {
+            // FTS5 query syntax errors are common — give a helpful hint.
+            miette::miette!(
+                help = "FTS5 syntax: use simple words or phrases. Avoid special chars like * at start.",
+                "search failed: {e:#}"
+            )
+        })?;
+
+    if json {
+        for entry in &entries {
+            println!(
+                "{}",
+                serde_json::to_string(entry)
+                    .map_err(|e| miette::miette!("JSON serialization failed: {e:#}"))?
+            );
+        }
+        return Ok(());
+    }
+
+    if entries.is_empty() {
+        println!("No memories match '{query}' for agent '{agent}'.");
+        return Ok(());
+    }
+
+    println!("{:<6} {:<61} {:<20} CREATED_AT", "ID", "CONTENT", "STORED_BY");
+    for entry in &entries {
+        let truncated = truncate_content(&entry.content, 60);
+        let stored_by = entry.stored_by.as_deref().unwrap_or("(unknown)");
+        println!(
+            "{:<6} {:<61} {:<20} {}",
+            entry.id, truncated, stored_by, entry.created_at
+        );
+    }
+
+    // Pagination footer (text mode only)
+    if entries.len() as i64 == limit {
+        println!(
+            "\n{} results shown  (--offset {} for next page)",
+            limit,
+            offset + limit
+        );
+    }
+
+    Ok(())
+}
+
+fn cmd_memory_delete(home: &Path, agent: &str, id: i64) -> miette::Result<()> {
+    use rusqlite::OptionalExtension;
+    use std::io::{self, Write};
+
+    let conn = resolve_agent_db(home, agent)?;
+
+    // Check soft-deleted rows too (hard-delete works on any existing row).
+    let any_row: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT content, stored_by FROM memories WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| miette::miette!("DB query failed: {e:#}"))?;
+
+    match any_row {
+        None => {
+            return Err(miette::miette!("memory entry {id} not found for agent '{agent}'"));
+        }
+        Some((content, stored_by)) => {
+            println!("  id:        {id}");
+            println!("  content:   {}", truncate_content(&content, 60));
+            println!("  stored_by: {}", stored_by.as_deref().unwrap_or("(unknown)"));
+        }
+    }
+
+    print!("Hard-delete this entry? [y/N]: ");
+    io::stdout()
+        .flush()
+        .map_err(|e| miette::miette!("stdout flush failed: {e}"))?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| miette::miette!("failed to read input: {e}"))?;
+
+    if input.trim().to_lowercase() != "y" {
+        println!("Aborted.");
+        return Ok(());
+    }
+
+    rightclaw::memory::hard_delete_memory(&conn, id).map_err(|e| match e {
+        rightclaw::memory::MemoryError::NotFound(n) => {
+            miette::miette!("memory entry {n} not found for agent '{agent}'")
+        }
+        other => miette::miette!("failed to delete memory: {other:#}"),
+    })?;
+
+    println!("Deleted memory entry {id}.");
+    Ok(())
+}
+
+fn cmd_pair(home: &Path, agent_name: Option<&str>) -> miette::Result<()> {
+    let agent_name = agent_name.unwrap_or("right");
+
+    let agents_dir = home.join("agents");
+    let all_agents = rightclaw::agent::discover_agents(&agents_dir)?;
+
+    let agent = all_agents
+        .iter()
+        .find(|a| a.name == agent_name)
+        .ok_or_else(|| {
+            let available: Vec<&str> = all_agents.iter().map(|a| a.name.as_str()).collect();
+            miette::miette!(
+                "agent '{}' not found. Available agents: {}",
+                agent_name,
+                available.join(", ")
+            )
+        })?;
+
+    // Generate agent definition .md before exec (function may run without prior cmd_up).
+    let claude_dir = agent.path.join(".claude");
+    std::fs::create_dir_all(&claude_dir)
+        .map_err(|e| miette::miette!("failed to create .claude dir for '{}': {e:#}", agent_name))?;
+    let agent_def_content = rightclaw::codegen::generate_agent_definition(agent)?;
+    let agents_dir = claude_dir.join("agents");
+    std::fs::create_dir_all(&agents_dir)
+        .map_err(|e| miette::miette!("failed to create .claude/agents dir for '{}': {e:#}", agent_name))?;
+    std::fs::write(agents_dir.join(format!("{}.md", agent.name)), &agent_def_content)
+        .map_err(|e| miette::miette!("failed to write agent definition for '{}': {e:#}", agent_name))?;
+
+    // Write reply-schema.json (D-01).
+    std::fs::write(claude_dir.join("reply-schema.json"), rightclaw::codegen::REPLY_SCHEMA_JSON)
+        .map_err(|e| miette::miette!("failed to write reply-schema.json for '{}': {e:#}", agent_name))?;
+
+    let claude_bin = which::which("claude")
+        .or_else(|_| which::which("claude-bun"))
+        .map_err(|_| {
+            miette::miette!("claude CLI not found in PATH (tried: claude, claude-bun)")
+        })?;
+
+    use std::os::unix::process::CommandExt;
+    let err = std::process::Command::new(claude_bin)
+        .arg("--agent")
+        .arg(&agent.name)
+        .arg("--dangerously-skip-permissions")
+        .arg("-p")
+        .arg(&agent.path)
+        .exec();
+
+    Err(miette::miette!("failed to launch claude: {err}"))
+}
