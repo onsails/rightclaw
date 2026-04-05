@@ -259,11 +259,11 @@ async fn handle_mcp_list(
     let mut text = String::from("MCP Server Status:\n\n");
     for s in &statuses {
         let icon = match s.state {
-            rightclaw::mcp::detect::AuthState::Present => "OK",
-            rightclaw::mcp::detect::AuthState::Missing => "MISSING",
-            rightclaw::mcp::detect::AuthState::Expired => "EXPIRED",
+            rightclaw::mcp::detect::AuthState::Present => "✅",
+            rightclaw::mcp::detect::AuthState::Missing => "❌",
+            rightclaw::mcp::detect::AuthState::Expired => "⚠️",
         };
-        text.push_str(&format!("  {} -- {}\n", s.name, icon));
+        text.push_str(&format!("  {} {}  —  {}\n", icon, s.name, s.state));
     }
     bot.send_message(msg.chat.id, text).await?;
     Ok(())
@@ -622,16 +622,19 @@ pub async fn handle_doctor(
     home: Arc<RightclawHome>,
 ) -> ResponseResult<()> {
     let checks = rightclaw::doctor::run_doctor(&home.0);
-    let mut text = String::from("Doctor results:\n\n");
+    let mut body = String::new();
     for check in &checks {
-        text.push_str(&format!("{check}\n"));
+        body.push_str(&format!("{check}\n"));
     }
     let pass_count = checks
         .iter()
         .filter(|c| matches!(c.status, rightclaw::doctor::CheckStatus::Pass))
         .count();
-    text.push_str(&format!("\n{pass_count}/{} checks passed", checks.len()));
-    bot.send_message(msg.chat.id, text).await?;
+    body.push_str(&format!("\n{pass_count}/{} checks passed", checks.len()));
+    let text = format!("Doctor results:\n\n<pre>{}</pre>", body);
+    bot.send_message(msg.chat.id, text)
+        .parse_mode(teloxide::types::ParseMode::Html)
+        .await?;
     Ok(())
 }
 
