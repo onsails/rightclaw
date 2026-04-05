@@ -80,10 +80,11 @@ Run multiple autonomous Claude Code agents safely — each sandboxed by native O
 - ✓ `sandbox.ripgrep.command` injected into per-agent settings.json with resolved system rg path; `USE_BUILTIN_RIPGREP=0` corrected in worker.rs + cron.rs; `failIfUnavailable:true` set — v3.1 Phase 29 (SBOX-01..04)
 - ✓ `rightclaw doctor` checks rg in PATH + validates settings.json ripgrep.command (cross-platform) — v3.1 Phase 30 (DOC-01, DOC-02)
 - ✓ `tests/e2e/verify-sandbox.sh` — repeatable 4-stage script proving sandbox engagement via exit-code strategy under `failIfUnavailable:true`; live-run confirmed 2026-04-03 — v3.1 Phase 31 (VER-01..03)
+- ✓ `generate_process_compose` extended with `cloudflared_script: Option<&Path>`; `CloudflaredEntry` struct serializes script path; template conditional block renders cloudflared process only when TunnelConfig present; pre-flight `which::which("cloudflared")` check in cmd_up — v3.2 Phase 40 (TUNL-02)
 
 ### Active
 
-None — v3.1 milestone complete.
+None — v3.2 Phase 40 complete.
 
 ### Out of Scope
 
@@ -155,6 +156,13 @@ This document evolves at phase transitions and milestone boundaries.
 
 ## Current State
 
+**v3.2 Phase 40 complete** (2026-04-05). Cloudflared wired into process-compose.
+
+- `generate_process_compose` extended to accept `cloudflared_script: Option<&Path>`; `CloudflaredEntry` struct carries script path + working_dir for template rendering
+- `templates/process-compose.yaml.j2` conditional block: cloudflared process with restart on_failure, signal 15, timeout 30, backoff 5, max_restarts 10 — rendered only when TunnelConfig present
+- Pre-flight `which::which("cloudflared")` check in `cmd_up` before any file generation; fails fast with clear error if binary missing
+- 2 new tests (cloudflared with/without tunnel); 279 total passing; workspace builds clean
+
 **v3.1 shipped** (2026-04-03). Sandbox Fix & Verification complete.
 
 - System `rg` path injected into CC sandbox settings.json via `which::which("rg")` at `rightclaw up` time; `USE_BUILTIN_RIPGREP` polarity fixed to `"0"`; `failIfUnavailable: true` added unconditionally
@@ -182,4 +190,4 @@ This document evolves at phase transitions and milestone boundaries.
 - VER-01 description in verify-sandbox.sh slightly overclaims — matches cron.rs pattern, not worker.rs `--resume` path (sandbox correctness unaffected)
 
 ---
-*Last updated: 2026-04-03 after v3.1 milestone*
+*Last updated: 2026-04-05 after Phase 40 (cloudflared wired into process-compose)*
