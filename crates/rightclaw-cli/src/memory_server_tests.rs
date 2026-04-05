@@ -14,6 +14,10 @@ fn setup_server() -> (MemoryServer, tempfile::TempDir) {
     (server, dir)
 }
 
+fn setup_server_with_dir() -> (MemoryServer, tempfile::TempDir) {
+    setup_server()
+}
+
 fn insert_cron_run(
     server: &MemoryServer,
     id: &str,
@@ -164,5 +168,161 @@ async fn test_cron_show_run_not_found() {
     assert!(
         text.contains("not found"),
         "Expected 'not found' in output, got: {text}"
+    );
+}
+
+// --- MCP tool tests ---
+
+#[tokio::test]
+async fn test_mcp_add_creates_entry() {
+    let (server, dir) = setup_server_with_dir();
+    let result = server
+        .mcp_add(Parameters(McpAddParams {
+            name: "notion".to_string(),
+            url: "https://mcp.notion.com/mcp".to_string(),
+        }))
+        .await
+        .expect("mcp_add ok");
+    let text = call_result_text(result);
+    assert!(text.contains("notion"), "response should mention server name");
+    let claude_json = std::fs::read_to_string(dir.path().join(".claude.json")).unwrap();
+    assert!(claude_json.contains("\"notion\""), ".claude.json should contain notion");
+    assert!(claude_json.contains("\"http\""), ".claude.json entry should have type:http");
+}
+
+#[tokio::test]
+async fn test_mcp_remove_rightmemory_rejected() {
+    let (server, _dir) = setup_server_with_dir();
+    let err = server
+        .mcp_remove(Parameters(McpRemoveParams {
+            name: "rightmemory".to_string(),
+        }))
+        .await
+        .expect_err("should return error for protected server");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("Cannot remove") || msg.contains("rightmemory"),
+        "error should mention protected server: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_mcp_remove_existing_server() {
+    let (server, dir) = setup_server_with_dir();
+    server
+        .mcp_add(Parameters(McpAddParams {
+            name: "linear".to_string(),
+            url: "https://mcp.linear.app/mcp".to_string(),
+        }))
+        .await
+        .expect("mcp_add ok");
+    let result = server
+        .mcp_remove(Parameters(McpRemoveParams {
+            name: "linear".to_string(),
+        }))
+        .await
+        .expect("mcp_remove ok");
+    let text = call_result_text(result);
+    assert!(text.contains("linear"), "response should mention server name");
+    let claude_json = std::fs::read_to_string(dir.path().join(".claude.json")).unwrap();
+    assert!(
+        !claude_json.contains("\"linear\""),
+        "linear should be removed from .claude.json"
+    );
+}
+
+#[tokio::test]
+async fn test_mcp_remove_nonexistent_returns_error() {
+    let (server, _dir) = setup_server_with_dir();
+    let err = server
+        .mcp_remove(Parameters(McpRemoveParams {
+            name: "ghost".to_string(),
+        }))
+        .await
+        .expect_err("should return error for missing server");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("ghost") || msg.contains("not found"),
+        "error should mention server: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_mcp_list_empty() {
+    let (server, _dir) = setup_server_with_dir();
+    let result = server
+        .mcp_list(Parameters(McpListParams {}))
+        .await
+        .expect("mcp_list ok");
+    let text = call_result_text(result);
+    let parsed: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+    assert_eq!(parsed, serde_json::json!([]), "empty list should return []");
+}
+
+#[tokio::test]
+async fn test_mcp_list_shows_server_metadata() {
+    let (server, _dir) = setup_server_with_dir();
+    server
+        .mcp_add(Parameters(McpAddParams {
+            name: "notion".to_string(),
+            url: "https://mcp.notion.com/mcp".to_string(),
+        }))
+        .await
+        .expect("mcp_add ok");
+    let result = server
+        .mcp_list(Parameters(McpListParams {}))
+        .await
+        .expect("mcp_list ok");
+    let text = call_result_text(result);
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(&text).expect("valid json array");
+    assert_eq!(parsed.len(), 1);
+    let entry = &parsed[0];
+    assert_eq!(entry["name"], "notion");
+    assert_eq!(entry["url"], "https://mcp.notion.com/mcp");
+    assert!(entry.get("auth").is_some(), "auth field must be present");
+    assert!(entry.get("source").is_some(), "source field must be present");
+    assert!(entry.get("kind").is_some(), "kind field must be present");
+    // MCP-NF-01: no token/secret fields
+    assert!(entry.get("token").is_none(), "token field must NOT be present");
+    assert!(entry.get("secret").is_none(), "secret field must NOT be present");
+    assert!(entry.get("access_token").is_none(), "access_token must NOT be present");
+}
+
+#[tokio::test]
+async fn test_mcp_auth_server_not_found() {
+    let (server, _dir) = setup_server_with_dir();
+    let err = server
+        .mcp_auth(Parameters(McpAuthParams {
+            server_name: "ghost".to_string(),
+        }))
+        .await
+        .expect_err("should return error for missing server");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("ghost") || msg.contains("not found"),
+        "error should mention missing server: {msg}"
+    );
+}
+
+#[test]
+fn test_get_info_mentions_mcp_tools() {
+    let (server, _dir) = setup_server_with_dir();
+    let info = server.get_info();
+    let instructions = info.instructions.unwrap_or_default();
+    assert!(
+        instructions.contains("mcp_add"),
+        "instructions should mention mcp_add: {instructions}"
+    );
+    assert!(
+        instructions.contains("mcp_remove"),
+        "instructions should mention mcp_remove: {instructions}"
+    );
+    assert!(
+        instructions.contains("mcp_list"),
+        "instructions should mention mcp_list: {instructions}"
+    );
+    assert!(
+        instructions.contains("mcp_auth"),
+        "instructions should mention mcp_auth: {instructions}"
     );
 }
