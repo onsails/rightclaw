@@ -1,6 +1,5 @@
 pub mod agent_def;
 pub mod claude_json;
-pub mod cloudflared;
 pub mod mcp_config;
 pub mod plugin;
 pub mod process_compose;

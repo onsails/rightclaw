@@ -41,24 +41,11 @@ fn restart_policy_str(policy: &RestartPolicy) -> &'static str {
 /// Generate a `process-compose.yaml` configuration for Telegram-enabled agents.
 ///
 /// Only agents with `telegram_token` or `telegram_token_file` configured produce
-/// a bot process entry. Agents without a Telegram token are excluded entirely.
+/// a process entry. Agents without a Telegram token are excluded entirely.
 ///
-/// When `cloudflared_script_path` is `Some`, a `cloudflared` process entry is added
-/// to the config. The entry's command is the script path — the script handles DNS
-/// routing and tunnel startup.
-///
-/// # Arguments
-///
-/// * `agents` — all discovered agents (filtered internally by Telegram token presence)
-/// * `exe_path` — absolute path to the rightclaw binary
-/// * `debug` — pass `--debug` to each bot process
-/// * `cloudflared_script_path` — optional path to the generated cloudflared-start.sh script
-pub fn generate_process_compose(
-    agents: &[AgentDef],
-    exe_path: &Path,
-    debug: bool,
-    cloudflared_script_path: Option<&str>,
-) -> miette::Result<String> {
+/// Each entry runs `<exe_path> bot --agent <name>` with env vars for the agent
+/// directory, name, and Telegram token.
+pub fn generate_process_compose(agents: &[AgentDef], exe_path: &Path, debug: bool) -> miette::Result<String> {
     let bot_agents: Vec<BotProcessAgent> = agents
         .iter()
         .filter_map(|agent| {
@@ -102,11 +89,8 @@ pub fn generate_process_compose(
         .map_err(|e| miette::miette!("template parse error: {e:#}"))?;
     let tmpl = env.get_template("pc").expect("template just added");
 
-    tmpl.render(context! {
-        agents => bot_agents,
-        cloudflared_script_path => cloudflared_script_path,
-    })
-    .map_err(|e| miette::miette!("template render error: {e:#}"))
+    tmpl.render(context! { agents => bot_agents })
+        .map_err(|e| miette::miette!("template render error: {e:#}"))
 }
 
 #[cfg(test)]
