@@ -565,6 +565,57 @@ async fn cmd_up(
         tracing::debug!(agent = %agent.name, "wrote .mcp.json with rightmemory entry");
     }
 
+    // Generate cloudflared config and wrapper script when tunnel is configured (Phase 38).
+    let global_cfg = rightclaw::config::read_global_config(&home)?;
+    let cloudflared_script_path: Option<std::path::PathBuf> = if let Some(tunnel_cfg) = global_cfg.tunnel {
+        let agent_pairs: Vec<(String, std::path::PathBuf)> = agents
+            .iter()
+            .map(|a| (a.name.clone(), a.path.clone()))
+            .collect();
+
+        let creds = rightclaw::codegen::cloudflared::CloudflaredCredentials {
+            tunnel_uuid: tunnel_cfg.tunnel_uuid.clone(),
+            credentials_file: tunnel_cfg.credentials_file.clone(),
+        };
+
+        let cf_config = rightclaw::codegen::cloudflared::generate_cloudflared_config(
+            &agent_pairs,
+            &tunnel_cfg.hostname,
+            Some(&creds),
+        )?;
+        let cf_config_path = home.join("cloudflared-config.yml");
+        std::fs::write(&cf_config_path, &cf_config)
+            .map_err(|e| miette::miette!("write cloudflared config: {e:#}"))?;
+        tracing::info!(path = %cf_config_path.display(), "cloudflared config written");
+
+        // Write DNS routing wrapper script.
+        // route dns is non-fatal (|| true) — DNS record persists across restarts;
+        // cert.pem expiry should not prevent cloudflared from running.
+        let scripts_dir = home.join("scripts");
+        std::fs::create_dir_all(&scripts_dir)
+            .map_err(|e| miette::miette!("create scripts dir: {e:#}"))?;
+        let uuid = &tunnel_cfg.tunnel_uuid;
+        let hostname = &tunnel_cfg.hostname;
+        let cf_config_path_str = cf_config_path.display();
+        let script_content = format!(
+            "#!/bin/sh\ncloudflared tunnel route dns {uuid} {hostname} || true\nexec cloudflared tunnel --config {cf_config_path_str} run\n"
+        );
+        let script_path = scripts_dir.join("cloudflared-start.sh");
+        std::fs::write(&script_path, &script_content)
+            .map_err(|e| miette::miette!("write cloudflared-start.sh: {e:#}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| miette::miette!("chmod cloudflared-start.sh: {e:#}"))?;
+        }
+        tracing::info!(path = %script_path.display(), "cloudflared wrapper script written");
+        Some(script_path)
+    } else {
+        None
+    };
+    let _ = cloudflared_script_path; // used by process-compose template in future phases
+
     // Generate process-compose.yaml (bot-only entries, Phase 26).
     let has_bot_agents = agents.iter().any(|a| {
         a.config
