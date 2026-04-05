@@ -717,10 +717,7 @@ fn check_mcp_tokens_pass_no_agents_dir() {
     let dir = tempdir().unwrap();
     // Do NOT create agents/ subdir
 
-    let result = check_mcp_tokens_with_creds(
-        dir.path(),
-        &dir.path().join("nonexistent-creds.json"),
-    );
+    let result = check_mcp_tokens_impl(dir.path());
     assert_eq!(result.status, CheckStatus::Pass);
     assert_eq!(result.name, "mcp-tokens");
     assert!(
@@ -743,8 +740,7 @@ fn check_mcp_tokens_pass_when_all_present() {
     // Write Bearer token + far-future expiry into .mcp.json
     write_bearer_for_doctor(&agent_dir, "notion", server_url, 9_999_999_999);
 
-    let creds_path = dir.path().join("creds.json"); // unused but signature kept
-    let result = check_mcp_tokens_with_creds(dir.path(), &creds_path);
+    let result = check_mcp_tokens_impl(dir.path());
     assert_eq!(result.status, CheckStatus::Pass);
     assert_eq!(result.name, "mcp-tokens");
 }
@@ -759,10 +755,8 @@ fn check_mcp_tokens_warn_on_missing_token() {
     let server_url = "https://mcp.notion.com/mcp";
     write_mcp_json_for_doctor(&agent_dir, "notion", server_url);
 
-    // Use a nonexistent creds file → Missing state
-    let creds_path = dir.path().join("nonexistent-creds.json");
-
-    let result = check_mcp_tokens_with_creds(dir.path(), &creds_path);
+    // No Bearer token written → Missing state
+    let result = check_mcp_tokens_impl(dir.path());
     assert_eq!(result.status, CheckStatus::Warn);
     assert_eq!(result.name, "mcp-tokens");
     assert!(
@@ -786,8 +780,7 @@ fn check_mcp_tokens_warn_on_expired_token() {
     // expires_at = 1 -- far past -- Expired
     write_bearer_for_doctor(&agent_dir, "notion", server_url, 1);
 
-    let creds_path = dir.path().join("creds.json"); // unused but signature kept
-    let result = check_mcp_tokens_with_creds(dir.path(), &creds_path);
+    let result = check_mcp_tokens_impl(dir.path());
     assert_eq!(result.status, CheckStatus::Warn);
     assert!(
         result.detail.contains("agent1/notion"),
@@ -808,8 +801,7 @@ fn check_mcp_tokens_nonexpiring_is_ok() {
 
     write_bearer_for_doctor(&agent_dir, "linear", server_url, 0); // non-expiring
 
-    let creds_path = dir.path().join("creds.json"); // unused but signature kept
-    let result = check_mcp_tokens_with_creds(dir.path(), &creds_path);
+    let result = check_mcp_tokens_impl(dir.path());
     assert_eq!(result.status, CheckStatus::Pass, "expires_at=0 must be Pass");
     assert_eq!(result.name, "mcp-tokens");
 }
@@ -865,23 +857,18 @@ fn mcp_auth_issues_returns_none_when_agents_dir_empty() {
 
 #[test]
 fn mcp_auth_issues_returns_some_when_mcp_tokens_warn() {
-    // Craft a DoctorCheck manually to test the parsing logic in isolation.
-    // We inject a Warn check via check_mcp_tokens_with_creds by providing a real
-    // .mcp.json with a URL server but a credentials file that doesn't include it.
+    // Craft a scenario where .mcp.json has a URL server but no Bearer token → Missing → Warn
     let dir = tempdir().unwrap();
     let agent_dir = dir.path().join("agents").join("myagent");
     std::fs::create_dir_all(&agent_dir).unwrap();
-    // .mcp.json with one OAuth server
+    // .mcp.json with one OAuth server but no Authorization header
     std::fs::write(
         agent_dir.join(".mcp.json"),
         r#"{"mcpServers":{"notion":{"url":"https://mcp.notion.com/mcp"}}}"#,
     )
     .unwrap();
-    // credentials file — empty, so notion token is Missing
-    let creds_path = dir.path().join(".credentials.json");
-    std::fs::write(&creds_path, "{}").unwrap();
 
-    let check = check_mcp_tokens_with_creds(dir.path(), &creds_path);
+    let check = check_mcp_tokens_impl(dir.path());
     // Only test mcp_auth_issues parsing logic if the check is actually Warn.
     // On systems where detection differs, skip rather than assert the wrong thing.
     if check.status == CheckStatus::Warn {
@@ -904,8 +891,8 @@ fn mcp_auth_issues_returns_some_when_mcp_tokens_warn() {
 
 #[test]
 fn mcp_auth_issues_prefix_constant_matches_detail_format() {
-    // Ensure MCP_ISSUES_PREFIX is exactly the prefix used by check_mcp_tokens_with_creds.
-    // If the format string in check_mcp_tokens_with_creds changes, this test catches it.
+    // Ensure MCP_ISSUES_PREFIX is exactly the prefix used by check_mcp_tokens_impl/check_mcp_tokens.
+    // If the format string changes, this test catches it.
     let detail = format!("{}agent1/notion, agent2/linear", MCP_ISSUES_PREFIX);
     let stripped = detail.strip_prefix(MCP_ISSUES_PREFIX);
     assert!(stripped.is_some(), "MCP_ISSUES_PREFIX does not match detail format");

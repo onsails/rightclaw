@@ -694,7 +694,7 @@ fn check_tunnel_credentials_file(tunnel_cfg: &crate::config::TunnelConfig) -> Do
 /// Aggregates missing/expired tokens into a single Warn check.
 /// Tokens with expires_at=0 (non-expiring) count as ok (REFRESH-04).
 /// Only synchronous file I/O — no HTTP calls.
-fn check_mcp_tokens_with_creds(home: &Path, _credentials_path: &Path) -> DoctorCheck {
+fn check_mcp_tokens_impl(home: &Path) -> DoctorCheck {
     let agents_dir = home.join("agents");
 
     if !agents_dir.exists() {
@@ -788,20 +788,9 @@ pub fn mcp_auth_issues(home: &Path) -> Option<Vec<String>> {
     }
 }
 
-/// Thin public wrapper for check_mcp_tokens_with_creds using host credentials path.
+/// Check MCP token status across all agents — reads directly from .mcp.json headers.
 fn check_mcp_tokens(home: &Path) -> DoctorCheck {
-    let credentials_path = match dirs::home_dir() {
-        Some(h) => h.join(".claude").join(".credentials.json"),
-        None => {
-            return DoctorCheck {
-                name: "mcp-tokens".to_string(),
-                status: CheckStatus::Warn,
-                detail: "cannot determine home directory for credentials".to_string(),
-                fix: None,
-            }
-        }
-    };
-    check_mcp_tokens_with_creds(home, &credentials_path)
+    check_mcp_tokens_impl(home)
 }
 
 /// Generate fix guidance for bubblewrap sandbox failures.
