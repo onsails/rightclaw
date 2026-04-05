@@ -692,24 +692,23 @@ fn write_mcp_json_for_doctor(agent_dir: &std::path::Path, server_name: &str, ser
     std::fs::write(agent_dir.join(".mcp.json"), content).unwrap();
 }
 
-/// Helper: write a credential with given expires_at to a creds file.
-fn write_credential_for_doctor(
-    creds_path: &std::path::Path,
+/// Helper: write a Bearer token + OAuth metadata into the agent's .mcp.json.
+/// This replaces the old write_credential_for_doctor that used .credentials.json.
+fn write_bearer_for_doctor(
+    agent_dir: &std::path::Path,
     server_name: &str,
-    server_url: &str,
+    _server_url: &str,
     expires_at: u64,
 ) {
-    use crate::mcp::credentials::{write_credential, CredentialToken};
-    let token = CredentialToken {
-        access_token: "test-token".to_string(),
+    use crate::mcp::credentials::{write_bearer_to_mcp_json, write_oauth_metadata, OAuthMetadata};
+    let mcp_path = agent_dir.join(".mcp.json");
+    write_bearer_to_mcp_json(&mcp_path, server_name, "test-token").unwrap();
+    write_oauth_metadata(&mcp_path, server_name, &OAuthMetadata {
         refresh_token: None,
-        token_type: Some("Bearer".to_string()),
-        scope: None,
         expires_at,
         client_id: None,
         client_secret: None,
-    };
-    write_credential(creds_path, server_name, server_url, &token).unwrap();
+    }).unwrap();
 }
 
 #[test]
@@ -733,7 +732,7 @@ fn check_mcp_tokens_pass_no_agents_dir() {
 
 #[test]
 fn check_mcp_tokens_pass_when_all_present() {
-    // Agent with a valid non-expired credential — Pass
+    // Agent with a valid non-expired credential -- Pass
     let dir = tempdir().unwrap();
     let agent_dir = dir.path().join("agents").join("agent1");
     std::fs::create_dir_all(&agent_dir).unwrap();
@@ -741,10 +740,10 @@ fn check_mcp_tokens_pass_when_all_present() {
     let server_url = "https://mcp.notion.com/mcp";
     write_mcp_json_for_doctor(&agent_dir, "notion", server_url);
 
-    let creds_path = dir.path().join("creds.json");
-    // Far-future expiry → Present
-    write_credential_for_doctor(&creds_path, "notion", server_url, 9_999_999_999);
+    // Write Bearer token + far-future expiry into .mcp.json
+    write_bearer_for_doctor(&agent_dir, "notion", server_url, 9_999_999_999);
 
+    let creds_path = dir.path().join("creds.json"); // unused but signature kept
     let result = check_mcp_tokens_with_creds(dir.path(), &creds_path);
     assert_eq!(result.status, CheckStatus::Pass);
     assert_eq!(result.name, "mcp-tokens");
@@ -776,7 +775,7 @@ fn check_mcp_tokens_warn_on_missing_token() {
 
 #[test]
 fn check_mcp_tokens_warn_on_expired_token() {
-    // Agent with an expired credential → Expired → Warn listing agent1/notion
+    // Agent with an expired credential -- Expired -- Warn listing agent1/notion
     let dir = tempdir().unwrap();
     let agent_dir = dir.path().join("agents").join("agent1");
     std::fs::create_dir_all(&agent_dir).unwrap();
@@ -784,10 +783,10 @@ fn check_mcp_tokens_warn_on_expired_token() {
     let server_url = "https://mcp.notion.com/mcp";
     write_mcp_json_for_doctor(&agent_dir, "notion", server_url);
 
-    let creds_path = dir.path().join("creds.json");
-    // expires_at = 1 → far past → Expired
-    write_credential_for_doctor(&creds_path, "notion", server_url, 1);
+    // expires_at = 1 -- far past -- Expired
+    write_bearer_for_doctor(&agent_dir, "notion", server_url, 1);
 
+    let creds_path = dir.path().join("creds.json"); // unused but signature kept
     let result = check_mcp_tokens_with_creds(dir.path(), &creds_path);
     assert_eq!(result.status, CheckStatus::Warn);
     assert!(
@@ -799,7 +798,7 @@ fn check_mcp_tokens_warn_on_expired_token() {
 
 #[test]
 fn check_mcp_tokens_nonexpiring_is_ok() {
-    // expires_at=0 (non-expiring, REFRESH-04) → Present → Pass
+    // expires_at=0 (non-expiring, REFRESH-04) -- Present -- Pass
     let dir = tempdir().unwrap();
     let agent_dir = dir.path().join("agents").join("agent1");
     std::fs::create_dir_all(&agent_dir).unwrap();
@@ -807,9 +806,9 @@ fn check_mcp_tokens_nonexpiring_is_ok() {
     let server_url = "https://mcp.linear.app/mcp";
     write_mcp_json_for_doctor(&agent_dir, "linear", server_url);
 
-    let creds_path = dir.path().join("creds.json");
-    write_credential_for_doctor(&creds_path, "linear", server_url, 0); // non-expiring
+    write_bearer_for_doctor(&agent_dir, "linear", server_url, 0); // non-expiring
 
+    let creds_path = dir.path().join("creds.json"); // unused but signature kept
     let result = check_mcp_tokens_with_creds(dir.path(), &creds_path);
     assert_eq!(result.status, CheckStatus::Pass, "expires_at=0 must be Pass");
     assert_eq!(result.name, "mcp-tokens");

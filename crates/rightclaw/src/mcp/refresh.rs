@@ -4,7 +4,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep_until, Instant};
 use tracing::{debug, error, warn};
 
-use crate::mcp::credentials::{read_credential, write_credential, CredentialToken};
+use crate::mcp::credentials::{
+    read_oauth_metadata, write_bearer_to_mcp_json, write_oauth_metadata, OAuthMetadata,
+};
 use crate::mcp::detect::{mcp_auth_status, AuthState};
 use crate::mcp::oauth::{discover_as, TokenResponse};
 
@@ -114,23 +116,26 @@ pub async fn post_refresh_grant(
 
 /// Refresh the token for a single MCP server and write the new credential atomically.
 ///
+/// Reads OAuth metadata from .mcp.json `_rightclaw_oauth`, posts refresh grant,
+/// writes new Bearer token + metadata back to .mcp.json.
+///
 /// Returns the new `expires_at` unix timestamp on success.
 pub async fn refresh_token_for_server(
     http_client: &reqwest::Client,
-    credentials_path: &Path,
+    mcp_json_path: &Path,
     server_name: &str,
     server_url: &str,
 ) -> Result<u64, RefreshError> {
-    let credential = read_credential(credentials_path, server_name, server_url)
+    let metadata = read_oauth_metadata(mcp_json_path, server_name)
         .map_err(|e| RefreshError::CredentialError(format!("{e:#}")))?
         .ok_or_else(|| RefreshError::NoRefreshToken(server_name.to_string()))?;
 
-    let refresh_token = credential
+    let refresh_token = metadata
         .refresh_token
         .clone()
         .ok_or_else(|| RefreshError::NoRefreshToken(server_name.to_string()))?;
 
-    let client_id = credential
+    let client_id = metadata
         .client_id
         .clone()
         .ok_or_else(|| RefreshError::NoClientId(server_name.to_string()))?;
@@ -144,7 +149,7 @@ pub async fn refresh_token_for_server(
         &as_meta.token_endpoint,
         &refresh_token,
         &client_id,
-        credential.client_secret.as_deref(),
+        metadata.client_secret.as_deref(),
     )
     .await?;
 
@@ -155,21 +160,21 @@ pub async fn refresh_token_for_server(
 
     let new_expires_at = now_unix + token_resp.expires_in.unwrap_or(0);
 
+    // Write new Bearer token to .mcp.json headers
+    write_bearer_to_mcp_json(mcp_json_path, server_name, &token_resp.access_token)
+        .map_err(|e| RefreshError::CredentialError(format!("{e:#}")))?;
+
     // If provider returned a new refresh_token, use it; otherwise keep the old one.
-    // This handles both rotating and non-rotating providers.
     let new_refresh_token = token_resp.refresh_token.or(Some(refresh_token));
 
-    let new_token = CredentialToken {
-        access_token: token_resp.access_token,
+    // Update OAuth metadata
+    let new_metadata = OAuthMetadata {
         refresh_token: new_refresh_token,
-        token_type: token_resp.token_type.or(credential.token_type),
-        scope: token_resp.scope.or(credential.scope),
         expires_at: new_expires_at,
-        client_id: credential.client_id,
-        client_secret: credential.client_secret,
+        client_id: metadata.client_id,
+        client_secret: metadata.client_secret,
     };
-
-    write_credential(credentials_path, server_name, server_url, &new_token)
+    write_oauth_metadata(mcp_json_path, server_name, &new_metadata)
         .map_err(|e| RefreshError::CredentialError(format!("{e:#}")))?;
 
     Ok(new_expires_at)
@@ -183,7 +188,7 @@ pub async fn refresh_token_for_server(
 /// - After MAX_RETRIES failures: logs error and exits the loop.
 /// - Exits immediately for non-expiring tokens (expires_at == 0) or missing refresh_token.
 async fn run_token_refresh_loop(
-    credentials_path: PathBuf,
+    mcp_json_path: PathBuf,
     server_name: String,
     server_url: String,
     http_client: reqwest::Client,
@@ -191,44 +196,44 @@ async fn run_token_refresh_loop(
     let mut retries = 0u32;
 
     loop {
-        // Re-read on each iteration — may have been updated by OAuth flow
-        let token = match read_credential(&credentials_path, &server_name, &server_url) {
-            Ok(Some(t)) => t,
+        // Re-read metadata on each iteration -- may have been updated by OAuth flow
+        let metadata = match read_oauth_metadata(&mcp_json_path, &server_name) {
+            Ok(Some(m)) => m,
             Ok(None) => {
-                warn!(server = %server_name, "token absent — stopping refresh loop");
+                warn!(server = %server_name, "oauth metadata absent -- stopping refresh loop");
                 return;
             }
             Err(e) => {
-                warn!(server = %server_name, "failed to read credential: {e:#} — stopping refresh loop");
+                warn!(server = %server_name, "failed to read oauth metadata: {e:#} -- stopping refresh loop");
                 return;
             }
         };
 
-        // REFRESH-04 guard: non-expiring token — stop loop
-        if token.expires_at == 0 {
-            debug!(server = %server_name, "token is non-expiring (expires_at=0) — refresh loop exiting");
+        // REFRESH-04 guard: non-expiring token -- stop loop
+        if metadata.expires_at == 0 {
+            debug!(server = %server_name, "token is non-expiring (expires_at=0) -- refresh loop exiting");
             return;
         }
 
-        // No refresh_token — can't refresh
-        if token.refresh_token.is_none() {
-            warn!(server = %server_name, "no refresh_token — skipping refresh loop");
+        // No refresh_token -- can't refresh
+        if metadata.refresh_token.is_none() {
+            warn!(server = %server_name, "no refresh_token -- skipping refresh loop");
             return;
         }
 
         // Sleep until refresh deadline (or proceed immediately if within buffer / expired)
-        if let Some(deadline) = deadline_from_unix(token.expires_at, REFRESH_BUFFER_SECS) {
+        if let Some(deadline) = deadline_from_unix(metadata.expires_at, REFRESH_BUFFER_SECS) {
             sleep_until(deadline).await;
         }
 
-        match refresh_token_for_server(&http_client, &credentials_path, &server_name, &server_url)
+        match refresh_token_for_server(&http_client, &mcp_json_path, &server_name, &server_url)
             .await
         {
             Ok(new_expires_at) => {
                 retries = 0;
                 // Provider issued non-expiring replacement
                 if new_expires_at == 0 {
-                    debug!(server = %server_name, "new token is non-expiring — refresh loop exiting");
+                    debug!(server = %server_name, "new token is non-expiring -- refresh loop exiting");
                     return;
                 }
             }
@@ -238,7 +243,7 @@ async fn run_token_refresh_loop(
                 if retries >= MAX_RETRIES {
                     error!(
                         server = %server_name,
-                        "token refresh failed {MAX_RETRIES} times — stopping scheduler"
+                        "token refresh failed {MAX_RETRIES} times -- stopping scheduler"
                     );
                     return;
                 }
@@ -258,12 +263,12 @@ async fn run_token_refresh_loop(
 /// Each qualifying server gets its own `run_token_refresh_loop` task.
 pub async fn run_refresh_scheduler(
     agent_dir: PathBuf,
-    credentials_path: PathBuf,
+    _credentials_path: PathBuf,
     http_client: reqwest::Client,
 ) {
     let mcp_path = agent_dir.join(".mcp.json");
 
-    let statuses = match mcp_auth_status(&mcp_path, &credentials_path) {
+    let statuses = match mcp_auth_status(&mcp_path) {
         Ok(s) => s,
         Err(e) => {
             warn!("refresh scheduler: failed to read MCP status: {e:#}");
@@ -277,32 +282,32 @@ pub async fn run_refresh_scheduler(
             continue;
         }
 
-        // Read credential to inspect refresh_token and expires_at
-        let credential = match read_credential(&credentials_path, &status.name, &status.url) {
-            Ok(Some(c)) => c,
+        // Read OAuth metadata to inspect refresh_token and expires_at
+        let metadata = match read_oauth_metadata(&mcp_path, &status.name) {
+            Ok(Some(m)) => m,
             Ok(None) => continue,
             Err(e) => {
-                warn!(server = %status.name, "failed to read credential for refresh check: {e:#}");
+                warn!(server = %status.name, "failed to read oauth metadata for refresh check: {e:#}");
                 continue;
             }
         };
 
-        if credential.refresh_token.is_none() {
+        if metadata.refresh_token.is_none() {
             warn!(
                 server = %status.name,
-                "no refresh_token stored — scheduler not started"
+                "no refresh_token stored -- scheduler not started"
             );
             continue;
         }
 
-        // REFRESH-04: non-expiring token — skip (no refresh needed)
-        if credential.expires_at == 0 {
-            debug!(server = %status.name, "token is non-expiring (expires_at=0) — skipping scheduler");
+        // REFRESH-04: non-expiring token -- skip (no refresh needed)
+        if metadata.expires_at == 0 {
+            debug!(server = %status.name, "token is non-expiring (expires_at=0) -- skipping scheduler");
             continue;
         }
 
         tokio::spawn(run_token_refresh_loop(
-            credentials_path.clone(),
+            mcp_path.clone(),
             status.name.clone(),
             status.url.clone(),
             http_client.clone(),
@@ -441,12 +446,12 @@ mod tests {
 
     #[tokio::test]
     async fn scheduler_skips_server_without_refresh_token() {
-        use crate::mcp::credentials::write_credential;
+        use crate::mcp::credentials::{write_bearer_to_mcp_json, write_oauth_metadata, OAuthMetadata};
         use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
         let agent_dir = dir.path().to_path_buf();
-        let credentials_path = dir.path().join(".credentials.json");
+        let mcp_json_path = agent_dir.join(".mcp.json");
 
         // Write .mcp.json with one HTTP server
         let mcp_json = serde_json::json!({
@@ -455,27 +460,23 @@ mod tests {
             }
         });
         std::fs::write(
-            agent_dir.join(".mcp.json"),
+            &mcp_json_path,
             serde_json::to_string(&mcp_json).unwrap(),
         )
         .unwrap();
 
-        // Write a credential WITHOUT a refresh_token
-        let token = CredentialToken {
-            access_token: "at".to_string(),
+        // Write Bearer token but OAuth metadata WITHOUT a refresh_token
+        write_bearer_to_mcp_json(&mcp_json_path, "notion", "at").unwrap();
+        write_oauth_metadata(&mcp_json_path, "notion", &OAuthMetadata {
             refresh_token: None, // no refresh_token
-            token_type: Some("Bearer".to_string()),
-            scope: None,
             expires_at: now_unix() + 7200,
             client_id: Some("cli-id".to_string()),
             client_secret: None,
-        };
-        write_credential(&credentials_path, "notion", "https://mcp.notion.com/mcp", &token)
-            .unwrap();
+        }).unwrap();
 
         // run_refresh_scheduler should return without panicking (no task spawned)
         let http_client = reqwest::Client::new();
-        // This is the key assertion: it completes without hanging/panicking
+        let credentials_path = dir.path().join(".credentials.json"); // unused but signature kept
         run_refresh_scheduler(agent_dir, credentials_path, http_client).await;
         // If we get here, the scheduler correctly skipped the server
     }

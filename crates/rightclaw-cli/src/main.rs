@@ -1692,12 +1692,7 @@ fn cmd_mcp_status(home: &Path, agent_filter: Option<&str>) -> miette::Result<()>
     use rightclaw::mcp::detect::mcp_auth_status;
 
     let agents_dir = home.join("agents");
-    let credentials_path = dirs::home_dir()
-        .ok_or_else(|| miette::miette!("cannot determine home directory"))?
-        .join(".claude")
-        .join(".credentials.json");
-
-    // Collect agent dirs — either all or filtered to one
+    // Collect agent dirs -- either all or filtered to one
     let entries: Vec<std::path::PathBuf> = if let Some(name) = agent_filter {
         let dir = agents_dir.join(name);
         if !dir.is_dir() {
@@ -1723,7 +1718,7 @@ fn cmd_mcp_status(home: &Path, agent_filter: Option<&str>) -> miette::Result<()>
             .and_then(|n| n.to_str())
             .unwrap_or("?");
         let mcp_path = agent_dir.join(".mcp.json");
-        let statuses = mcp_auth_status(&mcp_path, &credentials_path)
+        let statuses = mcp_auth_status(&mcp_path)
             .map_err(|e| miette::miette!("mcp_auth_status for {agent_name}: {e:#}"))?;
         for s in &statuses {
             let icon = match s.state {
