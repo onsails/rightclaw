@@ -584,8 +584,9 @@ async fn cmd_up(
         let uuid = tunnel_cfg.tunnel_uuid()?;
         let hostname = &tunnel_cfg.hostname;
         let token = &tunnel_cfg.token;
+        let cf_config_path_str = cf_config_path.display();
         let script_content = format!(
-            "#!/bin/sh\nset -e\ncloudflared tunnel route dns {uuid} {hostname}\nexec cloudflared tunnel run --token {token}\n"
+            "#!/bin/sh\nset -e\ncloudflared tunnel route dns {uuid} {hostname}\nexec cloudflared tunnel run --config {cf_config_path_str} --token {token}\n"
         );
         let script_path = scripts_dir.join("cloudflared-start.sh");
         std::fs::write(&script_path, &script_content)
