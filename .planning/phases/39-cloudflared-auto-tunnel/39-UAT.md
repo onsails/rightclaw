@@ -53,10 +53,12 @@ blocked: 0
   reason: "User reported: it asked to reuse existing tunnel then asked for hostname"
   severity: major
   test: 3
-  root_cause: ""
-  artifacts: []
-  missing: []
-  debug_session: ""
+  root_cause: "prompt_telegram_token() at main.rs:246 is called unconditionally — no yes-flag guard — so -y without --telegram-token always prompts; tunnel reuse/hostname prompts are gated correctly in current code and their appearance suggests a stale binary was tested"
+  artifacts:
+    - path: "crates/rightclaw-cli/src/main.rs"
+      issue: "lines 241-246: match telegram_token has no None if yes => None branch; prompt_telegram_token() fires unconditionally when --telegram-token omitted regardless of -y"
+  missing:
+    - "Add None if yes => None arm to the telegram_token match before the None => prompt_telegram_token()? arm"
 
 - truth: "After rightclaw init configures a tunnel, cloudflared runs as a process in process-compose"
   status: failed
