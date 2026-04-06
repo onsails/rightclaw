@@ -78,11 +78,9 @@ pub fn generate_process_compose(
         .filter_map(|agent| {
             let config = agent.config.as_ref()?;
 
+            // No telegram token configured — skip this agent.
             let token_inline = config.telegram_token.clone();
-            if token_inline.is_none() {
-                // No telegram token configured — skip this agent.
-                return None;
-            }
+            token_inline.as_ref()?;
 
             let (restart, backoff, max) = (
                 restart_policy_str(&config.restart),

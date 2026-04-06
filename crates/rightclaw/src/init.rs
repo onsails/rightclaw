@@ -38,6 +38,11 @@ pub fn init_rightclaw_home(
         miette::miette!("Failed to create directory {}: {}", agents_dir.display(), e)
     })?;
 
+    // Create staging directory for OpenShell upload workflow
+    let staging_dir = agents_dir.join("staging");
+    std::fs::create_dir_all(&staging_dir)
+        .map_err(|e| miette::miette!("Failed to create staging dir: {e}"))?;
+
     let files: &[(&str, &str)] = &[
         ("IDENTITY.md", DEFAULT_IDENTITY),
         ("SOUL.md", DEFAULT_SOUL),
@@ -212,6 +217,7 @@ mod tests {
 
         let agents_dir = dir.path().join("agents").join("right");
         assert!(agents_dir.join("IDENTITY.md").exists());
+        assert!(agents_dir.join("staging").is_dir(), "staging/ dir should be created");
         assert!(agents_dir.join("SOUL.md").exists());
         assert!(agents_dir.join("USER.md").exists(), "USER.md should be created");
         assert!(agents_dir.join("AGENTS.md").exists());
