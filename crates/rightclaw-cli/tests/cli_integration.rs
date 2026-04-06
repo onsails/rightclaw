@@ -293,3 +293,43 @@ fn test_init_yes_no_telegram_prompt() {
         .assert()
         .success();
 }
+
+// --- Phase 43 Plan 01: Chrome detection + single config write ---
+
+#[test]
+fn test_init_always_writes_config() {
+    // D-11: config.yaml must be written even when no cloudflared cert and no Chrome detected.
+    let dir = tempdir().unwrap();
+    let home = dir.path().to_str().unwrap();
+
+    // Use --telegram-token to avoid interactive prompt; no cloudflared cert in tmpdir.
+    rightclaw()
+        .args(["--home", home, "init", "--telegram-token", "123456:ABCdef"])
+        .assert()
+        .success();
+
+    assert!(
+        dir.path().join("config.yaml").exists(),
+        "config.yaml must exist after init even with no tunnel and no chrome"
+    );
+}
+
+#[test]
+fn test_init_chrome_path_arg_warns_when_mcp_missing() {
+    // CHROME-02: --chrome-path override accepted; CHROME-03: missing MCP binary warns + skips.
+    // /dev/null exists as a regular file on Linux — satisfies chrome binary existence check.
+    // Use --telegram-token to avoid interactive stdin prompt.
+    let dir = tempdir().unwrap();
+    let home = dir.path().to_str().unwrap();
+
+    rightclaw()
+        .args([
+            "--home", home,
+            "init",
+            "--telegram-token", "123456:ABCdef",
+            "--chrome-path", "/dev/null",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("chrome-devtools-mcp not found"));
+}

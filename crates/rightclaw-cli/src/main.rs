@@ -107,6 +107,9 @@ pub enum Commands {
         /// Non-interactive mode — skip all prompts (requires --tunnel-hostname when cloudflared login detected)
         #[arg(short = 'y', long)]
         yes: bool,
+        /// Path to Chrome binary (overrides auto-detection)
+        #[arg(long)]
+        chrome_path: Option<std::path::PathBuf>,
     },
     /// List discovered agents and their status
     List,
@@ -202,8 +205,8 @@ async fn main() -> miette::Result<()> {
     )?;
 
     match cli.command {
-        Commands::Init { telegram_token, telegram_allowed_chat_ids, tunnel_name, tunnel_hostname, yes } => {
-            cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids, &tunnel_name, tunnel_hostname.as_deref(), yes)
+        Commands::Init { telegram_token, telegram_allowed_chat_ids, tunnel_name, tunnel_hostname, yes, chrome_path } => {
+            cmd_init(&home, telegram_token.as_deref(), &telegram_allowed_chat_ids, &tunnel_name, tunnel_hostname.as_deref(), yes, chrome_path.as_deref())
         }
         Commands::List => cmd_list(&home),
         Commands::Doctor => cmd_doctor(&home),
@@ -254,6 +257,7 @@ fn cmd_init(
     tunnel_name: &str,
     tunnel_hostname: Option<&str>,
     yes: bool,
+    chrome_path: Option<&std::path::Path>,
 ) -> miette::Result<()> {
     // If --telegram-token flag provided, validate it upfront.
     // Otherwise prompt interactively.
@@ -280,78 +284,90 @@ fn cmd_init(
         println!("Telegram chat ID allowlist configured.");
     }
 
-    // Auto-tunnel setup: detect cloudflared login via cert.pem.
-    if !detect_cloudflared_cert() {
-        println!("No cloudflared login found. Run `cloudflared login` to enable tunnel support.");
-        return Ok(());
+    // Chrome + MCP binary detection (CHROME-01, CHROME-02, CHROME-03).
+    // Non-fatal: warn and continue if Chrome or MCP binary not found.
+    let chrome_cfg = detect_chrome(chrome_path);
+    if chrome_cfg.is_none() && chrome_path.is_none() {
+        // Auto-detection found nothing — informational, not an error.
+        tracing::debug!("No Chrome installation found at standard paths — Chrome injection disabled");
     }
 
-    let cf_bin = which::which("cloudflared")
-        .map_err(|_| miette::miette!("cloudflared not found in PATH — install it first"))?;
+    // Auto-tunnel setup: detect cloudflared login via cert.pem.
+    // Refactored to produce Option<TunnelConfig> (D-08, D-10) — single write at end.
+    let tunnel_cfg: Option<rightclaw::config::TunnelConfig> = if !detect_cloudflared_cert() {
+        println!("No cloudflared login found. Run `cloudflared login` to enable tunnel support.");
+        None
+    } else {
+        let cf_bin = which::which("cloudflared")
+            .map_err(|_| miette::miette!("cloudflared not found in PATH — install it first"))?;
 
-    // Find or create the Named Tunnel.
-    let existing = find_tunnel_by_name(&cf_bin, tunnel_name)?;
-    let uuid = match existing {
-        Some(ref t) => {
-            if tunnel_hostname.is_some() || yes {
-                // Silent reuse in non-interactive mode.
-                t.id.clone()
-            } else {
-                let msg = format!("Tunnel '{}' already exists. Reuse it?", tunnel_name);
-                if prompt_yes_no(&msg, true)? {
+        // Find or create the Named Tunnel.
+        let existing = find_tunnel_by_name(&cf_bin, tunnel_name)?;
+        let uuid = match existing {
+            Some(ref t) => {
+                if tunnel_hostname.is_some() || yes {
+                    // Silent reuse in non-interactive mode.
                     t.id.clone()
                 } else {
-                    return Err(miette::miette!("tunnel setup cancelled"));
+                    let msg = format!("Tunnel '{}' already exists. Reuse it?", tunnel_name);
+                    if prompt_yes_no(&msg, true)? {
+                        t.id.clone()
+                    } else {
+                        return Err(miette::miette!("tunnel setup cancelled"));
+                    }
                 }
             }
-        }
-        None => {
-            let created = create_tunnel(&cf_bin, tunnel_name)?;
-            created.id
-        }
-    };
+            None => {
+                let created = create_tunnel(&cf_bin, tunnel_name)?;
+                created.id
+            }
+        };
 
-    // Resolve hostname.
-    let hostname = match tunnel_hostname {
-        Some(h) => h.to_string(),
-        None if yes => {
+        // Resolve hostname.
+        let hostname = match tunnel_hostname {
+            Some(h) => h.to_string(),
+            None if yes => {
+                return Err(miette::miette!(
+                    "--tunnel-hostname is required when using -y"
+                ));
+            }
+            None => prompt_hostname()?,
+        };
+
+        // Validate hostname is a bare domain, not a URL.
+        if hostname.starts_with("https://") || hostname.starts_with("http://") {
             return Err(miette::miette!(
-                "--tunnel-hostname is required when using -y"
+                "--tunnel-hostname must be a bare domain (e.g. example.com), not a URL"
             ));
         }
-        None => prompt_hostname()?,
+
+        // DNS CNAME record (non-fatal).
+        route_dns(&cf_bin, &uuid, &hostname);
+
+        // Credentials file is always at ~/.cloudflared/<uuid>.json — no copy needed.
+        let credentials_file = cloudflared_credentials_path(&uuid)?;
+        if !credentials_file.exists() {
+            tracing::warn!(
+                path = %credentials_file.display(),
+                "credentials file not found — tunnel may have been created on a different machine"
+            );
+        }
+
+        let tunnel_config = rightclaw::config::TunnelConfig {
+            tunnel_uuid: uuid.clone(),
+            credentials_file,
+            hostname: hostname.clone(),
+        };
+        println!("Tunnel config written. UUID: {uuid}, hostname: {hostname}");
+        Some(tunnel_config)
     };
 
-    // Validate hostname is a bare domain, not a URL.
-    if hostname.starts_with("https://") || hostname.starts_with("http://") {
-        return Err(miette::miette!(
-            "--tunnel-hostname must be a bare domain (e.g. example.com), not a URL"
-        ));
-    }
-
-    // DNS CNAME record (non-fatal).
-    route_dns(&cf_bin, &uuid, &hostname);
-
-    // Credentials file is always at ~/.cloudflared/<uuid>.json — no copy needed.
-    let credentials_file = cloudflared_credentials_path(&uuid)?;
-    if !credentials_file.exists() {
-        tracing::warn!(
-            path = %credentials_file.display(),
-            "credentials file not found — tunnel may have been created on a different machine"
-        );
-    }
-
-    let tunnel_config = rightclaw::config::TunnelConfig {
-        tunnel_uuid: uuid.clone(),
-        credentials_file,
-        hostname: hostname.clone(),
-    };
+    // Single config write regardless of which combination was detected (D-10, D-11).
     let config = rightclaw::config::GlobalConfig {
-        tunnel: Some(tunnel_config),
-        chrome: None,
+        tunnel: tunnel_cfg,
+        chrome: chrome_cfg,
     };
     rightclaw::config::write_global_config(home, &config)?;
-    println!("Tunnel config written. UUID: {uuid}, hostname: {hostname}");
 
     Ok(())
 }
