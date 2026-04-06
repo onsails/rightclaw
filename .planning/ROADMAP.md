@@ -13,7 +13,7 @@
 - ✅ **v3.1 Sandbox Fix & Verification** - Phases 29-31 (shipped 2026-04-03)
 - ✅ **v3.2 MCP & Tunnel** - Phases 38-41 (shipped 2026-04-05)
 - ✅ **v3.3 MCP Self-Management** - Phase 1 (shipped 2026-04-06)
-- 📋 **v3.4 Chrome Integration** - Phases 2-4 (planned)
+- 📋 **v3.4 Chrome Integration** - Phases 42-44 (planned)
 
 ## Phases
 
@@ -98,13 +98,13 @@ See [milestones/v3.3-ROADMAP.md](milestones/v3.3-ROADMAP.md)
 
 **Milestone Goal:** Wire `chrome-devtools-mcp` into rightclaw as a built-in browser MCP — auto-detected at init, injected into every agent's `.mcp.json` and sandbox settings, validated by doctor and bot startup, and surfaced in AGENTS.md system prompt templates.
 
-- [ ] **Phase 2: Chrome Config Infrastructure + MCP Injection** - ChromeConfig struct, per-agent .mcp.json injection, sandbox overrides
-- [ ] **Phase 3: Init Detection + Up Revalidation** - Auto-detect Chrome at init, --chrome-path override, revalidate on every up
-- [ ] **Phase 4: Validation + AGENTS.md Template** - Doctor check, bot startup warn, AGENTS.md browser automation section
+- [ ] **Phase 42: Chrome Config Infrastructure + MCP Injection** - ChromeConfig struct, per-agent .mcp.json injection, sandbox overrides
+- [ ] **Phase 43: Init Detection + Up Revalidation** - Auto-detect Chrome at init, --chrome-path override, revalidate on every up
+- [ ] **Phase 44: Validation + AGENTS.md Template** - Doctor check, bot startup warn, AGENTS.md browser automation section
 
 ## Phase Details
 
-### Phase 2: Chrome Config Infrastructure + MCP Injection
+### Phase 42: Chrome Config Infrastructure + MCP Injection
 **Goal**: Per-agent `.mcp.json` carries a working `chrome-devtools` entry on every `rightclaw up` when Chrome is configured
 **Depends on**: Phase 1 (v3.3)
 **Requirements**: INJECT-01, INJECT-02, SBOX-01, SBOX-02
@@ -115,9 +115,9 @@ See [milestones/v3.3-ROADMAP.md](milestones/v3.3-ROADMAP.md)
   4. Chrome sandbox overrides merge additively with existing `SandboxOverrides` from `agent.yaml` — existing overrides are not clobbered
 **Plans**: TBD
 
-### Phase 3: Init Detection + Up Revalidation
+### Phase 43: Init Detection + Up Revalidation
 **Goal**: Chrome path is discovered at init and revalidated silently on every `rightclaw up` — operators never lose injection silently
-**Depends on**: Phase 2
+**Depends on**: Phase 42
 **Requirements**: CHROME-01, CHROME-02, CHROME-03, INJECT-03
 **Success Criteria** (what must be TRUE):
   1. Running `rightclaw init` on a machine with Chrome at a standard path saves `chrome.chrome_path` to `~/.rightclaw/config.yaml` automatically
@@ -126,9 +126,9 @@ See [milestones/v3.3-ROADMAP.md](milestones/v3.3-ROADMAP.md)
   4. Running `rightclaw up` when the configured Chrome path no longer exists logs a warning and skips injection for that run — agents start normally
 **Plans**: TBD
 
-### Phase 4: Validation + AGENTS.md Template
+### Phase 44: Validation + AGENTS.md Template
 **Goal**: Operators can verify Chrome configuration via `rightclaw doctor`; agents know to use ChromeDevTools MCP for browser tasks
-**Depends on**: Phase 3
+**Depends on**: Phase 43
 **Requirements**: VALID-01, VALID-02, AGENT-01
 **Success Criteria** (what must be TRUE):
   1. `rightclaw doctor` output includes a Chrome check — Warn when Chrome is configured but binary is absent or path is unconfigured
@@ -151,6 +151,6 @@ See [milestones/v3.3-ROADMAP.md](milestones/v3.3-ROADMAP.md)
 | 29-31. Sandbox Fix & Verification | v3.1 | ✓ | Complete | 2026-04-03 |
 | 38-41. MCP & Tunnel | v3.2 | ✓ | Complete | 2026-04-05 |
 | 1. MCP management tools | v3.3 | 2/2 | Complete | 2026-04-06 |
-| 2. Chrome Config + MCP Injection | v3.4 | 0/TBD | Not started | - |
-| 3. Init Detection + Up Revalidation | v3.4 | 0/TBD | Not started | - |
-| 4. Validation + AGENTS.md Template | v3.4 | 0/TBD | Not started | - |
+| 42. Chrome Config + MCP Injection | v3.4 | 0/TBD | Not started | - |
+| 43. Init Detection + Up Revalidation | v3.4 | 0/TBD | Not started | - |
+| 44. Validation + AGENTS.md Template | v3.4 | 0/TBD | Not started | - |
