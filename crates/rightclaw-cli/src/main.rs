@@ -270,7 +270,7 @@ fn cmd_init(
         None => rightclaw::init::prompt_telegram_token()?,
     };
 
-    rightclaw::init::init_rightclaw_home(home, token.as_deref(), telegram_allowed_chat_ids, None)?;
+    rightclaw::init::init_rightclaw_home(home, token.as_deref(), telegram_allowed_chat_ids)?;
 
     println!("Initialized RightClaw at {}", home.display());
     println!(
@@ -941,7 +941,7 @@ async fn cmd_up(
     let has_bot_agents = agents.iter().any(|a| {
         a.config
             .as_ref()
-            .map(|c| c.telegram_token.is_some() || c.telegram_token_file.is_some())
+            .map(|c| c.telegram_token.is_some())
             .unwrap_or(false)
     });
     if !has_bot_agents {

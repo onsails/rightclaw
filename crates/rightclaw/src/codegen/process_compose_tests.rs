@@ -13,7 +13,7 @@ fn make_bot_agent(name: &str, token: &str) -> AgentDef {
         model: None,
         sandbox: None,
         telegram_token: Some(token.to_string()),
-        telegram_token_file: None,
+
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     });
@@ -41,7 +41,7 @@ fn make_agent_no_token(name: &str) -> AgentDef {
         model: None,
         sandbox: None,
         telegram_token: None,
-        telegram_token_file: None,
+
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     });
@@ -78,34 +78,6 @@ fn make_agent_no_config(name: &str) -> AgentDef {
     }
 }
 
-fn make_agent_token_file(name: &str, file: &str) -> AgentDef {
-    let config = Some(AgentConfig {
-        restart: RestartPolicy::OnFailure,
-        max_restarts: 3,
-        backoff_seconds: 5,
-        model: None,
-        sandbox: None,
-        telegram_token: None,
-        telegram_token_file: Some(file.to_string()),
-        allowed_chat_ids: vec![],
-        env: std::collections::HashMap::new(),
-    });
-    AgentDef {
-        name: name.to_owned(),
-        path: PathBuf::from(format!("/home/user/.rightclaw/agents/{name}")),
-        identity_path: PathBuf::from(format!(
-            "/home/user/.rightclaw/agents/{name}/IDENTITY.md"
-        )),
-        config,
-        soul_path: None,
-        user_path: None,
-        agents_path: None,
-        tools_path: None,
-        bootstrap_path: None,
-        heartbeat_path: None,
-    }
-}
-
 fn make_agent_with_restart(name: &str, token: &str, restart: RestartPolicy) -> AgentDef {
     let config = Some(AgentConfig {
         restart,
@@ -114,7 +86,7 @@ fn make_agent_with_restart(name: &str, token: &str, restart: RestartPolicy) -> A
         model: None,
         sandbox: None,
         telegram_token: Some(token.to_string()),
-        telegram_token_file: None,
+
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
     });
@@ -188,19 +160,6 @@ fn inline_token_uses_rc_telegram_token() {
     assert!(
         output.contains("RC_TELEGRAM_TOKEN=999:mytoken"),
         "expected RC_TELEGRAM_TOKEN in:\n{output}"
-    );
-}
-
-#[test]
-fn token_file_uses_rc_telegram_token_file_with_abs_path() {
-    let agents = vec![make_agent_token_file("myagent", ".telegram.env")];
-    let exe = Path::new(EXE_PATH);
-    let output = generate_process_compose(&agents, exe, false, None).unwrap();
-    // Should resolve relative path to absolute: agent.path + file
-    let expected = "RC_TELEGRAM_TOKEN_FILE=/home/user/.rightclaw/agents/myagent/.telegram.env";
-    assert!(
-        output.contains(expected),
-        "expected absolute RC_TELEGRAM_TOKEN_FILE in:\n{output}"
     );
 }
 

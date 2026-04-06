@@ -478,7 +478,7 @@ fn check_managed_settings(path: &str) -> Option<DoctorCheck> {
 
 /// Check Telegram webhook status for all agents that have a configured token.
 ///
-/// For each agent with a telegram_token or telegram_token_file, calls the
+/// For each agent with a telegram_token configured, calls the
 /// Telegram getWebhookInfo API. Emits:
 /// - Pass when no webhook is active (result.url is empty)
 /// - Warn when an active webhook is found (would compete with long-polling)
@@ -531,23 +531,10 @@ fn check_webhook_info_for_agents(home: &Path) -> Vec<DoctorCheck> {
 }
 
 /// Inline token resolver for doctor.rs.
-///
-/// Duplicates the logic from codegen::telegram::resolve_telegram_token.
-/// TODO: replace with `crate::codegen::telegram::resolve_telegram_token` after Plan 01 makes it pub(crate).
 fn resolve_token_from_config(
-    agent_path: &Path,
+    _agent_path: &Path,
     config: &crate::agent::types::AgentConfig,
 ) -> Option<String> {
-    if let Some(ref file_path) = config.telegram_token_file {
-        let abs = agent_path.join(file_path);
-        let content = std::fs::read_to_string(&abs).ok()?;
-        let trimmed = content.trim();
-        let token = trimmed
-            .strip_prefix("TELEGRAM_BOT_TOKEN=")
-            .unwrap_or(trimmed);
-        return Some(token.to_string());
-    }
-
     config.telegram_token.clone()
 }
 

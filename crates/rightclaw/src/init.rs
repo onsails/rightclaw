@@ -13,11 +13,8 @@ const DEFAULT_AGENT_YAML: &str = include_str!("../../../templates/right/agent.ya
 /// AGENTS.md, BOOTSTRAP.md, and agent.yaml.
 ///
 /// When `telegram_token` is provided:
-/// - Writes the token to `telegram_env_dir/.env` for Claude Code's Telegram plugin
-/// - Creates `.claude/settings.json` with `enabledPlugins` for automatic Telegram plugin activation
-///
-/// `telegram_env_dir` controls where the `.env` file is written. Pass `None` to
-/// use the default `~/.claude/channels/telegram/` path.
+/// - Writes `telegram_token` inline into `agent.yaml`
+/// - Creates `.claude/settings.json` with sandbox config
 ///
 /// When `telegram_allowed_chat_ids` is non-empty, writes an `allowed_chat_ids:` YAML
 /// list into `agent.yaml` so `rightclaw up` enforces the allowlist on each launch.
@@ -27,7 +24,6 @@ pub fn init_rightclaw_home(
     home: &Path,
     telegram_token: Option<&str>,
     telegram_allowed_chat_ids: &[i64],
-    telegram_env_dir: Option<&Path>,
 ) -> miette::Result<()> {
     let agents_dir = home.join("agents").join("right");
 
@@ -77,7 +73,6 @@ pub fn init_rightclaw_home(
             model: None,
             sandbox: None,
             telegram_token: Some(tok.to_string()),
-            telegram_token_file: None,
             allowed_chat_ids: vec![],
             env: std::collections::HashMap::new(),
         });
@@ -107,33 +102,13 @@ pub fn init_rightclaw_home(
         .map_err(|e| miette::miette!("Failed to write settings.json: {}", e))?;
     }
 
-    // Write Telegram bot token into the agent's channel dir and record it in agent.yaml.
-    //
-    // The token is stored at `AGENT_DIR/.claude/channels/telegram/.env` — which is where
-    // CC reads it when the agent runs with HOME override. The token is NOT written inline
-    // into agent.yaml (it's a secret); instead `telegram_token_file` points to the .env.
-    // `telegram_env_dir` override is kept for tests only.
+    // Write Telegram token inline into agent.yaml.
+    // The token is passed to process-compose via RC_TELEGRAM_TOKEN env var at runtime.
     if let Some(token) = telegram_token {
-        let env_dir = match telegram_env_dir {
-            Some(dir) => dir.to_path_buf(),
-            None => agents_dir.join(".claude").join("channels").join("telegram"),
-        };
-        std::fs::create_dir_all(&env_dir).map_err(|e| {
-            miette::miette!("Failed to create {}: {}", env_dir.display(), e)
-        })?;
-        std::fs::write(
-            env_dir.join(".env"),
-            format!("TELEGRAM_BOT_TOKEN={token}\n"),
-        )
-        .map_err(|e| miette::miette!("Failed to write telegram .env: {}", e))?;
-
-        // Append telegram fields to agent.yaml so `rightclaw up` detects the token
-        // and generates wrapper/settings/channel-config correctly on each launch.
-        // telegram_token_file uses a relative path (relative to agent dir), not absolute.
         let agent_yaml_path = agents_dir.join("agent.yaml");
         let mut yaml = std::fs::read_to_string(&agent_yaml_path)
             .map_err(|e| miette::miette!("Failed to read agent.yaml: {}", e))?;
-        yaml.push_str("\ntelegram_token_file: .claude/channels/telegram/.env\n");
+        yaml.push_str(&format!("\ntelegram_token: \"{token}\"\n"));
         if !telegram_allowed_chat_ids.is_empty() {
             yaml.push_str("\nallowed_chat_ids:\n");
             for id in telegram_allowed_chat_ids {
@@ -233,7 +208,7 @@ mod tests {
     #[test]
     fn init_creates_default_agent_files() {
         let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), None, &[], None).unwrap();
+        init_rightclaw_home(dir.path(), None, &[]).unwrap();
 
         let agents_dir = dir.path().join("agents").join("right");
         assert!(agents_dir.join("IDENTITY.md").exists());
@@ -262,7 +237,7 @@ mod tests {
     #[test]
     fn init_identity_contains_right() {
         let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), None, &[], None).unwrap();
+        init_rightclaw_home(dir.path(), None, &[]).unwrap();
 
         let content =
             std::fs::read_to_string(dir.path().join("agents/right/IDENTITY.md")).unwrap();
@@ -275,9 +250,9 @@ mod tests {
     #[test]
     fn init_errors_if_already_initialized() {
         let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), None, &[], None).unwrap();
+        init_rightclaw_home(dir.path(), None, &[]).unwrap();
 
-        let result = init_rightclaw_home(dir.path(), None, &[], None);
+        let result = init_rightclaw_home(dir.path(), None, &[]);
         assert!(result.is_err());
         let err = format!("{:?}", result.unwrap_err());
         assert!(
@@ -287,37 +262,21 @@ mod tests {
     }
 
     #[test]
-    fn init_with_telegram_writes_token_env_file() {
+    fn init_with_telegram_writes_token_inline_to_agent_yaml() {
         let dir = tempdir().unwrap();
-        let env_dir = tempdir().unwrap();
-        init_rightclaw_home(
-            dir.path(),
-            Some("123456:ABCdef"),
-            &[],
-            Some(env_dir.path()),
-        )
-        .unwrap();
+        init_rightclaw_home(dir.path(), Some("123456:ABCdef"), &[]).unwrap();
 
-        let env_content = std::fs::read_to_string(env_dir.path().join(".env")).unwrap();
-        assert_eq!(env_content, "TELEGRAM_BOT_TOKEN=123456:ABCdef\n");
-    }
-
-    #[test]
-    fn init_without_telegram_does_not_write_env_file() {
-        let dir = tempdir().unwrap();
-        let env_dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), None, &[], Some(env_dir.path())).unwrap();
-
+        let yaml = std::fs::read_to_string(dir.path().join("agents/right/agent.yaml")).unwrap();
         assert!(
-            !env_dir.path().join(".env").exists(),
-            ".env should not exist when no telegram token"
+            yaml.contains("telegram_token: \"123456:ABCdef\""),
+            "agent.yaml must contain inline telegram_token, got:\n{yaml}"
         );
     }
 
     #[test]
     fn init_creates_bootstrap_md() {
         let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), None, &[], None).unwrap();
+        init_rightclaw_home(dir.path(), None, &[]).unwrap();
 
         let bootstrap = std::fs::read_to_string(
             dir.path().join("agents/right/BOOTSTRAP.md"),
@@ -364,8 +323,7 @@ mod tests {
     #[test]
     fn init_with_telegram_creates_settings_json() {
         let dir = tempdir().unwrap();
-        let env_dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), Some("123456:ABCdef"), &[], Some(env_dir.path())).unwrap();
+        init_rightclaw_home(dir.path(), Some("123456:ABCdef"), &[]).unwrap();
 
         let settings_path = dir
             .path()
@@ -399,7 +357,7 @@ mod tests {
     #[test]
     fn init_creates_settings_with_sandbox_config() {
         let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), None, &[], None).unwrap();
+        init_rightclaw_home(dir.path(), None, &[]).unwrap();
 
         let settings_path = dir.path().join("agents/right/.claude/settings.json");
         let content = std::fs::read_to_string(&settings_path).unwrap();
@@ -415,7 +373,7 @@ mod tests {
     #[test]
     fn init_without_telegram_creates_settings_without_plugin() {
         let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), None, &[], None).unwrap();
+        init_rightclaw_home(dir.path(), None, &[]).unwrap();
 
         let settings_path = dir
             .path()
@@ -445,27 +403,12 @@ mod tests {
     }
 
     #[test]
-    fn init_with_telegram_writes_env_to_agent_channels_dir() {
-        // Default path (no telegram_env_dir override) must write to AGENT dir.
-        let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), Some("123456:ABCdef"), &[], None).unwrap();
-
-        let env_path = dir
-            .path()
-            .join("agents/right/.claude/channels/telegram/.env");
-        assert!(env_path.exists(), ".env should be written to agent channels dir");
-        let content = std::fs::read_to_string(&env_path).unwrap();
-        assert_eq!(content, "TELEGRAM_BOT_TOKEN=123456:ABCdef\n");
-    }
-
-    #[test]
     fn init_with_telegram_allowed_chat_ids_writes_yaml() {
         let dir = tempdir().unwrap();
         init_rightclaw_home(
             dir.path(),
             Some("123456:ABCdef"),
             &[85743491_i64, 100200300_i64],
-            None,
         )
         .unwrap();
 
@@ -493,20 +436,19 @@ mod tests {
     }
 
     #[test]
-    fn init_with_telegram_sets_token_file_in_agent_yaml() {
+    fn init_with_telegram_sets_token_inline_with_chat_ids() {
         let dir = tempdir().unwrap();
         init_rightclaw_home(
             dir.path(),
             Some("123456:ABCdef"),
             &[85743491_i64],
-            None,
         )
         .unwrap();
 
         let yaml = std::fs::read_to_string(dir.path().join("agents/right/agent.yaml")).unwrap();
         assert!(
-            yaml.contains("telegram_token_file: .claude/channels/telegram/.env"),
-            "agent.yaml must contain telegram_token_file reference, got:\n{yaml}"
+            yaml.contains("telegram_token: \"123456:ABCdef\""),
+            "agent.yaml must contain inline telegram_token, got:\n{yaml}"
         );
         assert!(
             yaml.contains("allowed_chat_ids:"),
@@ -516,22 +458,17 @@ mod tests {
             yaml.contains("  - 85743491"),
             "agent.yaml must list chat id 85743491, got:\n{yaml}"
         );
-        // Token itself must NOT appear in agent.yaml
-        assert!(
-            !yaml.contains("123456:ABCdef"),
-            "raw token must NOT appear in agent.yaml"
-        );
     }
 
     #[test]
     fn init_with_telegram_no_chat_ids_does_not_write_allowed_chat_ids() {
         let dir = tempdir().unwrap();
-        init_rightclaw_home(dir.path(), Some("123456:ABCdef"), &[], None).unwrap();
+        init_rightclaw_home(dir.path(), Some("123456:ABCdef"), &[]).unwrap();
 
         let yaml = std::fs::read_to_string(dir.path().join("agents/right/agent.yaml")).unwrap();
         assert!(
-            yaml.contains("telegram_token_file"),
-            "telegram_token_file must be set"
+            yaml.contains("telegram_token"),
+            "telegram_token must be set"
         );
         assert!(
             !yaml.contains("allowed_chat_ids"),

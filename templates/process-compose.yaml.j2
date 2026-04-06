@@ -12,8 +12,6 @@ processes:
       - RC_AGENT_NAME={{ agent.agent_name }}
 {% if agent.token_inline %}
       - RC_TELEGRAM_TOKEN={{ agent.token_inline }}
-{% else %}
-      - RC_TELEGRAM_TOKEN_FILE={{ agent.token_file }}
 {% endif %}
       - ENABLE_CLAUDEAI_MCP_SERVERS=false
       - ENABLE_TOOL_SEARCH=false

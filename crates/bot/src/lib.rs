@@ -63,7 +63,6 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
         rightclaw::agent::types::AgentConfig {
             allowed_chat_ids: vec![],
             telegram_token: None,
-            telegram_token_file: None,
             restart: Default::default(),
             max_restarts: 3,
             backoff_seconds: 5,

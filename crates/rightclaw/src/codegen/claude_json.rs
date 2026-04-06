@@ -174,7 +174,6 @@ mod tests {
                 backoff_seconds: 5,
                 model: None,
                 sandbox: None,
-                telegram_token_file: None,
                 telegram_token: None,
                 allowed_chat_ids: vec![],
                 env: std::collections::HashMap::new(),
