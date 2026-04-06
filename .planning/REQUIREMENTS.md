@@ -55,22 +55,22 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CHROME-01 | TBD | Pending |
-| CHROME-02 | TBD | Pending |
-| CHROME-03 | TBD | Pending |
-| INJECT-01 | TBD | Pending |
-| INJECT-02 | TBD | Pending |
-| INJECT-03 | TBD | Pending |
-| SBOX-01 | TBD | Pending |
-| SBOX-02 | TBD | Pending |
-| VALID-01 | TBD | Pending |
-| VALID-02 | TBD | Pending |
-| AGENT-01 | TBD | Pending |
+| CHROME-01 | Phase 3 | Pending |
+| CHROME-02 | Phase 3 | Pending |
+| CHROME-03 | Phase 3 | Pending |
+| INJECT-01 | Phase 2 | Pending |
+| INJECT-02 | Phase 2 | Pending |
+| INJECT-03 | Phase 3 | Pending |
+| SBOX-01 | Phase 2 | Pending |
+| SBOX-02 | Phase 2 | Pending |
+| VALID-01 | Phase 4 | Pending |
+| VALID-02 | Phase 4 | Pending |
+| AGENT-01 | Phase 4 | Pending |
 
 **Coverage:**
 - v3.4 requirements: 11 total
-- Mapped to phases: TBD (filled by roadmapper)
-- Unmapped: 11 ⚠️ (pending roadmap)
+- Mapped to phases: 11 ✓
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-06*
