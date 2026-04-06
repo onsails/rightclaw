@@ -105,7 +105,7 @@ fn merges_user_overrides_with_defaults() {
         backoff_seconds: 5,
         model: None,
         sandbox: Some(overrides),
-        telegram_token_file: None,
+
         telegram_token: None,
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
@@ -168,7 +168,7 @@ fn never_enables_telegram_plugin_in_settings() {
         backoff_seconds: 5,
         model: None,
         sandbox: None,
-        telegram_token_file: None,
+
         telegram_token: Some("tok".to_string()),
         allowed_chat_ids: vec![],
         env: HashMap::new(),
@@ -254,7 +254,7 @@ fn merges_user_allow_read_overrides() {
         backoff_seconds: 5,
         model: None,
         sandbox: Some(overrides),
-        telegram_token_file: None,
+
         telegram_token: None,
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
@@ -379,7 +379,7 @@ fn chrome_config_additive_with_user_sandbox_overrides() {
         backoff_seconds: 5,
         model: None,
         sandbox: Some(overrides),
-        telegram_token_file: None,
+
         telegram_token: None,
         allowed_chat_ids: vec![],
         env: HashMap::new(),
@@ -417,7 +417,7 @@ fn chrome_config_does_not_clobber_user_excluded_commands() {
         backoff_seconds: 5,
         model: None,
         sandbox: Some(overrides),
-        telegram_token_file: None,
+
         telegram_token: None,
         allowed_chat_ids: vec![],
         env: HashMap::new(),

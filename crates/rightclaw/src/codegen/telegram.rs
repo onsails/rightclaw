@@ -5,7 +5,7 @@ use crate::agent::AgentDef;
 /// Writes to `$AGENT_DIR/.claude/channels/telegram/`:
 ///   - `.env` with `TELEGRAM_BOT_TOKEN=<token>` (always overwritten)
 ///
-/// No-ops silently if neither `telegram_token` nor `telegram_token_file` is set.
+/// No-ops silently if `telegram_token` is not set.
 pub fn generate_telegram_channel_config(agent: &AgentDef) -> miette::Result<()> {
     let token = match resolve_telegram_token(agent)? {
         Some(t) => t,
@@ -26,31 +26,12 @@ pub fn generate_telegram_channel_config(agent: &AgentDef) -> miette::Result<()> 
 
 /// Resolve the Telegram bot token from AgentConfig.
 ///
-/// Precedence: `telegram_token_file` > `telegram_token` > `None`.
-/// `telegram_token_file` path is resolved relative to `agent.path`.
+/// Returns `telegram_token` if set, `None` otherwise.
 pub(crate) fn resolve_telegram_token(agent: &AgentDef) -> miette::Result<Option<String>> {
     let config = match agent.config.as_ref() {
         Some(c) => c,
         None => return Ok(None),
     };
-
-    if let Some(ref file_path) = config.telegram_token_file {
-        let abs = agent.path.join(file_path);
-        let content = std::fs::read_to_string(&abs).map_err(|e| {
-            miette::miette!(
-                "failed to read telegram token file {}: {e:#}",
-                abs.display()
-            )
-        })?;
-        // Handle dotenv format: strip `TELEGRAM_BOT_TOKEN=` prefix if present.
-        // init writes a .env file (dotenv format for CC), but resolve_telegram_token
-        // must return just the raw token value.
-        let trimmed = content.trim();
-        let token = trimmed
-            .strip_prefix("TELEGRAM_BOT_TOKEN=")
-            .unwrap_or(trimmed);
-        return Ok(Some(token.to_string()));
-    }
 
     Ok(config.telegram_token.clone())
 }
@@ -85,7 +66,6 @@ mod tests {
             backoff_seconds: 5,
             model: None,
             sandbox: None,
-            telegram_token_file: None,
             telegram_token: None,
             allowed_chat_ids: vec![],
             env: std::collections::HashMap::new(),
@@ -154,56 +134,6 @@ mod tests {
     }
 
     #[test]
-    fn token_file_reads_token_relative_to_agent_path() {
-        let dir = tempdir().unwrap();
-        // Write the token file into the agent directory
-        std::fs::write(dir.path().join(".telegram.env"), "999:tokenFromFile\n").unwrap();
-
-        let config = AgentConfig {
-            telegram_token_file: Some(".telegram.env".to_string()),
-            ..base_config()
-        };
-        let agent = make_agent(dir.path(), Some(config));
-        generate_telegram_channel_config(&agent).unwrap();
-
-        let content = std::fs::read_to_string(
-            dir.path().join(".claude/channels/telegram/.env"),
-        )
-        .unwrap();
-        assert_eq!(
-            content, "TELEGRAM_BOT_TOKEN=999:tokenFromFile\n",
-            "token from file should be trimmed and written"
-        );
-    }
-
-    #[test]
-    fn token_file_takes_precedence_over_inline_token() {
-        let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join(".telegram.env"), "FILE_TOKEN\n").unwrap();
-
-        let config = AgentConfig {
-            telegram_token_file: Some(".telegram.env".to_string()),
-            telegram_token: Some("INLINE_TOKEN".to_string()),
-            ..base_config()
-        };
-        let agent = make_agent(dir.path(), Some(config));
-        generate_telegram_channel_config(&agent).unwrap();
-
-        let content = std::fs::read_to_string(
-            dir.path().join(".claude/channels/telegram/.env"),
-        )
-        .unwrap();
-        assert!(
-            content.contains("FILE_TOKEN"),
-            "file token should take precedence"
-        );
-        assert!(
-            !content.contains("INLINE_TOKEN"),
-            "inline token should be ignored"
-        );
-    }
-
-    #[test]
     fn called_twice_overwrites_env() {
         let dir = tempdir().unwrap();
         let config = AgentConfig {
@@ -225,32 +155,5 @@ mod tests {
         )
         .unwrap();
         assert!(env_content.contains("TOKEN_V2"), ".env should be overwritten");
-    }
-
-    #[test]
-    fn token_file_in_dotenv_format_strips_prefix() {
-        let dir = tempdir().unwrap();
-        // Write dotenv format (what `init.rs` produces)
-        std::fs::write(
-            dir.path().join(".telegram.env"),
-            "TELEGRAM_BOT_TOKEN=999:tokenFromDotenv\n",
-        )
-        .unwrap();
-
-        let config = AgentConfig {
-            telegram_token_file: Some(".telegram.env".to_string()),
-            ..base_config()
-        };
-        let agent = make_agent(dir.path(), Some(config));
-        generate_telegram_channel_config(&agent).unwrap();
-
-        let content = std::fs::read_to_string(
-            dir.path().join(".claude/channels/telegram/.env"),
-        )
-        .unwrap();
-        assert_eq!(
-            content, "TELEGRAM_BOT_TOKEN=999:tokenFromDotenv\n",
-            "prefix must not be doubled — dotenv prefix should be stripped before re-writing"
-        );
     }
 }

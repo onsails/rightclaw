@@ -18,7 +18,7 @@ fn make_agent_at(
         max_restarts: 3,
         backoff_seconds: 5,
         sandbox: None,
-        telegram_token_file: None,
+
         telegram_token: None,
         allowed_chat_ids: vec![],
         env: Default::default(),
