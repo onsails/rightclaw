@@ -613,10 +613,15 @@ async fn cmd_up(
         }
     };
 
+    // Read global config once before the per-agent loop (Phase 38 cloudflared + Phase 42 chrome).
+    let global_cfg = rightclaw::config::read_global_config(home)?;
+    // Extract Chrome config once — passed to each agent's generator calls (per D-12, D-14).
+    let chrome_cfg = global_cfg.chrome.as_ref();
+
     // Write agent definition, reply-schema.json, and settings.json for each agent.
     for agent in &agents {
         // Generate .claude/settings.json with sandbox config (Phase 6).
-        let settings = rightclaw::codegen::generate_settings(agent, no_sandbox, &host_home, rg_path.clone(), None)?;
+        let settings = rightclaw::codegen::generate_settings(agent, no_sandbox, &host_home, rg_path.clone(), chrome_cfg)?;
         let claude_dir = agent.path.join(".claude");
         std::fs::create_dir_all(&claude_dir)
             .map_err(|e| miette::miette!("failed to create .claude dir for '{}': {e:#}", agent.name))?;
@@ -699,12 +704,12 @@ async fn cmd_up(
         tracing::debug!(agent = %agent.name, "memory.db initialized");
 
         // 11. Generate .mcp.json with rightmemory MCP server entry (Phase 17, SKILL-05).
-        rightclaw::codegen::generate_mcp_config(&agent.path, &self_exe, &agent.name, home, None)?;
+        rightclaw::codegen::generate_mcp_config(&agent.path, &self_exe, &agent.name, home, chrome_cfg)?;
         tracing::debug!(agent = %agent.name, "wrote .mcp.json with rightmemory entry");
     }
 
     // Generate cloudflared config and wrapper script when tunnel is configured (Phase 38).
-    let global_cfg = rightclaw::config::read_global_config(home)?;
+    // (global_cfg is now read before the per-agent loop — see hoist above)
 
     // Pre-flight: if tunnel is configured, cloudflared binary must be in PATH.
     // Check before generating any files to avoid leaving stale artifacts.
