@@ -26,7 +26,7 @@ pub struct AgentDir(pub PathBuf);
 
 /// SSH config path for the agent's OpenShell sandbox.
 #[derive(Clone)]
-pub struct SshConfigPath(pub PathBuf);
+pub struct SshConfigPath(pub Option<PathBuf>);
 
 /// Newtype wrapper for the rightclaw home directory passed via dptree dependencies.
 /// Distinct from AgentDir to prevent TypeId collision in dptree.

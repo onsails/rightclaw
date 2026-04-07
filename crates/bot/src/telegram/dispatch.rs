@@ -57,7 +57,7 @@ pub async fn run_telegram(
     debug: bool,
     pending_auth: PendingAuthMap,
     home: PathBuf,
-    ssh_config_path: PathBuf,
+    ssh_config_path: Option<PathBuf>,
 ) -> miette::Result<()> {
     let bot = build_bot(token);
 
