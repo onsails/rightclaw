@@ -19,6 +19,12 @@ pub(crate) struct ProcessesResponse {
     pub data: Vec<ProcessInfo>,
 }
 
+/// Response from the process-compose `/process/logs/{name}/{endOffset}/{limit}` endpoint.
+#[derive(Debug, Deserialize)]
+pub struct LogsResponse {
+    pub logs: Vec<String>,
+}
+
 /// Async client for the process-compose REST API over a Unix domain socket.
 pub struct PcClient {
     client: reqwest::Client,
@@ -89,6 +95,35 @@ impl PcClient {
             .await
             .map_err(|e| miette::miette!("failed to stop process '{name}': {e:#}"))?;
         Ok(())
+    }
+
+    /// Start a disabled or stopped process by name.
+    pub async fn start_process(&self, name: &str) -> miette::Result<()> {
+        self.client
+            .post(format!("{}/process/start/{name}", self.base_url))
+            .send()
+            .await
+            .map_err(|e| miette::miette!("failed to start process '{name}': {e:#}"))?;
+        Ok(())
+    }
+
+    /// Read recent log lines for a process.
+    ///
+    /// Uses the PC endpoint `GET /process/logs/{name}/{endOffset}/{limit}`.
+    /// `endOffset=0` reads from the end, `limit` controls how many lines.
+    pub async fn get_process_logs(&self, name: &str, limit: usize) -> miette::Result<Vec<String>> {
+        let resp = self
+            .client
+            .get(format!("{}/process/logs/{name}/0/{limit}", self.base_url))
+            .send()
+            .await
+            .map_err(|e| miette::miette!("failed to get logs for '{name}': {e:#}"))?;
+
+        let data: LogsResponse = resp
+            .json()
+            .await
+            .map_err(|e| miette::miette!("failed to parse logs for '{name}': {e:#}"))?;
+        Ok(data.logs)
     }
 
     /// Stop all processes (shutdown process-compose).
