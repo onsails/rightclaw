@@ -1,5 +1,6 @@
 pub mod cron;
 pub mod error;
+pub mod login;
 pub mod sync;
 pub mod telegram;
 

@@ -6,15 +6,8 @@ use tokio::time::{Duration, interval};
 /// Interval between sync cycles.
 const SYNC_INTERVAL: Duration = Duration::from_secs(300);
 
-/// Run the periodic sync loop. Uploads config files from host to sandbox.
-///
-/// Files synced:
-/// - settings.json -- CC behavioral flags
-/// - reply-schema.json -- structured output schema
-/// - rightclaw builtin skills
-/// - .claude.json -- verified and fixed if CC overwrote rightclaw keys
 /// Run one sync cycle. Called synchronously at startup before teloxide starts,
-/// ensuring sandbox has correct config before any claude -p invocations.
+/// ensuring sandbox has correct config before any `claude -p` invocations.
 pub async fn initial_sync(agent_dir: &Path, sandbox_name: &str) -> miette::Result<()> {
     tracing::info!(sandbox = sandbox_name, "sync: initial cycle (blocking)");
     sync_cycle(agent_dir, sandbox_name).await
