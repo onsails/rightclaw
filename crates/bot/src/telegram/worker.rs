@@ -579,6 +579,18 @@ async fn invoke_cc(
         "-p".into(),
         "--dangerously-skip-permissions".into(),
     ];
+
+    // MCP isolation: only use servers from our .mcp.json, block cloud MCPs.
+    // Path differs by execution mode: /sandbox/ inside container, agent_dir on host.
+    let mcp_config_path = if ctx.ssh_config_path.is_some() {
+        "/sandbox/.mcp.json".to_string()
+    } else {
+        ctx.agent_dir.join(".mcp.json").to_string_lossy().into_owned()
+    };
+    claude_args.push("--mcp-config".into());
+    claude_args.push(mcp_config_path);
+    claude_args.push("--strict-mcp-config".into());
+
     // NOTE: --verbose is intentionally NOT passed even in debug mode.
     // --verbose combined with --output-format json switches CC to stream-json array output,
     // breaking parse_reply_output which expects a single JSON object.
