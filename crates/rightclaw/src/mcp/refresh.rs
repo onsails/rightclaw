@@ -147,14 +147,14 @@ pub async fn run_refresh_scheduler(
                         }
 
                         // Re-upload .mcp.json into sandbox (skip when no sandbox)
-                        if let Some(ref sbox) = sandbox_name {
-                            if let Err(e) = crate::openshell::upload_file(
+                        if let Some(ref sbox) = sandbox_name
+                            && let Err(e) = crate::openshell::upload_file(
                                 sbox,
                                 &mcp_json_path,
                                 "/sandbox/.mcp.json",
-                            ).await {
-                                tracing::error!(server = %name, "failed to re-upload .mcp.json: {e:#}");
-                            }
+                            ).await
+                        {
+                            tracing::error!(server = %name, "failed to re-upload .mcp.json: {e:#}");
                         }
 
                         // Schedule next refresh

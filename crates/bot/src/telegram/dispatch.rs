@@ -50,6 +50,7 @@ enum BotCommand {
 /// kills the subprocess. No explicit children registry is needed or maintained.
 /// Rationale: Arc<Mutex<Vec<Child>>> was rejected because invoke_cc never added children
 /// to the registry, making the kill loop dead code. kill_on_drop is sufficient.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_telegram(
     token: String,
     allowed_chat_ids: Vec<i64>,
