@@ -1152,25 +1152,13 @@ async fn cmd_up(
     Ok(())
 }
 
-async fn cmd_down(home: &Path) -> miette::Result<()> {
-    let run_dir = home.join("run");
-    let state_path = run_dir.join("state.json");
+async fn cmd_down(_home: &Path) -> miette::Result<()> {
+    let client = rightclaw::runtime::PcClient::new(rightclaw::runtime::PC_PORT)
+        .map_err(|_| miette::miette!("No running instance found. Is rightclaw running?"))?;
 
-    let _state = rightclaw::runtime::read_state(&state_path).map_err(|_| {
-        miette::miette!("No running instance found. Is rightclaw running?")
+    client.shutdown().await.map_err(|e| {
+        miette::miette!("Shutdown request failed (process-compose may already be stopped): {e:#}")
     })?;
-
-    // Best-effort shutdown via REST API.
-    match rightclaw::runtime::PcClient::new(rightclaw::runtime::PC_PORT) {
-        Ok(client) => {
-            if let Err(e) = client.shutdown().await {
-                tracing::warn!("process-compose shutdown request failed (may already be stopped): {e:#}");
-            }
-        }
-        Err(e) => {
-            tracing::warn!("could not connect to process-compose: {e:#}");
-        }
-    }
 
     println!("All agents stopped.");
     Ok(())
