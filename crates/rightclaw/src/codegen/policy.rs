@@ -36,22 +36,27 @@ network_policies:
         port: 443
         protocol: rest
         access: full
+        tls: terminate
       - host: "anthropic.com"
         port: 443
         protocol: rest
         access: full
+        tls: terminate
       - host: "*.claude.com"
         port: 443
         protocol: rest
         access: full
+        tls: terminate
       - host: "claude.com"
         port: 443
         protocol: rest
         access: full
+        tls: terminate
       - host: "*.claude.ai"
         port: 443
         protocol: rest
         access: full
+        tls: terminate
     binaries:
       - path: "**"
 
@@ -75,6 +80,7 @@ network_policies:
         port: 443
         protocol: rest
         access: full
+        tls: terminate
     binaries:
       - path: "**"
 "#
