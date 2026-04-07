@@ -2,11 +2,11 @@ use std::path::Path;
 
 use crate::config::ChromeConfig;
 
-/// Merge the `rightmemory` MCP server entry into an agent's `mcp.json`.
+/// Merge the `right` MCP server entry into an agent's `mcp.json`.
 ///
 /// - If `mcp.json` exists, reads it, parses as JSON object, injects/updates
-///   `mcpServers.rightmemory` key, writes back.
-/// - If `mcp.json` does not exist, creates it with just the rightmemory entry.
+///   `mcpServers.right` key, writes back.
+/// - If `mcp.json` does not exist, creates it with just the right entry.
 /// - Preserves all other keys in the existing JSON (non-destructive merge per D-05).
 /// - `binary` is written verbatim into the `command` field — pass `current_exe()` result
 ///   so agents can always find the rightclaw binary regardless of PATH.
@@ -44,9 +44,9 @@ pub fn generate_mcp_config(
         .and_then(|v| v.as_object_mut())
         .ok_or_else(|| miette::miette!("mcp.json mcpServers is not a JSON object"))?;
 
-    // Insert/update the rightmemory entry (per D-05)
+    // Insert/update the right entry (per D-05)
     servers.insert(
-        "rightmemory".to_string(),
+        "right".to_string(),
         serde_json::json!({
             "command": binary.to_string_lossy(),
             "args": ["memory-server"],
@@ -83,13 +83,13 @@ pub fn generate_mcp_config(
     Ok(())
 }
 
-/// Generate `mcp.json` with rightmemory as HTTP MCP server entry.
+/// Generate `mcp.json` with right as HTTP MCP server entry.
 ///
-/// Used when agents run inside OpenShell sandbox and connect to host rightmemory via HTTP.
+/// Used when agents run inside OpenShell sandbox and connect to host right MCP server via HTTP.
 pub fn generate_mcp_config_http(
     agent_path: &Path,
     _agent_name: &str,
-    rightmemory_url: &str,
+    right_mcp_url: &str,
     bearer_token: &str,
     chrome_config: Option<&ChromeConfig>,
 ) -> miette::Result<()> {
@@ -116,10 +116,10 @@ pub fn generate_mcp_config_http(
         .ok_or_else(|| miette::miette!("mcpServers is not a JSON object"))?;
 
     servers.insert(
-        "rightmemory".to_string(),
+        "right".to_string(),
         serde_json::json!({
             "type": "http",
-            "url": rightmemory_url,
+            "url": right_mcp_url,
             "headers": {
                 "Authorization": format!("Bearer {bearer_token}")
             }
@@ -158,14 +158,14 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join("mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["command"],
+            parsed["mcpServers"]["right"]["command"],
             "rightclaw",
-            "rightmemory command should be 'rightclaw'"
+            "right command should be 'rightclaw'"
         );
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["args"][0],
+            parsed["mcpServers"]["right"]["args"][0],
             "memory-server",
-            "rightmemory args[0] should be 'memory-server'"
+            "right args[0] should be 'memory-server'"
         );
     }
 
@@ -187,9 +187,9 @@ mod tests {
             "existing 'other' server must be preserved"
         );
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["command"],
+            parsed["mcpServers"]["right"]["command"],
             "rightclaw",
-            "rightmemory server must be added"
+            "right server must be added"
         );
     }
 
@@ -211,18 +211,18 @@ mod tests {
             "'otherService' key must be preserved"
         );
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["command"],
+            parsed["mcpServers"]["right"]["command"],
             "rightclaw",
-            "rightmemory must be present"
+            "right must be present"
         );
     }
 
     #[test]
-    fn overwrites_stale_rightmemory_entry() {
+    fn overwrites_stale_right_entry() {
         let dir = tempdir().unwrap();
         std::fs::write(
             dir.path().join("mcp.json"),
-            r#"{"mcpServers":{"rightmemory":{"command":"old-binary","args":["old-arg"]}}}"#,
+            r#"{"mcpServers":{"right":{"command":"old-binary","args":["old-arg"]}}}"#,
         )
         .unwrap();
 
@@ -231,12 +231,12 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join("mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["command"],
+            parsed["mcpServers"]["right"]["command"],
             "rightclaw",
             "stale command should be replaced"
         );
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["args"][0],
+            parsed["mcpServers"]["right"]["args"][0],
             "memory-server",
             "stale args should be replaced"
         );
@@ -250,20 +250,20 @@ mod tests {
 
         let content = std::fs::read_to_string(dir.path().join("mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        // Valid JSON with single rightmemory entry
+        // Valid JSON with single right entry
         assert!(parsed.is_object(), "result must be valid JSON object");
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["command"],
+            parsed["mcpServers"]["right"]["command"],
             "rightclaw",
-            "rightmemory must be present after two calls"
+            "right must be present after two calls"
         );
-        // Ensure only one rightmemory key (no duplication)
+        // Ensure only one right key (no duplication)
         let servers = parsed["mcpServers"].as_object().unwrap();
         let count = servers
             .keys()
-            .filter(|k| k.as_str() == "rightmemory")
+            .filter(|k| k.as_str() == "right")
             .count();
-        assert_eq!(count, 1, "rightmemory should appear exactly once");
+        assert_eq!(count, 1, "right should appear exactly once");
     }
 
     #[test]
@@ -280,9 +280,9 @@ mod tests {
             "'telegram' key must be preserved"
         );
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["command"],
+            parsed["mcpServers"]["right"]["command"],
             "rightclaw",
-            "mcpServers.rightmemory must be added"
+            "mcpServers.right must be added"
         );
     }
 
@@ -293,7 +293,7 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join("mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["command"],
+            parsed["mcpServers"]["right"]["command"],
             "/usr/local/bin/rightclaw",
             "command must be the absolute path passed in, not a hardcoded name"
         );
@@ -306,7 +306,7 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join("mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["env"]["RC_AGENT_NAME"],
+            parsed["mcpServers"]["right"]["env"]["RC_AGENT_NAME"],
             "myagent",
             "RC_AGENT_NAME must be injected into env"
         );
@@ -320,7 +320,7 @@ mod tests {
         let content = std::fs::read_to_string(dir.path().join("mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            parsed["mcpServers"]["rightmemory"]["env"]["RC_RIGHTCLAW_HOME"],
+            parsed["mcpServers"]["right"]["env"]["RC_RIGHTCLAW_HOME"],
             "/home/user/.rightclaw",
             "RC_RIGHTCLAW_HOME must be injected into env"
         );
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn chrome_devtools_coexists_with_rightmemory() {
+    fn chrome_devtools_coexists_with_right() {
         use crate::config::ChromeConfig;
         use std::path::PathBuf;
         let dir = tempdir().unwrap();
@@ -421,7 +421,7 @@ mod tests {
         generate_mcp_config(dir.path(), Path::new("rightclaw"), "test-agent", Path::new("/tmp/rc"), Some(&chrome)).unwrap();
         let content = std::fs::read_to_string(dir.path().join("mcp.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert!(parsed["mcpServers"]["rightmemory"].is_object(), "rightmemory must be present");
+        assert!(parsed["mcpServers"]["right"].is_object(), "right must be present");
         assert!(parsed["mcpServers"]["chrome-devtools"].is_object(), "chrome-devtools must be present");
     }
 
@@ -443,10 +443,10 @@ mod tests {
         assert_eq!(count, 1, "chrome-devtools should appear exactly once after two calls");
     }
 
-    // --- HTTP rightmemory tests (OpenShell sandbox mode) ---
+    // --- HTTP right MCP server tests (OpenShell sandbox mode) ---
 
     #[test]
-    fn generates_http_rightmemory_entry() {
+    fn generates_http_right_entry() {
         let dir = tempdir().unwrap();
         let token = "test-bearer-token-abc123";
         generate_mcp_config_http(
@@ -460,13 +460,13 @@ mod tests {
         let content: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.path().join("mcp.json")).unwrap())
                 .unwrap();
-        assert_eq!(content["mcpServers"]["rightmemory"]["type"], "http");
+        assert_eq!(content["mcpServers"]["right"]["type"], "http");
         assert_eq!(
-            content["mcpServers"]["rightmemory"]["url"],
+            content["mcpServers"]["right"]["url"],
             "http://host.docker.internal:8100/mcp"
         );
         assert_eq!(
-            content["mcpServers"]["rightmemory"]["headers"]["Authorization"],
+            content["mcpServers"]["right"]["headers"]["Authorization"],
             "Bearer test-bearer-token-abc123"
         );
     }
@@ -488,7 +488,7 @@ mod tests {
             content["mcpServers"]["notion"]["url"],
             "https://mcp.notion.com/mcp"
         );
-        assert_eq!(content["mcpServers"]["rightmemory"]["type"], "http");
+        assert_eq!(content["mcpServers"]["right"]["type"], "http");
     }
 
     #[test]

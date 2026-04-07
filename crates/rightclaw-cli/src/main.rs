@@ -798,7 +798,7 @@ async fn cmd_up(
         .ok_or_else(|| miette::miette!("cannot determine home directory"))?;
 
     // Resolve current executable path once — written into each agent's mcp.json so the
-    // rightmemory MCP server can be found even when rightclaw is not on PATH (process-compose).
+    // right MCP server can be found even when rightclaw is not on PATH (process-compose).
     let self_exe = std::env::current_exe()
         .map_err(|e| miette::miette!("failed to resolve current executable path: {e:#}"))?;
 

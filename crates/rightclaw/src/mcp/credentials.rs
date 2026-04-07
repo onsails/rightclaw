@@ -172,13 +172,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("mcp.json");
         std::fs::write(&path, serde_json::to_string_pretty(&serde_json::json!({
-            "mcpServers": { "rightmemory": { "type": "http", "url": "http://localhost:8100/mcp" } }
+            "mcpServers": { "right": { "type": "http", "url": "http://localhost:8100/mcp" } }
         })).unwrap()).unwrap();
         add_http_server(&path, "notion", "https://mcp.notion.com/mcp").unwrap();
         let content: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(content["mcpServers"]["notion"]["url"], "https://mcp.notion.com/mcp");
-        assert_eq!(content["mcpServers"]["rightmemory"]["url"], "http://localhost:8100/mcp");
+        assert_eq!(content["mcpServers"]["right"]["url"], "http://localhost:8100/mcp");
     }
 
     #[test]

@@ -295,7 +295,7 @@ impl MemoryServer {
         ))]))
     }
 
-    #[tool(description = "Remove an HTTP MCP server from this agent's mcp.json. The 'rightmemory' server is protected and cannot be removed.")]
+    #[tool(description = "Remove an HTTP MCP server from this agent's mcp.json. The 'right' server is protected and cannot be removed.")]
     async fn mcp_remove(
         &self,
         Parameters(params): Parameters<McpRemoveParams>,
