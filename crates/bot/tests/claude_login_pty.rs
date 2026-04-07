@@ -68,6 +68,7 @@ fn claude_login_shows_oauth_url() {
     let mut cmd = std::process::Command::new(&claude_bin);
     cmd.args(["--dangerously-skip-permissions", "--", "/login"]);
     cmd.env("HOME", home.path());
+    cmd.env("CLAUDE_CONFIG_DIR", home.path().join(".claude"));
     cmd.env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
     cmd.current_dir(home.path());
 
@@ -134,6 +135,7 @@ fn claude_auth_login_shows_url() {
     let mut cmd = std::process::Command::new(&claude_bin);
     cmd.args(["auth", "login", "--claudeai"]);
     cmd.env("HOME", home.path());
+    cmd.env("CLAUDE_CONFIG_DIR", home.path().join(".claude"));
     cmd.env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1");
     cmd.current_dir(home.path());
 
