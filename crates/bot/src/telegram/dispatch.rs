@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 
 use super::bot::build_bot;
 use super::filter::make_chat_id_filter;
-use super::handler::{handle_doctor, handle_mcp, handle_message, handle_reset, handle_start, AgentDir, AuthWatcherFlag, DebugFlag, PcPort, RightclawHome, SshConfigPath};
+use super::handler::{handle_doctor, handle_mcp, handle_message, handle_reset, handle_start, AgentDir, AuthCodeSlot, AuthWatcherFlag, DebugFlag, PcPort, RightclawHome, SshConfigPath};
 use super::oauth_callback::PendingAuthMap;
 use super::worker::{DebounceMsg, SessionKey};
 
@@ -79,6 +79,9 @@ pub async fn run_telegram(
     let auth_watcher_flag_arc: Arc<AuthWatcherFlag> = Arc::new(AuthWatcherFlag(
         Arc::new(std::sync::atomic::AtomicBool::new(false)),
     ));
+    let auth_code_slot_arc: Arc<AuthCodeSlot> = Arc::new(AuthCodeSlot(
+        Arc::new(tokio::sync::Mutex::new(None)),
+    ));
 
     // Dispatch schema (RESEARCH.md Pattern 1)
     let command_handler = dptree::entry()
@@ -115,7 +118,8 @@ pub async fn run_telegram(
             Arc::clone(&home_arc),
             Arc::clone(&ssh_config_arc),
             Arc::clone(&pc_port_arc),
-            Arc::clone(&auth_watcher_flag_arc)
+            Arc::clone(&auth_watcher_flag_arc),
+            Arc::clone(&auth_code_slot_arc)
         ])
         .build();
 

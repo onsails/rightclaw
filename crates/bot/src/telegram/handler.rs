@@ -47,6 +47,11 @@ pub struct PcPort(pub u16);
 #[derive(Clone)]
 pub struct AuthWatcherFlag(pub Arc<AtomicBool>);
 
+/// Shared slot for auth code sender. When login flow waits for a code,
+/// a oneshot::Sender is placed here. Message handler checks before routing to worker.
+#[derive(Clone)]
+pub struct AuthCodeSlot(pub Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>);
+
 /// Convert an arbitrary error into `RequestError::Io` so it propagates through `ResponseResult`.
 fn to_request_err(e: impl std::fmt::Display) -> RequestError {
     RequestError::Io(std::io::Error::other(e.to_string()).into())
@@ -70,12 +75,23 @@ pub async fn handle_message(
     ssh_config: Arc<SshConfigPath>,
     pc_port: Arc<PcPort>,
     auth_watcher_flag: Arc<AuthWatcherFlag>,
+    auth_code_slot: Arc<AuthCodeSlot>,
 ) -> ResponseResult<()> {
     // Only process messages with text (ignore stickers, photos, etc. in Phase 25)
     let text = match msg.text() {
         Some(t) => t.to_string(),
         None => return Ok(()),
     };
+
+    // Intercept auth code: if login flow is waiting for a code, forward this message.
+    {
+        let mut slot = auth_code_slot.0.lock().await;
+        if let Some(sender) = slot.take() {
+            tracing::info!("handle_message: forwarding message as auth code");
+            let _ = sender.send(text);
+            return Ok(());
+        }
+    }
 
     let chat_id = msg.chat.id;
     let eff_thread_id = effective_thread_id(&msg);
@@ -123,6 +139,7 @@ pub async fn handle_message(
                     ssh_config_path: ssh_config.0.clone(),
                     pc_port: pc_port.0,
                     auth_watcher_active: Arc::clone(&auth_watcher_flag.0),
+                    auth_code_tx: Arc::clone(&auth_code_slot.0),
                 };
                 let tx = spawn_worker(key, ctx, Arc::clone(&worker_map));
                 worker_map.insert(key, tx.clone());

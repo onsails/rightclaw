@@ -427,50 +427,6 @@ fn no_sandbox_true_command_has_no_sandbox_flag() {
 
 // ── Login process ───────────────────────────────────────────────────────────
 
-#[test]
-fn sandbox_enabled_emits_login_process() {
-    let agents = vec![make_bot_agent("right", "123:tok")];
-    let exe = Path::new(EXE_PATH);
-    let output = generate_process_compose(
-        &agents, exe, false, false, Path::new("/tmp/run"),
-        Path::new("/home/user/.rightclaw"), None,
-    ).unwrap();
-    assert!(
-        output.contains("  login-right:"),
-        "expected login-right process when sandbox enabled:\n{output}"
-    );
-    assert!(
-        output.contains("is_tty: true"),
-        "expected is_tty: true on login process:\n{output}"
-    );
-    assert!(
-        output.contains("disabled: true"),
-        "expected disabled: true on login process:\n{output}"
-    );
-    assert!(
-        output.contains("ssh -t -F"),
-        "expected ssh command in login process:\n{output}"
-    );
-    assert!(
-        output.contains("openshell-rightclaw-right"),
-        "expected SSH host alias in login process:\n{output}"
-    );
-}
-
-#[test]
-fn no_sandbox_omits_login_process() {
-    let agents = vec![make_bot_agent("right", "123:tok")];
-    let exe = Path::new(EXE_PATH);
-    let output = generate_process_compose(
-        &agents, exe, false, true, Path::new("/tmp/run"),
-        Path::new("/home/user/.rightclaw"), None,
-    ).unwrap();
-    assert!(
-        !output.contains("login-right:"),
-        "login process must be absent when no_sandbox:\n{output}"
-    );
-}
-
 // ── RC_PC_PORT env var ──────────────────────────────────────────────────────
 
 #[test]

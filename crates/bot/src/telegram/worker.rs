@@ -55,6 +55,9 @@ pub struct WorkerContext {
     pub pc_port: u16,
     /// Guard: true when an auth watcher task is active for this agent. Prevents duplicates.
     pub auth_watcher_active: Arc<AtomicBool>,
+    /// Slot for auth code sender — when login flow is waiting for a code from Telegram,
+    /// the oneshot::Sender is stored here. Message handler checks this before routing to worker.
+    pub auth_code_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<String>>>>,
 }
 
 /// Parsed output from CC structured JSON response (`result` field per D-03).
@@ -414,10 +417,6 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// Process-compose process name for the login session.
-fn login_process_name(agent_name: &str) -> String {
-    format!("login-{agent_name}")
-}
 
 /// Send a Telegram message, optionally in a thread.
 async fn send_tg(
@@ -434,155 +433,109 @@ async fn send_tg(
     Ok(())
 }
 
-/// Spawn a background task that:
-/// 1. Starts the `login-{agent}` process via PC API.
-/// 2. Scrapes PC logs for the OAuth URL and sends it to Telegram.
-/// 3. Periodically probes `claude -p "say ok"` inside sandbox to check auth.
-/// 4. On success: stops login process, notifies Telegram.
-/// 5. On timeout (5 min): stops login process, notifies Telegram.
+/// Spawn a background task that drives the Claude login flow via PTY.
+///
+/// 1. Spawns `claude --dangerously-skip-permissions -- /login` via SSH with PTY.
+/// 2. Drives through login method menu (sends Enter).
+/// 3. Extracts OAuth URL and sends to Telegram.
+/// 4. Waits for auth code from Telegram user.
+/// 5. Sends code to CC PTY, waits for success.
 fn spawn_auth_watcher(
     ctx: &WorkerContext,
     tg_chat_id: teloxide::types::ChatId,
     eff_thread_id: i64,
 ) {
     let agent_name = ctx.agent_name.clone();
-    let pc_port = ctx.pc_port;
     let bot = ctx.bot.clone();
     let ssh_config_path = ctx.ssh_config_path.clone();
     let active_flag = Arc::clone(&ctx.auth_watcher_active);
+    let auth_code_tx_slot = Arc::clone(&ctx.auth_code_tx);
 
     tokio::spawn(async move {
-        let login_name = login_process_name(&agent_name);
-        let pc = match rightclaw::runtime::pc_client::PcClient::new(pc_port) {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!(agent = %agent_name, "auth watcher: failed to create PC client: {e:#}");
-                active_flag.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
-
-        // Phase 1: Start login process
-        if let Err(e) = pc.start_process(&login_name).await {
-            tracing::error!(agent = %agent_name, "auth watcher: failed to start {login_name}: {e:#}");
-            if let Err(te) = send_tg(
-                &bot,
-                tg_chat_id,
-                eff_thread_id,
-                &format!("Failed to start login process: {e:#}"),
-            )
-            .await
-            {
-                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {te:#}");
-            }
-            active_flag.store(false, Ordering::SeqCst);
-            return;
-        }
-        tracing::info!(agent = %agent_name, "auth watcher: started {login_name}");
-
-        // Phase 2: Extract OAuth URL from PC logs (poll for up to 30s)
-        let url_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        let mut url_found = false;
-        while tokio::time::Instant::now() < url_deadline {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            match pc.get_process_logs(&login_name, 50).await {
-                Ok(lines) => {
-                    if let Some(url) = extract_auth_url(&lines) {
-                        let msg = format!("Open this link to authenticate:\n{url}");
-                        if let Err(e) = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await {
-                            tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
-                        }
-                        tracing::info!(agent = %agent_name, "auth watcher: sent OAuth URL to Telegram");
-                        url_found = true;
-                        break;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(agent = %agent_name, "auth watcher: failed to read logs: {e:#}");
-                }
-            }
-        }
-        if !url_found {
-            let msg = format!(
-                "Could not extract login URL automatically. \
-                 Open the process-compose TUI and find {login_name} to authenticate."
-            );
-            if let Err(e) = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await {
-                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
-            }
-        }
-
-        // Phase 3: Probe auth status (every 10s, up to 5 min)
-        let auth_deadline = tokio::time::Instant::now() + Duration::from_secs(300);
         let ssh_config = match ssh_config_path {
-            Some(ref p) => p,
+            Some(ref p) => p.clone(),
             None => {
-                tracing::error!(agent = %agent_name, "auth watcher: no SSH config — cannot probe");
+                tracing::error!(agent = %agent_name, "auth watcher: no SSH config");
                 active_flag.store(false, Ordering::SeqCst);
                 return;
             }
         };
-        let ssh_host = rightclaw::openshell::ssh_host(&agent_name);
 
-        while tokio::time::Instant::now() < auth_deadline {
-            tokio::time::sleep(Duration::from_secs(10)).await;
+        // Create channels for PTY ↔ async communication
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<crate::login::LoginEvent>(8);
+        let (code_tx, code_rx) = tokio::sync::oneshot::channel::<String>();
 
-            let probe_result = rightclaw::openshell::ssh_exec(
-                ssh_config,
-                &ssh_host,
-                &[
-                    "claude",
-                    "-p",
-                    "--dangerously-skip-permissions",
-                    "--output-format",
-                    "json",
-                    "--",
-                    "say ok",
-                ],
-                30,
-            )
-            .await;
+        // Store the code sender so Telegram handler can forward the auth code
+        auth_code_tx_slot.lock().await.replace(code_tx);
 
-            match probe_result {
-                Ok(_) => {
-                    tracing::info!(agent = %agent_name, "auth watcher: auth probe succeeded");
-                    if let Err(e) = pc.stop_process(&login_name).await {
-                        tracing::warn!(agent = %agent_name, "auth watcher: failed to stop {login_name}: {e:#}");
+        // Spawn PTY login in blocking thread
+        let agent_for_pty = agent_name.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::login::run_login_pty(&ssh_config, &agent_for_pty, event_tx, code_rx);
+        });
+
+        // Process events from the PTY task
+        let timeout = tokio::time::sleep(Duration::from_secs(300));
+        tokio::pin!(timeout);
+
+        loop {
+            tokio::select! {
+                event = event_rx.recv() => {
+                    match event {
+                        Some(crate::login::LoginEvent::Url(url)) => {
+                            let msg = format!("Open this link to authenticate:\n{url}");
+                            if let Err(e) = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await {
+                                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                            }
+                        }
+                        Some(crate::login::LoginEvent::WaitingForCode) => {
+                            if let Err(e) = send_tg(
+                                &bot, tg_chat_id, eff_thread_id,
+                                "After authenticating in the browser, send me the code shown on the page.",
+                            ).await {
+                                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                            }
+                        }
+                        Some(crate::login::LoginEvent::Done) => {
+                            if let Err(e) = send_tg(
+                                &bot, tg_chat_id, eff_thread_id,
+                                "Logged in successfully. You can continue chatting.",
+                            ).await {
+                                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                            }
+                            break;
+                        }
+                        Some(crate::login::LoginEvent::Error(msg)) => {
+                            tracing::error!(agent = %agent_name, "auth watcher: login error: {msg}");
+                            if let Err(e) = send_tg(
+                                &bot, tg_chat_id, eff_thread_id,
+                                &format!("Login failed: {msg}"),
+                            ).await {
+                                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                            }
+                            break;
+                        }
+                        None => {
+                            tracing::info!(agent = %agent_name, "auth watcher: PTY task exited");
+                            break;
+                        }
                     }
+                }
+                _ = &mut timeout => {
+                    tracing::warn!(agent = %agent_name, "auth watcher: login timed out after 5 min");
                     if let Err(e) = send_tg(
-                        &bot,
-                        tg_chat_id,
-                        eff_thread_id,
-                        "Logged in successfully. You can continue chatting.",
-                    )
-                    .await
-                    {
+                        &bot, tg_chat_id, eff_thread_id,
+                        "Login timed out after 5 minutes. Send another message to retry.",
+                    ).await {
                         tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
                     }
-                    active_flag.store(false, Ordering::SeqCst);
-                    return;
-                }
-                Err(e) => {
-                    tracing::debug!(agent = %agent_name, "auth watcher: probe still failing (expected during login): {e:#}");
+                    break;
                 }
             }
         }
 
-        // Timeout — stop login process and notify
-        tracing::warn!(agent = %agent_name, "auth watcher: login timed out after 5 min");
-        if let Err(e) = pc.stop_process(&login_name).await {
-            tracing::warn!(agent = %agent_name, "auth watcher: failed to stop {login_name} on timeout: {e:#}");
-        }
-        if let Err(e) = send_tg(
-            &bot,
-            tg_chat_id,
-            eff_thread_id,
-            "Login timed out after 5 minutes. Send another message to retry.",
-        )
-        .await
-        {
-            tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
-        }
+        // Cleanup
+        auth_code_tx_slot.lock().await.take();
         active_flag.store(false, Ordering::SeqCst);
     });
 }
