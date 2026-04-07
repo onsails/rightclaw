@@ -76,6 +76,7 @@ mod tests {
             telegram_token: None,
             allowed_chat_ids: vec![],
             env: HashMap::new(),
+            secret: None,
         }
     }
 

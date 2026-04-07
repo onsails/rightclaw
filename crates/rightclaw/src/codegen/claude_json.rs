@@ -143,6 +143,7 @@ mod tests {
                 telegram_token: None,
                 allowed_chat_ids: vec![],
                 env: std::collections::HashMap::new(),
+            secret: None,
             }),
             soul_path: None,
             user_path: None,

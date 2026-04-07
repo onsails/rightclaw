@@ -2438,6 +2438,7 @@ dependencies = [
  "rusqlite",
  "schemars 1.2.1",
  "serde",
+ "serde-saphyr",
  "serde_json",
  "tempfile",
  "tokio",

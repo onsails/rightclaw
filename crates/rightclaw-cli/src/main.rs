@@ -884,10 +884,63 @@ async fn cmd_up(
             .map_err(|e| miette::miette!("failed to open memory database for '{}': {e:#}", agent.name))?;
         tracing::debug!(agent = %agent.name, "memory.db initialized");
 
-        // 11. Generate mcp.json with rightmemory MCP server entry (Phase 17, SKILL-05).
-        rightclaw::codegen::generate_mcp_config(&agent.path, &self_exe, &agent.name, home, chrome_cfg)?;
-        tracing::debug!(agent = %agent.name, "wrote mcp.json with rightmemory entry");
+        // 11. Ensure agent has a persistent secret for token derivation.
+        let agent_secret = if let Some(ref secret) = agent.config.as_ref().and_then(|c| c.secret.clone()) {
+            secret.clone()
+        } else {
+            let new_secret = rightclaw::mcp::generate_agent_secret();
+            // Append secret to agent.yaml
+            let yaml_path = agent.path.join("agent.yaml");
+            let mut yaml_content = std::fs::read_to_string(&yaml_path)
+                .map_err(|e| miette::miette!("failed to read agent.yaml for '{}': {e:#}", agent.name))?;
+            yaml_content.push_str(&format!("\nsecret: \"{new_secret}\"\n"));
+            std::fs::write(&yaml_path, &yaml_content)
+                .map_err(|e| miette::miette!("failed to write agent secret for '{}': {e:#}", agent.name))?;
+            tracing::info!(agent = %agent.name, "generated new agent secret");
+            new_secret
+        };
+
+        // 12. Generate mcp.json with right HTTP MCP server entry.
+        let bearer_token = rightclaw::mcp::derive_token(&agent_secret, "right-mcp")?;
+        let right_mcp_url = if no_sandbox {
+            "http://127.0.0.1:8100/mcp".to_string()
+        } else {
+            "http://host.docker.internal:8100/mcp".to_string()
+        };
+        rightclaw::codegen::generate_mcp_config_http(
+            &agent.path,
+            &agent.name,
+            &right_mcp_url,
+            &bearer_token,
+            chrome_cfg,
+        )?;
+        tracing::debug!(agent = %agent.name, "wrote mcp.json with right HTTP MCP entry");
     }
+
+    // Write agent token map for the HTTP MCP server process.
+    let mut token_map_entries = serde_json::Map::new();
+    for agent in &agents {
+        let secret = agent.config.as_ref()
+            .and_then(|c| c.secret.clone())
+            .or_else(|| {
+                // Re-read agent.yaml if secret was just generated
+                let yaml_path = agent.path.join("agent.yaml");
+                let content = std::fs::read_to_string(&yaml_path).ok()?;
+                let config: rightclaw::agent::AgentConfig = serde_saphyr::from_str(&content).ok()?;
+                config.secret
+            })
+            .ok_or_else(|| miette::miette!("agent '{}' has no secret after generation", agent.name))?;
+        let token = rightclaw::mcp::derive_token(&secret, "right-mcp")?;
+        token_map_entries.insert(agent.name.clone(), serde_json::Value::String(token));
+    }
+    let token_map_path = run_dir.join("agent-tokens.json");
+    std::fs::write(
+        &token_map_path,
+        serde_json::to_string_pretty(&serde_json::Value::Object(token_map_entries))
+            .map_err(|e| miette::miette!("failed to serialize token map: {e:#}"))?,
+    )
+    .map_err(|e| miette::miette!("failed to write agent-tokens.json: {e:#}"))?;
+    tracing::debug!("wrote agent-tokens.json");
 
     // Generate OpenShell policies when sandbox mode is active.
     if !no_sandbox {

@@ -79,6 +79,11 @@ pub struct AgentConfig {
     /// shell expansion, no host variable forwarding. See D-01 in phase 11 context.
     #[serde(default)]
     pub env: HashMap<String, String>,
+
+    /// Persistent per-agent secret for deriving Bearer tokens.
+    /// Base64url-encoded, 43 characters. Auto-generated if absent.
+    #[serde(default)]
+    pub secret: Option<String>,
 }
 
 /// A discovered agent definition from the filesystem.

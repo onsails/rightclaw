@@ -16,6 +16,7 @@ fn make_bot_agent(name: &str, token: &str) -> AgentDef {
 
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
+            secret: None,
     });
     AgentDef {
         name: name.to_owned(),
@@ -44,6 +45,7 @@ fn make_agent_no_token(name: &str) -> AgentDef {
 
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
+            secret: None,
     });
     AgentDef {
         name: name.to_owned(),
@@ -89,6 +91,7 @@ fn make_agent_with_restart(name: &str, token: &str, restart: RestartPolicy) -> A
 
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
+            secret: None,
     });
     AgentDef {
         name: name.to_owned(),
