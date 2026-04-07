@@ -412,7 +412,26 @@ async fn bearer_auth_middleware(
     };
 
     let map = token_map.read().await;
-    let Some(agent) = map.get(token).cloned() else {
+    let agent = {
+        use subtle::ConstantTimeEq;
+        let token_bytes = token.as_bytes();
+        let mut found: Option<AgentInfo> = None;
+        for (candidate, agent_name) in map.iter() {
+            let candidate_bytes = candidate.as_bytes();
+            // Pad to equal length so ct_eq doesn't leak length via short-circuit.
+            // A mismatch in length still results in 0, but we always iterate all entries.
+            let eq = if candidate_bytes.len() == token_bytes.len() {
+                candidate_bytes.ct_eq(token_bytes).into()
+            } else {
+                false
+            };
+            if eq {
+                found = Some(agent_name.clone());
+            }
+        }
+        found
+    };
+    let Some(agent) = agent else {
         return (axum::http::StatusCode::UNAUTHORIZED, "Invalid Bearer token").into_response();
     };
     drop(map);

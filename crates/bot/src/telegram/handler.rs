@@ -38,10 +38,6 @@ pub struct RightclawHome(pub PathBuf);
 #[derive(Clone)]
 pub struct DebugFlag(pub bool);
 
-/// Process-compose API port for PC REST calls from the bot process.
-#[derive(Clone)]
-pub struct PcPort(pub u16);
-
 /// Shared flag: true when an auth watcher task is active for this agent.
 /// One per bot process (one agent per process), shared across all workers.
 #[derive(Clone)]
@@ -73,7 +69,6 @@ pub async fn handle_message(
     agent_dir: Arc<AgentDir>,
     debug_flag: Arc<DebugFlag>,
     ssh_config: Arc<SshConfigPath>,
-    pc_port: Arc<PcPort>,
     auth_watcher_flag: Arc<AuthWatcherFlag>,
     auth_code_slot: Arc<AuthCodeSlot>,
 ) -> ResponseResult<()> {
@@ -137,7 +132,6 @@ pub async fn handle_message(
                     db_path: agent_dir.0.clone(),
                     debug: debug_flag.0,
                     ssh_config_path: ssh_config.0.clone(),
-                    pc_port: pc_port.0,
                     auth_watcher_active: Arc::clone(&auth_watcher_flag.0),
                     auth_code_tx: Arc::clone(&auth_code_slot.0),
                 };

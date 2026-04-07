@@ -249,6 +249,7 @@ async fn main() -> miette::Result<()> {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
+    let _log_guard;
     if let Some(ref agent) = agent_name_for_log {
         let log_dir = dirs::home_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
@@ -263,7 +264,7 @@ async fn main() -> miette::Result<()> {
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(tracing_subscriber::fmt::layer().with_writer(non_blocking).with_ansi(false))
             .init();
-        std::mem::forget(guard);
+        _log_guard = Some(guard);
     } else {
         tracing_subscriber::fmt()
             .with_env_filter(env_filter)
@@ -848,7 +849,7 @@ async fn cmd_up(
     // Write agent definition, reply-schema.json, and settings.json for each agent.
     for agent in &agents {
         // Generate .claude/settings.json with behavioral flags (OpenShell handles sandbox).
-        let settings = rightclaw::codegen::generate_settings(agent, chrome_cfg)?;
+        let settings = rightclaw::codegen::generate_settings()?;
         let claude_dir = agent.path.join(".claude");
         std::fs::create_dir_all(&claude_dir)
             .map_err(|e| miette::miette!("failed to create .claude dir for '{}': {e:#}", agent.name))?;
@@ -932,12 +933,17 @@ async fn cmd_up(
             secret.clone()
         } else {
             let new_secret = rightclaw::mcp::generate_agent_secret();
-            // Append secret to agent.yaml
+            // Read-modify-write agent.yaml via YAML parse to avoid duplicate keys.
             let yaml_path = agent.path.join("agent.yaml");
-            let mut yaml_content = std::fs::read_to_string(&yaml_path)
+            let yaml_content = std::fs::read_to_string(&yaml_path)
                 .map_err(|e| miette::miette!("failed to read agent.yaml for '{}': {e:#}", agent.name))?;
-            yaml_content.push_str(&format!("\nsecret: \"{new_secret}\"\n"));
-            std::fs::write(&yaml_path, &yaml_content)
+            let mut doc: serde_json::Map<String, serde_json::Value> =
+                serde_saphyr::from_str(&yaml_content)
+                    .map_err(|e| miette::miette!("failed to parse agent.yaml for '{}': {e:#}", agent.name))?;
+            doc.insert("secret".to_owned(), serde_json::Value::String(new_secret.clone()));
+            let updated_yaml = serde_saphyr::to_string(&doc)
+                .map_err(|e| miette::miette!("failed to serialize agent.yaml for '{}': {e:#}", agent.name))?;
+            std::fs::write(&yaml_path, &updated_yaml)
                 .map_err(|e| miette::miette!("failed to write agent secret for '{}': {e:#}", agent.name))?;
             tracing::info!(agent = %agent.name, "generated new agent secret");
             new_secret
@@ -1074,12 +1080,14 @@ async fn cmd_up(
     let pc_config = rightclaw::codegen::generate_process_compose(
         &agents,
         &self_exe,
-        debug,
-        no_sandbox,
-        &run_dir,
-        home,
-        cloudflared_script_path.as_deref(),
-        Some(&token_map_path),
+        &rightclaw::codegen::ProcessComposeConfig {
+            debug,
+            no_sandbox,
+            run_dir: &run_dir,
+            home,
+            cloudflared_script: cloudflared_script_path.as_deref(),
+            token_map_path: Some(&token_map_path),
+        },
     )?;
     let config_path = run_dir.join("process-compose.yaml");
     std::fs::write(&config_path, &pc_config)

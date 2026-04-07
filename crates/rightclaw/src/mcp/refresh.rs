@@ -1,10 +1,12 @@
 //! OAuth token refresh: state persistence and refresh timing.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 
 /// Refresh margin: refresh token 10 minutes before expiry.
 const REFRESH_MARGIN: Duration = Duration::from_secs(600);
@@ -45,12 +47,19 @@ pub fn load_oauth_state(path: &Path) -> miette::Result<OAuthState> {
     Ok(state)
 }
 
-/// Save OAuth state to file atomically.
+/// Save OAuth state to file atomically (temp file + rename).
 pub fn save_oauth_state(path: &Path, state: &OAuthState) -> miette::Result<()> {
     let content = serde_json::to_string_pretty(state)
         .map_err(|e| miette::miette!("failed to serialize oauth state: {e:#}"))?;
-    std::fs::write(path, content)
-        .map_err(|e| miette::miette!("failed to write oauth state: {e:#}"))?;
+    let dir = path
+        .parent()
+        .ok_or_else(|| miette::miette!("oauth state path has no parent directory"))?;
+    let mut tmp = NamedTempFile::new_in(dir)
+        .map_err(|e| miette::miette!("failed to create temp file for oauth state: {e:#}"))?;
+    tmp.write_all(content.as_bytes())
+        .map_err(|e| miette::miette!("failed to write oauth state to temp file: {e:#}"))?;
+    tmp.persist(path)
+        .map_err(|e| miette::miette!("failed to persist oauth state: {e:#}"))?;
     Ok(())
 }
 
@@ -115,7 +124,9 @@ pub async fn run_refresh_scheduler(
                 let due = refresh_due_in(&entry.state);
                 timers.insert(entry.server_name.clone(), tokio::time::Instant::now() + due);
                 state.servers.insert(entry.server_name.clone(), entry.state);
-                let _ = save_oauth_state(&oauth_state_path, &state);
+                if let Err(e) = save_oauth_state(&oauth_state_path, &state) {
+                    tracing::error!("failed to save oauth state: {e:#}");
+                }
                 tracing::info!(server = %entry.server_name, due_secs = due.as_secs(), "new refresh scheduled");
             }
 
@@ -151,7 +162,7 @@ pub async fn run_refresh_scheduler(
                             && let Err(e) = crate::openshell::upload_file(
                                 sbox,
                                 &mcp_json_path,
-                                "/sandbox/mcp.json",
+                                crate::openshell::SANDBOX_MCP_JSON_PATH,
                             ).await
                         {
                             tracing::error!(server = %name, "failed to re-upload mcp.json: {e:#}");
@@ -161,7 +172,9 @@ pub async fn run_refresh_scheduler(
                         let due = refresh_due_in(&new_entry);
                         timers.insert(name.clone(), tokio::time::Instant::now() + due);
                         state.servers.insert(name.clone(), new_entry);
-                        let _ = save_oauth_state(&oauth_state_path, &state);
+                        if let Err(e) = save_oauth_state(&oauth_state_path, &state) {
+                            tracing::error!("failed to save oauth state: {e:#}");
+                        }
                     }
                     Err(e) => {
                         tracing::error!(server = %name, "token refresh failed after retries: {e:#}");

@@ -67,35 +67,9 @@ pub fn init_rightclaw_home(
         .ok_or_else(|| miette::miette!("cannot determine home directory"))?;
 
     // Generate .claude/settings.json via codegen (D-17, D-18).
-    // Build a synthetic AgentDef for the default "right" agent.
+    // Write settings.json for the default "right" agent.
     {
-        // Build synthetic AgentDef for generate_settings with telegram config if token provided.
-        // Telegram plugin detection reads agent.config (D-01).
-        let settings_config = telegram_token.map(|tok| crate::agent::AgentConfig {
-            restart: crate::agent::RestartPolicy::OnFailure,
-            max_restarts: 3,
-            backoff_seconds: 5,
-            model: None,
-            sandbox: None,
-            telegram_token: Some(tok.to_string()),
-            allowed_chat_ids: vec![],
-            env: std::collections::HashMap::new(),
-            secret: None,
-        });
-        let agent_def = crate::agent::AgentDef {
-            name: "right".to_string(),
-            path: agents_dir.clone(),
-            identity_path: agents_dir.join("IDENTITY.md"),
-            config: settings_config,
-            soul_path: None,
-            user_path: None,
-            agents_path: None,
-            tools_path: None,
-            bootstrap_path: None,
-            heartbeat_path: None,
-        };
-
-        let settings = crate::codegen::generate_settings(&agent_def, None)?;
+        let settings = crate::codegen::generate_settings()?;
         let claude_dir = agents_dir.join(".claude");
         std::fs::create_dir_all(&claude_dir).map_err(|e| {
             miette::miette!("Failed to create {}: {}", claude_dir.display(), e)

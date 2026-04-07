@@ -51,8 +51,6 @@ pub struct WorkerContext {
     pub debug: bool,
     /// Path to the SSH config file for this agent's OpenShell sandbox (None when --no-sandbox).
     pub ssh_config_path: Option<PathBuf>,
-    /// Process-compose API port (for auth watcher to start/stop login process).
-    pub pc_port: u16,
     /// Guard: true when an auth watcher task is active for this agent. Prevents duplicates.
     pub auth_watcher_active: Arc<AtomicBool>,
     /// Slot for auth code sender — when login flow is waiting for a code from Telegram,
@@ -412,18 +410,8 @@ pub fn spawn_worker(
 }
 
 /// Shell-escape a string for safe inclusion in an SSH remote command.
-/// Wraps in single quotes, escaping any embedded single quotes.
 fn shell_escape(s: &str) -> String {
-    // Empty string → ''
-    if s.is_empty() {
-        return "''".to_string();
-    }
-    // If the string contains no shell-special chars, return as-is.
-    if s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'/' || b == b':' || b == b'=') {
-        return s.to_string();
-    }
-    // Wrap in single quotes; replace ' with '\'' (end quote, escaped quote, start quote).
-    format!("'{}'", s.replace('\'', "'\\''"))
+    shlex::try_quote(s).expect("shlex::try_quote cannot fail for valid UTF-8").into_owned()
 }
 
 
@@ -592,7 +580,7 @@ async fn invoke_cc(
     // MCP isolation: only use servers from our mcp.json, block cloud MCPs.
     // Path differs by execution mode: /sandbox/ inside container, agent_dir on host.
     let mcp_config_path = if ctx.ssh_config_path.is_some() {
-        "/sandbox/mcp.json".to_string()
+        rightclaw::openshell::SANDBOX_MCP_JSON_PATH.to_string()
     } else {
         ctx.agent_dir.join("mcp.json").to_string_lossy().into_owned()
     };
