@@ -229,8 +229,19 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
         // Delete stale sandbox (best-effort).
         rightclaw::openshell::delete_sandbox(&sandbox).await;
 
-        // Spawn sandbox.
+        // Populate staging dir with agent files for sandbox upload.
+        // Copies .claude/ (resolving symlinks) so sandbox has credentials, settings, agent def.
         let upload_dir = agent_dir.join("staging");
+        let staging_claude = upload_dir.join(".claude");
+        if staging_claude.exists() {
+            std::fs::remove_dir_all(&staging_claude)
+                .map_err(|e| miette::miette!("failed to clean staging/.claude: {e:#}"))?;
+        }
+        copy_dir_resolve_symlinks(&agent_dir.join(".claude"), &staging_claude)
+            .map_err(|e| miette::miette!("failed to copy .claude to staging: {e:#}"))?;
+        tracing::info!(agent = %args.agent, "populated staging/.claude for sandbox upload");
+
+        // Spawn sandbox.
         let mut child = rightclaw::openshell::spawn_sandbox(&sandbox, &policy_path, Some(&upload_dir))?;
 
         // Connect gRPC and wait for ready, racing against child exit.
@@ -292,4 +303,31 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
     }
 
     result
+}
+
+/// Recursively copy a directory, resolving symlinks to regular files.
+/// Skips entries that fail to read (e.g. broken symlinks).
+fn copy_dir_resolve_symlinks(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        // Resolve symlinks by reading metadata (follows symlinks).
+        let meta = match std::fs::metadata(&src_path) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(path = %src_path.display(), "skipping unresolvable entry: {e}");
+                continue;
+            }
+        };
+
+        if meta.is_dir() {
+            copy_dir_resolve_symlinks(&src_path, &dst_path)?;
+        } else if meta.is_file() {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
