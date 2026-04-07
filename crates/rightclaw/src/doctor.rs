@@ -127,6 +127,12 @@ pub fn run_doctor(home: &Path) -> Vec<DoctorCheck> {
     // MCP token status check — Warn when any agent has missing/expired tokens (REFRESH-03)
     checks.push(check_mcp_tokens(home));
 
+    // OpenShell mTLS certs check
+    checks.push(check_openshell_mtls_certs());
+
+    // OpenShell gateway health check (gRPC)
+    checks.push(check_openshell_gateway_health());
+
     checks
 }
 
@@ -806,6 +812,111 @@ For persistent fix, add to /etc/sysctl.d/60-bwrap-userns.conf:
 
 See: https://ubuntu.com/blog/ubuntu-23-10-restricted-unprivileged-user-namespaces"
         .to_string()
+}
+
+/// Check that OpenShell mTLS certificates exist.
+///
+/// Verifies ca.crt, tls.crt, tls.key in ~/.config/openshell/gateways/openshell/mtls/.
+/// Severity: Fail — without mTLS certs, gRPC connection to OpenShell gateway is impossible.
+fn check_openshell_mtls_certs() -> DoctorCheck {
+    let Some(config_dir) = dirs::config_dir() else {
+        return DoctorCheck {
+            name: "openshell-mtls".to_string(),
+            status: CheckStatus::Fail,
+            detail: "cannot determine config directory".to_string(),
+            fix: None,
+        };
+    };
+
+    let mtls_dir = config_dir.join("openshell/gateways/openshell/mtls");
+    let required = ["ca.crt", "tls.crt", "tls.key"];
+    let missing: Vec<&str> = required
+        .iter()
+        .filter(|f| !mtls_dir.join(f).exists())
+        .copied()
+        .collect();
+
+    if missing.is_empty() {
+        DoctorCheck {
+            name: "openshell-mtls".to_string(),
+            status: CheckStatus::Pass,
+            detail: format!("certs present in {}", mtls_dir.display()),
+            fix: None,
+        }
+    } else {
+        DoctorCheck {
+            name: "openshell-mtls".to_string(),
+            status: CheckStatus::Fail,
+            detail: format!("missing: {} in {}", missing.join(", "), mtls_dir.display()),
+            fix: Some("Install OpenShell and run `openshell auth login` to generate mTLS certificates".to_string()),
+        }
+    }
+}
+
+/// Check OpenShell gateway health via gRPC Health RPC.
+///
+/// Connects to 127.0.0.1:8080 with mTLS and calls Health RPC.
+/// Uses block_in_place to run async gRPC call from sync context.
+fn check_openshell_gateway_health() -> DoctorCheck {
+    let Some(config_dir) = dirs::config_dir() else {
+        return DoctorCheck {
+            name: "openshell-gateway".to_string(),
+            status: CheckStatus::Warn,
+            detail: "cannot determine config directory".to_string(),
+            fix: None,
+        };
+    };
+
+    let mtls_dir = config_dir.join("openshell/gateways/openshell/mtls");
+
+    // Skip if certs are missing (the mtls check already flags this)
+    if !mtls_dir.join("ca.crt").exists() {
+        return DoctorCheck {
+            name: "openshell-gateway".to_string(),
+            status: CheckStatus::Warn,
+            detail: "skipped — mTLS certs missing".to_string(),
+            fix: None,
+        };
+    }
+
+    let result = tokio::task::block_in_place(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to create runtime: {e}"))?;
+        rt.block_on(async {
+            let mut client = crate::openshell::connect_grpc(&mtls_dir)
+                .await
+                .map_err(|e| format!("{e:#}"))?;
+            let resp = client
+                .health(crate::openshell_proto::openshell::v1::HealthRequest {})
+                .await
+                .map_err(|e| format!("Health RPC failed: {e:#}"))?;
+            let status = resp.into_inner().status;
+            Ok::<i32, String>(status)
+        })
+    });
+
+    match result {
+        Ok(1) => DoctorCheck {
+            name: "openshell-gateway".to_string(),
+            status: CheckStatus::Pass,
+            detail: "gateway healthy".to_string(),
+            fix: None,
+        },
+        Ok(status) => DoctorCheck {
+            name: "openshell-gateway".to_string(),
+            status: CheckStatus::Warn,
+            detail: format!("gateway status: {status} (expected 1=HEALTHY)"),
+            fix: None,
+        },
+        Err(e) => DoctorCheck {
+            name: "openshell-gateway".to_string(),
+            status: CheckStatus::Fail,
+            detail: format!("gateway unreachable: {e}"),
+            fix: Some("Ensure OpenShell gateway is running: `openshell gateway start`".to_string()),
+        },
+    }
 }
 
 #[cfg(test)]
