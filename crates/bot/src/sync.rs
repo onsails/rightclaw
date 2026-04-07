@@ -143,7 +143,7 @@ async fn verify_claude_json(agent_dir: &Path, sandbox: &str) -> miette::Result<(
     if needs_upload {
         let fixed = serde_json::to_string_pretty(&parsed)
             .map_err(|e| miette::miette!("failed to serialize .claude.json: {e:#}"))?;
-        let fixed_path = tmp_dir.path().join(".claude.json.fixed");
+        let fixed_path = tmp_dir.path().join(".claude.json");
         std::fs::write(&fixed_path, &fixed)
             .map_err(|e| miette::miette!("failed to write fixed .claude.json: {e:#}"))?;
         rightclaw::openshell::upload_file(sandbox, &fixed_path, "/sandbox/")
