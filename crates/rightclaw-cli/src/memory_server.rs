@@ -271,7 +271,7 @@ impl MemoryServer {
         }
     }
 
-    #[tool(description = "Add an HTTP MCP server to this agent's mcp.json. The server becomes available after the next agent restart.")]
+    #[tool(description = "Add an HTTP MCP server to this agent's mcp.json. Use /mcp auth <name> in Telegram to complete OAuth if the server requires authentication.")]
     async fn mcp_add(
         &self,
         Parameters(params): Parameters<McpAddParams>,
@@ -290,7 +290,7 @@ impl MemoryServer {
         )
         .map_err(|e| McpError::internal_error(format!("{e:#}"), None))?;
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Added MCP server '{}' ({}). Restart agent for it to take effect.",
+            "Added MCP server '{}' ({}).",
             params.name, params.url
         ))]))
     }
@@ -315,7 +315,7 @@ impl MemoryServer {
             &params.name,
         ) {
             Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "Removed MCP server '{}'. Restart agent for change to take effect.",
+                "Removed MCP server '{}'.",
                 params.name
             ))])),
             Err(rightclaw::mcp::credentials::CredentialError::ServerNotFound(_)) => {
