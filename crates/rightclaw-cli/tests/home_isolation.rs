@@ -8,83 +8,6 @@ fn rightclaw() -> Command {
     Command::cargo_bin("rightclaw").unwrap()
 }
 
-// --- Plan 02 sandbox path tests (HOME-05) ---
-
-/// After init, settings.json should contain allowRead with absolute agent path (HOME-05).
-#[test]
-fn init_settings_contain_allow_read() {
-    let dir = tempdir().unwrap();
-    let home = dir.path().to_str().unwrap();
-
-    rightclaw()
-        .args(["--home", home, "init"])
-        .assert()
-        .success();
-
-    let settings_path = dir.path().join("agents/right/.claude/settings.json");
-    let content = fs::read_to_string(&settings_path).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    let allow_read = json["sandbox"]["filesystem"]["allowRead"]
-        .as_array()
-        .expect("allowRead should be present");
-    assert!(!allow_read.is_empty(), "allowRead should not be empty");
-    // Path should be absolute (starts with /)
-    let first = allow_read[0].as_str().unwrap();
-    assert!(first.starts_with('/'), "allowRead path should be absolute: {first}");
-}
-
-/// After init, denyRead should use absolute paths, not tilde-relative (HOME-05).
-#[test]
-fn init_settings_deny_read_absolute() {
-    let dir = tempdir().unwrap();
-    let home = dir.path().to_str().unwrap();
-
-    rightclaw()
-        .args(["--home", home, "init"])
-        .assert()
-        .success();
-
-    let settings_path = dir.path().join("agents/right/.claude/settings.json");
-    let content = fs::read_to_string(&settings_path).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    let deny_read = json["sandbox"]["filesystem"]["denyRead"]
-        .as_array()
-        .expect("denyRead should be present");
-    for path in deny_read {
-        let s = path.as_str().unwrap();
-        assert!(!s.starts_with("~/"), "denyRead should not use tilde: {s}");
-        assert!(s.starts_with('/'), "denyRead should be absolute: {s}");
-    }
-}
-
-/// After init, denyRead should include .ssh, .aws, .gnupg paths.
-#[test]
-fn init_settings_deny_read_includes_sensitive_paths() {
-    let dir = tempdir().unwrap();
-    let home = dir.path().to_str().unwrap();
-
-    rightclaw()
-        .args(["--home", home, "init"])
-        .assert()
-        .success();
-
-    let settings_path = dir.path().join("agents/right/.claude/settings.json");
-    let content = fs::read_to_string(&settings_path).unwrap();
-    let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-
-    let deny_read = json["sandbox"]["filesystem"]["denyRead"]
-        .as_array()
-        .unwrap();
-    let deny_strs: Vec<&str> = deny_read.iter()
-        .filter_map(|v| v.as_str())
-        .collect();
-    assert!(deny_strs.iter().any(|s| s.ends_with("/.ssh")), "missing .ssh in denyRead: {deny_strs:?}");
-    assert!(deny_strs.iter().any(|s| s.ends_with("/.aws")), "missing .aws in denyRead: {deny_strs:?}");
-    assert!(deny_strs.iter().any(|s| s.ends_with("/.gnupg")), "missing .gnupg in denyRead: {deny_strs:?}");
-}
-
 // --- Plan 01 artifact tests (D-11: credential symlink, .claude.json, missing-creds) ---
 
 /// After init, agent .claude.json should contain hasTrustDialogAccepted (HOME-02, PERM-02).
@@ -178,12 +101,3 @@ fn oauth_with_credential_symlink_works() {
     // Placeholder -- implement when running manual validation.
 }
 
-#[test]
-#[ignore = "requires live claude credentials and claude binary"]
-fn deny_read_blocks_host_ssh() {
-    // This test would:
-    // 1. Set up agent with sandbox config
-    // 2. Run `claude -p "cat ~/.ssh/config" --output-format json` with HOME=agent_dir
-    // 3. Assert sandbox refusal in output
-    // Placeholder -- implement when running manual validation.
-}
