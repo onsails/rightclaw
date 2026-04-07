@@ -69,3 +69,18 @@ fn processes_response_handles_empty_data() {
     let resp: ProcessesResponse = serde_json::from_str(json).unwrap();
     assert!(resp.data.is_empty());
 }
+
+#[test]
+fn logs_response_deserializes_from_json() {
+    let json = r#"{"logs": ["line 1", "line 2", "auth url: https://example.com"]}"#;
+    let resp: LogsResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(resp.logs.len(), 3);
+    assert_eq!(resp.logs[2], "auth url: https://example.com");
+}
+
+#[test]
+fn logs_response_handles_empty_logs() {
+    let json = r#"{"logs": []}"#;
+    let resp: LogsResponse = serde_json::from_str(json).unwrap();
+    assert!(resp.logs.is_empty());
+}
