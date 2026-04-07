@@ -269,11 +269,11 @@ mod tests {
     #[test]
     fn stdio_server_included() {
         let dir = tempdir().unwrap();
-        write_mcp_json(dir.path(), &[("rightmemory", None)]);
+        write_mcp_json(dir.path(), &[("right", None)]);
 
         let result = mcp_auth_status(dir.path()).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "rightmemory");
+        assert_eq!(result[0].name, "right");
         assert_eq!(result[0].kind, ServerKind::Stdio);
         assert_eq!(result[0].state, AuthState::Present);
         assert_eq!(result[0].url, "some-binary");
@@ -319,7 +319,7 @@ mod tests {
             dir.path(),
             &[
                 ("notion", Some("https://mcp.notion.com/mcp")),
-                ("rightmemory", None),
+                ("right", None),
             ],
         );
 
@@ -328,7 +328,7 @@ mod tests {
         // Sorted by name
         assert_eq!(result[0].name, "notion");
         assert_eq!(result[0].kind, ServerKind::Http);
-        assert_eq!(result[1].name, "rightmemory");
+        assert_eq!(result[1].name, "right");
         assert_eq!(result[1].kind, ServerKind::Stdio);
     }
 

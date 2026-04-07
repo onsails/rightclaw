@@ -2,9 +2,9 @@
 
 /// Generate an OpenShell policy YAML string.
 ///
-/// `rightmemory_port`: TCP port for the host-side rightmemory HTTP server.
+/// `right_mcp_port`: TCP port for the host-side right MCP HTTP server.
 /// `external_mcp_servers`: (name, domain) pairs for external MCP servers the agent needs.
-pub fn generate_policy(rightmemory_port: u16, external_mcp_servers: &[(&str, &str)]) -> String {
+pub fn generate_policy(right_mcp_port: u16, external_mcp_servers: &[(&str, &str)]) -> String {
     let mut policy = format!(
         r#"version: 1
 
@@ -60,10 +60,12 @@ network_policies:
     binaries:
       - path: "**"
 
-  rightmemory:
+  right:
     endpoints:
       - host: "host.docker.internal"
-        port: {rightmemory_port}
+        port: {right_mcp_port}
+        allowed_ips:
+          - "172.16.0.0/12"
         protocol: rest
         access: full
     binaries:
@@ -95,10 +97,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generates_policy_with_rightmemory_port() {
+    fn generates_policy_with_right_mcp_port() {
         let policy = generate_policy(8100, &[]);
         assert!(policy.contains("host.docker.internal"));
         assert!(policy.contains("8100"));
+        assert!(policy.contains("172.16.0.0/12"));
+        assert!(policy.contains("right:"));
         assert!(policy.contains("*.anthropic.com"));
         assert!(policy.contains("*.claude.com"));
         assert!(policy.contains("best_effort"));

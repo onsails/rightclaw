@@ -47,7 +47,7 @@ async fn sync_cycle(agent_dir: &Path, sandbox: &str) -> miette::Result<()> {
         tracing::debug!("sync: uploaded reply-schema.json");
     }
 
-    // 3. Upload mcp.json (rightmemory + external MCP servers with Bearer tokens)
+    // 3. Upload mcp.json (right MCP server + external MCP servers with Bearer tokens)
     let mcp_json = agent_dir.join("mcp.json");
     if mcp_json.exists() {
         rightclaw::openshell::upload_file(sandbox, &mcp_json, "/sandbox/")

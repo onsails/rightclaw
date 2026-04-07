@@ -287,7 +287,7 @@ impl HttpMemoryServer {
         ))]))
     }
 
-    #[tool(description = "Remove an HTTP MCP server from this agent's mcp.json. The 'rightmemory' server is protected and cannot be removed.")]
+    #[tool(description = "Remove an HTTP MCP server from this agent's mcp.json. The 'right' server is protected and cannot be removed.")]
     async fn mcp_remove(
         &self,
         Extension(parts): Extension<http::request::Parts>,
@@ -482,7 +482,7 @@ pub async fn run_memory_server_http(
         .await
         .map_err(|e| miette::miette!("bind to 127.0.0.1:{port} failed: {e:#}"))?;
 
-    tracing::info!(port, agents = ?agents_dir, "rightmemory HTTP server listening");
+    tracing::info!(port, agents = ?agents_dir, "right HTTP MCP server listening");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { ct.cancelled().await })

@@ -191,17 +191,17 @@ async fn test_mcp_add_creates_entry() {
 }
 
 #[tokio::test]
-async fn test_mcp_remove_rightmemory_rejected() {
+async fn test_mcp_remove_right_rejected() {
     let (server, _dir) = setup_server_with_dir();
     let err = server
         .mcp_remove(Parameters(McpRemoveParams {
-            name: "rightmemory".to_string(),
+            name: "right".to_string(),
         }))
         .await
         .expect_err("should return error for protected server");
     let msg = format!("{err:?}");
     assert!(
-        msg.contains("Cannot remove") || msg.contains("rightmemory"),
+        msg.contains("Cannot remove") || msg.contains("right"),
         "error should mention protected server: {msg}"
     );
 }
