@@ -79,31 +79,49 @@ impl PcClient {
 
     /// Restart a specific process by name.
     pub async fn restart_process(&self, name: &str) -> miette::Result<()> {
-        self.client
+        let resp = self
+            .client
             .post(format!("{}/process/restart/{name}", self.base_url))
             .send()
             .await
             .map_err(|e| miette::miette!("failed to restart process '{name}': {e:#}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(miette::miette!("restart process '{name}' failed ({status}): {body}"));
+        }
         Ok(())
     }
 
     /// Stop a specific process by name.
     pub async fn stop_process(&self, name: &str) -> miette::Result<()> {
-        self.client
+        let resp = self
+            .client
             .patch(format!("{}/process/stop/{name}", self.base_url))
             .send()
             .await
             .map_err(|e| miette::miette!("failed to stop process '{name}': {e:#}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(miette::miette!("stop process '{name}' failed ({status}): {body}"));
+        }
         Ok(())
     }
 
     /// Start a disabled or stopped process by name.
     pub async fn start_process(&self, name: &str) -> miette::Result<()> {
-        self.client
+        let resp = self
+            .client
             .post(format!("{}/process/start/{name}", self.base_url))
             .send()
             .await
             .map_err(|e| miette::miette!("failed to start process '{name}': {e:#}"))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(miette::miette!("start process '{name}' failed ({status}): {body}"));
+        }
         Ok(())
     }
 

@@ -42,6 +42,11 @@ pub struct DebugFlag(pub bool);
 #[derive(Clone)]
 pub struct PcPort(pub u16);
 
+/// Shared flag: true when an auth watcher task is active for this agent.
+/// One per bot process (one agent per process), shared across all workers.
+#[derive(Clone)]
+pub struct AuthWatcherFlag(pub Arc<AtomicBool>);
+
 /// Convert an arbitrary error into `RequestError::Io` so it propagates through `ResponseResult`.
 fn to_request_err(e: impl std::fmt::Display) -> RequestError {
     RequestError::Io(std::io::Error::other(e.to_string()).into())
@@ -63,6 +68,7 @@ pub async fn handle_message(
     debug_flag: Arc<DebugFlag>,
     ssh_config: Arc<SshConfigPath>,
     pc_port: Arc<PcPort>,
+    auth_watcher_flag: Arc<AuthWatcherFlag>,
 ) -> ResponseResult<()> {
     // Only process messages with text (ignore stickers, photos, etc. in Phase 25)
     let text = match msg.text() {
@@ -115,7 +121,7 @@ pub async fn handle_message(
                     debug: debug_flag.0,
                     ssh_config_path: ssh_config.0.clone(),
                     pc_port: pc_port.0,
-                    auth_watcher_active: Arc::new(AtomicBool::new(false)),
+                    auth_watcher_active: Arc::clone(&auth_watcher_flag.0),
                 };
                 let tx = spawn_worker(key, ctx, Arc::clone(&worker_map));
                 worker_map.insert(key, tx.clone());

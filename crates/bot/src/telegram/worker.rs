@@ -160,8 +160,8 @@ pub fn is_auth_error(stdout: &str) -> bool {
     };
 
     const AUTH_PATTERNS: &[&str] = &[
-        "403",
-        "401",
+        "API Error: 403",
+        "API Error: 401",
         "Failed to authenticate",
         "Not logged in",
         "Please run /login",
@@ -462,13 +462,16 @@ fn spawn_auth_watcher(
         // Phase 1: Start login process
         if let Err(e) = pc.start_process(&login_name).await {
             tracing::error!(agent = %agent_name, "auth watcher: failed to start {login_name}: {e:#}");
-            let _ = send_tg(
+            if let Err(te) = send_tg(
                 &bot,
                 tg_chat_id,
                 eff_thread_id,
                 &format!("Failed to start login process: {e:#}"),
             )
-            .await;
+            .await
+            {
+                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {te:#}");
+            }
             active_flag.store(false, Ordering::SeqCst);
             return;
         }
@@ -483,7 +486,9 @@ fn spawn_auth_watcher(
                 Ok(lines) => {
                     if let Some(url) = extract_auth_url(&lines) {
                         let msg = format!("Open this link to authenticate:\n{url}");
-                        let _ = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await;
+                        if let Err(e) = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await {
+                            tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                        }
                         tracing::info!(agent = %agent_name, "auth watcher: sent OAuth URL to Telegram");
                         url_found = true;
                         break;
@@ -499,7 +504,9 @@ fn spawn_auth_watcher(
                 "Could not extract login URL automatically. \
                  Open the process-compose TUI and find {login_name} to authenticate."
             );
-            let _ = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await;
+            if let Err(e) = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await {
+                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+            }
         }
 
         // Phase 3: Probe auth status (every 10s, up to 5 min)
@@ -539,13 +546,16 @@ fn spawn_auth_watcher(
                     if let Err(e) = pc.stop_process(&login_name).await {
                         tracing::warn!(agent = %agent_name, "auth watcher: failed to stop {login_name}: {e:#}");
                     }
-                    let _ = send_tg(
+                    if let Err(e) = send_tg(
                         &bot,
                         tg_chat_id,
                         eff_thread_id,
                         "Logged in successfully. You can continue chatting.",
                     )
-                    .await;
+                    .await
+                    {
+                        tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                    }
                     active_flag.store(false, Ordering::SeqCst);
                     return;
                 }
@@ -560,13 +570,16 @@ fn spawn_auth_watcher(
         if let Err(e) = pc.stop_process(&login_name).await {
             tracing::warn!(agent = %agent_name, "auth watcher: failed to stop {login_name} on timeout: {e:#}");
         }
-        let _ = send_tg(
+        if let Err(e) = send_tg(
             &bot,
             tg_chat_id,
             eff_thread_id,
             "Login timed out after 5 minutes. Send another message to retry.",
         )
-        .await;
+        .await
+        {
+            tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+        }
         active_flag.store(false, Ordering::SeqCst);
     });
 }
@@ -721,13 +734,16 @@ async fn invoke_cc(
                 // Sandbox mode: spawn auth watcher if not already active.
                 if !ctx.auth_watcher_active.swap(true, Ordering::SeqCst) {
                     let tg_chat_id = ctx.chat_id;
-                    let _ = send_tg(
+                    if let Err(e) = send_tg(
                         &ctx.bot,
                         tg_chat_id,
                         ctx.effective_thread_id,
                         "Claude needs to log in. Starting login session...",
                     )
-                    .await;
+                    .await
+                    {
+                        tracing::warn!(?chat_id, "failed to send auth error notification: {e:#}");
+                    }
                     spawn_auth_watcher(ctx, tg_chat_id, ctx.effective_thread_id);
                 }
                 return Err(
