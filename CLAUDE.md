@@ -116,5 +116,7 @@ RightClaw is a multi-agent runtime for Claude Code built on NVIDIA OpenShell. Ea
 - **Domain research before implementation**: Always verify external tool APIs by reading source code or running `--help` before writing integration code. Never rely solely on web documentation — it may be outdated or wrong.
 ## Architecture
 
-Architecture not yet mapped. Follow existing patterns found in the codebase.
+@ARCHITECTURE.md
+
+Always update ARCHITECTURE.md when significant parts of the architecture change (new crates, module reorganization, new integrations, changed data flows).
 
