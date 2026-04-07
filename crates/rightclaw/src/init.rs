@@ -80,6 +80,7 @@ pub fn init_rightclaw_home(
             telegram_token: Some(tok.to_string()),
             allowed_chat_ids: vec![],
             env: std::collections::HashMap::new(),
+            secret: None,
         });
         let agent_def = crate::agent::AgentDef {
             name: "right".to_string(),

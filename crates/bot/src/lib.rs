@@ -73,6 +73,7 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
             model: None,
             sandbox: None,
             env: Default::default(),
+            secret: None,
         }
     });
 

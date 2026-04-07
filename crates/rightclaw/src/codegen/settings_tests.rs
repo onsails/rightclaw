@@ -52,6 +52,7 @@ fn never_enables_telegram_plugin() {
         telegram_token: Some("tok".to_string()),
         allowed_chat_ids: vec![],
         env: std::collections::HashMap::new(),
+            secret: None,
     };
     let agent = make_test_agent("test-agent", Some(config));
     let settings = generate_settings(&agent, None).unwrap();
