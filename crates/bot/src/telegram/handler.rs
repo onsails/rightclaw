@@ -60,6 +60,7 @@ fn to_request_err(e: impl std::fmt::Display) -> RequestError {
 ///
 /// Serialisation guarantee (SES-05): all messages to the same (chat_id, thread_id)
 /// go through the same mpsc channel -> worker processes them serially.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_message(
     bot: BotType,
     msg: Message,

@@ -957,7 +957,7 @@ async fn cmd_up(
         debug,
         no_sandbox,
         &run_dir,
-        &home,
+        home,
         cloudflared_script_path.as_deref(),
     )?;
     let config_path = run_dir.join("process-compose.yaml");
