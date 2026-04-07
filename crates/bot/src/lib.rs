@@ -287,11 +287,6 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
         tokio::spawn(sync::run_sync_task(sync_agent_dir, sync_sandbox_bg));
     }
 
-    let pc_port: u16 = std::env::var("RC_PC_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(rightclaw::runtime::pc_client::PC_PORT);
-
     let result = tokio::select! {
         result = telegram::run_telegram(
             token,
@@ -301,7 +296,6 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
             Arc::clone(&pending_auth),
             home.clone(),
             ssh_config_path,
-            pc_port,
         ) => result,
         result = axum_handle => result
             .map_err(|e| miette::miette!("axum task panicked: {e:#}"))?,
@@ -391,8 +385,8 @@ fn copy_dir_resolve_symlinks(src: &std::path::Path, dst: &std::path::Path) -> st
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
-        // Resolve symlinks by reading metadata (follows symlinks).
-        let meta = match std::fs::metadata(&src_path) {
+        // Resolve symlinks via entry.metadata() (follows symlinks, avoids extra syscall).
+        let meta = match entry.metadata() {
             Ok(m) => m,
             Err(e) => {
                 tracing::warn!(path = %src_path.display(), "skipping unresolvable entry: {e}");

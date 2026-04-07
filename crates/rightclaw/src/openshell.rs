@@ -14,6 +14,9 @@ use crate::openshell_proto::openshell::v1::GetSandboxRequest;
 /// SANDBOX_PHASE_READY value from openshell.datamodel.v1.SandboxPhase.
 const SANDBOX_PHASE_READY: i32 = 2;
 
+/// Path to `mcp.json` inside an OpenShell sandbox.
+pub const SANDBOX_MCP_JSON_PATH: &str = "/sandbox/mcp.json";
+
 /// Generate deterministic sandbox name from agent name.
 pub fn sandbox_name(agent_name: &str) -> String {
     format!("rightclaw-{agent_name}")

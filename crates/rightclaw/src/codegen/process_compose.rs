@@ -61,6 +61,16 @@ fn restart_policy_str(policy: &RestartPolicy) -> &'static str {
     }
 }
 
+/// Configuration for process-compose.yaml generation.
+pub struct ProcessComposeConfig<'a> {
+    pub debug: bool,
+    pub no_sandbox: bool,
+    pub run_dir: &'a Path,
+    pub home: &'a Path,
+    pub cloudflared_script: Option<&'a Path>,
+    pub token_map_path: Option<&'a Path>,
+}
+
 /// Generate a `process-compose.yaml` configuration for Telegram-enabled agents.
 ///
 /// Only agents with `telegram_token` configured produce a process entry.
@@ -71,13 +81,9 @@ fn restart_policy_str(policy: &RestartPolicy) -> &'static str {
 pub fn generate_process_compose(
     agents: &[AgentDef],
     exe_path: &Path,
-    debug: bool,
-    no_sandbox: bool,
-    run_dir: &Path,
-    home: &Path,
-    cloudflared_script: Option<&Path>,
-    token_map_path: Option<&Path>,
+    config: &ProcessComposeConfig<'_>,
 ) -> miette::Result<String> {
+    let &ProcessComposeConfig { debug, no_sandbox, run_dir, home, cloudflared_script, token_map_path } = config;
     // Build cloudflared template context when tunnel script is provided.
     // working_dir = parent of scripts/ dir (i.e., rightclaw home).
     let cf_entry: Option<CloudflaredEntry> = cloudflared_script.map(|script| {
