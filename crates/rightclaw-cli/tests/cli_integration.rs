@@ -249,7 +249,9 @@ fn test_attach_help() {
         .stdout(predicate::str::contains("Attach to running"));
 }
 
+/// Requires no rightclaw instance running (port 18927 must be free).
 #[test]
+#[ignore = "requires no running rightclaw instance on port 18927"]
 fn test_status_no_running_instance() {
     let dir = tempdir().unwrap();
     let home = dir.path().to_str().unwrap();
@@ -264,7 +266,9 @@ fn test_status_no_running_instance() {
         .stderr(predicate::str::contains("No running instance"));
 }
 
+/// Requires no rightclaw instance running (port 18927 must be free).
 #[test]
+#[ignore = "requires no running rightclaw instance on port 18927"]
 fn test_down_no_state_file() {
     let dir = tempdir().unwrap();
     let home = dir.path().to_str().unwrap();
@@ -365,5 +369,36 @@ fn test_up_warns_when_chrome_path_missing() {
     assert!(
         stdout.contains("no longer exists"),
         "expected chrome path warn in stdout, got: {stdout}"
+    );
+}
+
+/// Validate generated OpenShell policy against a live sandbox.
+/// Requires: running OpenShell gateway + existing `rightclaw-right` sandbox.
+#[test]
+#[ignore = "requires live OpenShell sandbox"]
+fn test_policy_validates_against_openshell() {
+    let policy_yaml =
+        rightclaw::codegen::policy::generate_policy(rightclaw::runtime::MCP_HTTP_PORT);
+    let tmpfile = tempdir().unwrap();
+    let policy_path = tmpfile.path().join("test-policy.yaml");
+    fs::write(&policy_path, &policy_yaml).unwrap();
+
+    let output = std::process::Command::new("openshell")
+        .args([
+            "policy",
+            "set",
+            "--policy",
+            policy_path.to_str().unwrap(),
+            "--wait",
+            "rightclaw-right",
+        ])
+        .output()
+        .expect("openshell binary must be in PATH");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "openshell policy set failed:\nstdout: {stdout}\nstderr: {stderr}"
     );
 }

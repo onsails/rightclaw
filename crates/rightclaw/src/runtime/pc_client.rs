@@ -3,6 +3,9 @@ use serde::Deserialize;
 /// Default TCP port for the process-compose API.
 pub const PC_PORT: u16 = 18927;
 
+/// Default TCP port for the right-mcp-server HTTP transport.
+pub const MCP_HTTP_PORT: u16 = 8100;
+
 /// Status information for a single process managed by process-compose.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ProcessInfo {
