@@ -14,8 +14,14 @@ const SYNC_INTERVAL: Duration = Duration::from_secs(300);
 /// - rightclaw builtin skills
 /// - .claude.json -- verified and fixed if CC overwrote rightclaw keys
 pub async fn run_sync_task(agent_dir: PathBuf, sandbox_name: String) {
+    // Run first sync immediately on startup (fixes stale config in reused sandboxes).
+    tracing::info!(sandbox = %sandbox_name, "sync: initial cycle");
+    if let Err(e) = sync_cycle(&agent_dir, &sandbox_name).await {
+        tracing::error!(sandbox = %sandbox_name, "sync: initial cycle failed: {e:#}");
+    }
+
     let mut tick = interval(SYNC_INTERVAL);
-    tick.tick().await; // first tick is immediate -- skip it
+    tick.tick().await; // consume immediate tick
 
     loop {
         tick.tick().await;
