@@ -4,6 +4,7 @@ use minijinja::{Environment, context};
 use serde::Serialize;
 
 use crate::agent::{AgentDef, RestartPolicy};
+use crate::runtime::MCP_HTTP_PORT;
 
 const PC_TEMPLATE: &str = include_str!("../../../../templates/process-compose.yaml.j2");
 
@@ -94,7 +95,7 @@ pub fn generate_process_compose(
 
     let right_mcp_server: Option<RightMcpServer> = token_map_path.map(|p| RightMcpServer {
         exe_path: exe_path.display().to_string(),
-        port: 8100,
+        port: MCP_HTTP_PORT,
         token_map_path: p.display().to_string(),
         home_dir: home.display().to_string(),
     });

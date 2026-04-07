@@ -226,6 +226,18 @@ async fn complete_oauth_flow(
         "Bearer token written to mcp.json"
     );
 
+    // Upload updated mcp.json to sandbox so CC picks it up immediately
+    let sandbox = rightclaw::openshell::sandbox_name(agent_name);
+    if cb_state.mcp_json_path.exists() {
+        if let Err(e) =
+            rightclaw::openshell::upload_file(&sandbox, &cb_state.mcp_json_path, "/sandbox/").await
+        {
+            tracing::warn!(agent = %agent_name, "failed to upload mcp.json to sandbox after OAuth: {e:#}");
+        } else {
+            tracing::info!(agent = %agent_name, "uploaded mcp.json to sandbox after OAuth");
+        }
+    }
+
     // Notify refresh scheduler about new token
     if let Some(expires_in) = token_resp.expires_in {
         let oauth_entry = rightclaw::mcp::refresh::OAuthServerState {

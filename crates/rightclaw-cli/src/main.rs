@@ -787,7 +787,7 @@ async fn cmd_up(
 
     let socket_path = run_dir.join("pc.sock");
 
-    // Check for already-running instance via TCP health check.
+    // Pre-flight: check for stale processes holding required ports.
     {
         let client = rightclaw::runtime::PcClient::new(rightclaw::runtime::PC_PORT)?;
         if client.health_check().await.is_ok() {
@@ -796,6 +796,7 @@ async fn cmd_up(
             ));
         }
     }
+    check_port_available(rightclaw::runtime::MCP_HTTP_PORT).await?;
 
     // Discover agents.
     let agents_dir = home.join("agents");
@@ -944,10 +945,11 @@ async fn cmd_up(
 
         // 12. Generate mcp.json with right HTTP MCP server entry.
         let bearer_token = rightclaw::mcp::derive_token(&agent_secret, "right-mcp")?;
+        let mcp_port = rightclaw::runtime::MCP_HTTP_PORT;
         let right_mcp_url = if no_sandbox {
-            "http://127.0.0.1:8100/mcp".to_string()
+            format!("http://127.0.0.1:{mcp_port}/mcp")
         } else {
-            "http://host.docker.internal:8100/mcp".to_string()
+            format!("http://host.docker.internal:{mcp_port}/mcp")
         };
         rightclaw::codegen::generate_mcp_config_http(
             &agent.path,
@@ -991,8 +993,7 @@ async fn cmd_up(
             .map_err(|e| miette::miette!("failed to create policy dir: {e:#}"))?;
 
         for agent in &agents {
-            // TODO: extract external MCP server domains from mcp.json for policy network rules.
-            let policy_yaml = rightclaw::codegen::policy::generate_policy(8100, &[]);
+            let policy_yaml = rightclaw::codegen::policy::generate_policy(rightclaw::runtime::MCP_HTTP_PORT);
             let policy_path = policy_dir.join(format!("{}.yaml", agent.name));
             std::fs::write(&policy_path, &policy_yaml)
                 .map_err(|e| miette::miette!("failed to write policy for '{}': {e:#}", agent.name))?;
@@ -1152,8 +1153,25 @@ async fn cmd_up(
     Ok(())
 }
 
+/// Fail fast if a required port is already occupied by a stale process.
+async fn check_port_available(port: u16) -> miette::Result<()> {
+    match tokio::net::TcpListener::bind(("127.0.0.1", port)).await {
+        Ok(_listener) => Ok(()), // bound successfully → port is free
+        Err(_) => Err(miette::miette!(
+            help = "A previous rightclaw session may still be running. Kill it first:\n  \
+                    killall rightclaw  # or: rightclaw down",
+            "port {port} is already in use"
+        )),
+    }
+}
+
 async fn cmd_down(_home: &Path) -> miette::Result<()> {
     let client = rightclaw::runtime::PcClient::new(rightclaw::runtime::PC_PORT)
+        .map_err(|_| miette::miette!("No running instance found. Is rightclaw running?"))?;
+
+    client
+        .health_check()
+        .await
         .map_err(|_| miette::miette!("No running instance found. Is rightclaw running?"))?;
 
     client.shutdown().await.map_err(|e| {
@@ -1166,6 +1184,12 @@ async fn cmd_down(_home: &Path) -> miette::Result<()> {
 
 async fn cmd_status(_home: &Path) -> miette::Result<()> {
     let client = rightclaw::runtime::PcClient::new(rightclaw::runtime::PC_PORT)?;
+
+    client
+        .health_check()
+        .await
+        .map_err(|_| miette::miette!("No running instance found. Is rightclaw running?"))?;
+
     let processes = client.list_processes().await?;
 
     if processes.is_empty() {
