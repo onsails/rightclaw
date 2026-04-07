@@ -23,7 +23,7 @@ filesystem_policy:
     - /sandbox
 
 landlock:
-  compatibility: hard_requirement
+  compatibility: best_effort
 
 process:
   run_as_user: sandbox
@@ -82,7 +82,7 @@ mod tests {
         assert!(policy.contains("host.docker.internal"));
         assert!(policy.contains("8100"));
         assert!(policy.contains("api.anthropic.com"));
-        assert!(policy.contains("hard_requirement"));
+        assert!(policy.contains("best_effort"));
         assert!(policy.contains("version: 1"));
     }
 
