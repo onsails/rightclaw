@@ -113,17 +113,21 @@ pub fn run_login_pty(
         }
     }
 
-    // Wait for "code" or "paste" prompt (CC asks user to enter the auth code)
-    session.set_expect_timeout(Some(Duration::from_secs(10)));
-    match session.expect(expectrl::Regex("(?i)(code|paste|enter)")) {
-        Ok(_) => {
-            tracing::info!(agent = agent_name, "login: CC is asking for auth code");
+    // CC shows a prompt asking user to paste the code from browser.
+    // Wait for it — look for "Paste" or "paste" specifically (not "code" which
+    // appears in the URL we just captured).
+    session.set_expect_timeout(Some(Duration::from_secs(15)));
+    match session.expect(expectrl::Regex("(?i)(paste|enter the code|enter code|authorization code)")) {
+        Ok(found) => {
+            let text = strip_ansi(&String::from_utf8_lossy(found.as_bytes()));
+            tracing::info!(agent = agent_name, prompt = %text.trim(), "login: CC is asking for auth code");
             let _ = event_tx.blocking_send(LoginEvent::WaitingForCode);
         }
         Err(_) => {
-            // CC might complete auth via browser callback without needing a code.
-            // Check if we're already logged in.
-            tracing::info!(agent = agent_name, "login: no code prompt — checking if auth completed via callback");
+            // No explicit paste prompt — CC might just show a text input.
+            // Still ask user for code, but log the situation.
+            tracing::info!(agent = agent_name, "login: no explicit paste prompt — asking for code anyway");
+            let _ = event_tx.blocking_send(LoginEvent::WaitingForCode);
         }
     }
 
@@ -136,6 +140,9 @@ pub fn run_login_pty(
         }
     };
 
+    // Small delay to ensure CC's input field is ready
+    std::thread::sleep(Duration::from_millis(500));
+
     // Send auth code to CC (use \r — CC TUI needs carriage return, not newline)
     let code_with_cr = format!("{code}\r");
     tracing::info!(agent = agent_name, code_len = code.len(), "login: sending auth code");
@@ -144,18 +151,21 @@ pub fn run_login_pty(
         return;
     }
 
-    // Wait for success indication — CC may show various messages
-    session.set_expect_timeout(Some(Duration::from_secs(30)));
-    match session.expect(expectrl::Regex("(?i)(logged in|success|authenticated|welcome|API key)")) {
+    // Wait for success indication — CC may show various messages after processing the code.
+    // Also match "API key" which CC shows when creating the key from the OAuth token.
+    session.set_expect_timeout(Some(Duration::from_secs(60)));
+    match session.expect(expectrl::Regex("(?i)(logged in|success|authenticated|welcome|API key|signed in)")) {
         Ok(found) => {
             let text = String::from_utf8_lossy(found.as_bytes());
-            tracing::info!(agent = agent_name, response = %strip_ansi(&text), "login: authentication successful");
+            tracing::info!(agent = agent_name, response = %strip_ansi(&text).chars().take(200).collect::<String>(), "login: authentication successful");
             let _ = event_tx.blocking_send(LoginEvent::Done);
         }
         Err(e) => {
-            // Read whatever is in the buffer for debugging
-            tracing::warn!(agent = agent_name, "login: no success confirmation within 30s: {e:#}");
-            let _ = event_tx.blocking_send(LoginEvent::Done);
+            tracing::warn!(agent = agent_name, "login: no success confirmation within 60s: {e:#}");
+            // Check if credentials were saved despite no confirmation
+            let _ = event_tx.blocking_send(LoginEvent::Error(
+                "Login may have failed — no confirmation from Claude. Try sending a message to check.".into()
+            ));
         }
     }
 
