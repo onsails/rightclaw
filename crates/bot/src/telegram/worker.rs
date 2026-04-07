@@ -48,8 +48,8 @@ pub struct WorkerContext {
     pub db_path: PathBuf,
     /// When true, pass --verbose to CC subprocess and log CC stderr at debug level.
     pub debug: bool,
-    /// Path to the SSH config file for this agent's OpenShell sandbox.
-    pub ssh_config_path: PathBuf,
+    /// Path to the SSH config file for this agent's OpenShell sandbox (None when --no-sandbox).
+    pub ssh_config_path: Option<PathBuf>,
 }
 
 /// Parsed output from CC structured JSON response (`result` field per D-03).
@@ -399,16 +399,33 @@ async fn invoke_cc(
     claude_args.push("--".into());
     claude_args.push(xml.to_string());
 
-    // Execute inside OpenShell sandbox via SSH — CC binary is resolved inside the container,
-    // env vars (HOME, USE_BUILTIN_RIPGREP) and cwd are managed by the sandbox.
-    let ssh_host = rightclaw::openshell::ssh_host(&ctx.agent_name);
-    let mut cmd = tokio::process::Command::new("ssh");
-    cmd.arg("-F").arg(&ctx.ssh_config_path);
-    cmd.arg(&ssh_host);
-    cmd.arg("--");
-    for arg in &claude_args {
-        cmd.arg(arg);
-    }
+    let mut cmd = if let Some(ref ssh_config) = ctx.ssh_config_path {
+        // OpenShell sandbox: exec via SSH into the container.
+        // CC binary is resolved inside the container; env/cwd managed by sandbox.
+        let ssh_host = rightclaw::openshell::ssh_host(&ctx.agent_name);
+        let mut c = tokio::process::Command::new("ssh");
+        c.arg("-F").arg(ssh_config);
+        c.arg(&ssh_host);
+        c.arg("--");
+        for arg in &claude_args {
+            c.arg(arg);
+        }
+        c
+    } else {
+        // Direct exec (no sandbox).
+        let cc_bin = which::which("claude")
+            .or_else(|_| which::which("claude-bun"))
+            .map_err(|_| "⚠️ Agent error: claude binary not found in PATH".to_string())?;
+        let mut c = tokio::process::Command::new(&cc_bin);
+        // Skip "claude" (first element in claude_args) — it's the binary name for SSH mode.
+        for arg in &claude_args[1..] {
+            c.arg(arg);
+        }
+        c.env("HOME", &ctx.agent_dir);
+        c.env("USE_BUILTIN_RIPGREP", "0");
+        c.current_dir(&ctx.agent_dir);
+        c
+    };
     cmd.stdin(Stdio::null()); // DIS-02: prevent pipe deadlock
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
