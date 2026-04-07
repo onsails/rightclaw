@@ -283,6 +283,11 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
         None
     };
 
+    let pc_port: u16 = std::env::var("RC_PC_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(rightclaw::runtime::pc_client::PC_PORT);
+
     let result = tokio::select! {
         result = telegram::run_telegram(
             token,
@@ -292,6 +297,7 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
             Arc::clone(&pending_auth),
             home.clone(),
             ssh_config_path,
+            pc_port,
         ) => result,
         result = axum_handle => result
             .map_err(|e| miette::miette!("axum task panicked: {e:#}"))?,

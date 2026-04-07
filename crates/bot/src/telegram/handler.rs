@@ -7,6 +7,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use dashmap::DashMap;
 use tokio::sync::mpsc;
@@ -37,6 +38,10 @@ pub struct RightclawHome(pub PathBuf);
 #[derive(Clone)]
 pub struct DebugFlag(pub bool);
 
+/// Process-compose API port for PC REST calls from the bot process.
+#[derive(Clone)]
+pub struct PcPort(pub u16);
+
 /// Convert an arbitrary error into `RequestError::Io` so it propagates through `ResponseResult`.
 fn to_request_err(e: impl std::fmt::Display) -> RequestError {
     RequestError::Io(std::io::Error::other(e.to_string()).into())
@@ -57,6 +62,7 @@ pub async fn handle_message(
     agent_dir: Arc<AgentDir>,
     debug_flag: Arc<DebugFlag>,
     ssh_config: Arc<SshConfigPath>,
+    pc_port: Arc<PcPort>,
 ) -> ResponseResult<()> {
     // Only process messages with text (ignore stickers, photos, etc. in Phase 25)
     let text = match msg.text() {
@@ -108,6 +114,8 @@ pub async fn handle_message(
                     db_path: agent_dir.0.clone(),
                     debug: debug_flag.0,
                     ssh_config_path: ssh_config.0.clone(),
+                    pc_port: pc_port.0,
+                    auth_watcher_active: Arc::new(AtomicBool::new(false)),
                 };
                 let tx = spawn_worker(key, ctx, Arc::clone(&worker_map));
                 worker_map.insert(key, tx.clone());
