@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 
 use super::bot::build_bot;
 use super::filter::make_chat_id_filter;
-use super::handler::{handle_doctor, handle_mcp, handle_message, handle_reset, handle_start, AgentDir, DebugFlag, RightclawHome, SshConfigPath};
+use super::handler::{handle_doctor, handle_mcp, handle_message, handle_reset, handle_start, AgentDir, DebugFlag, PcPort, RightclawHome, SshConfigPath};
 use super::oauth_callback::PendingAuthMap;
 use super::worker::{DebounceMsg, SessionKey};
 
@@ -58,6 +58,7 @@ pub async fn run_telegram(
     pending_auth: PendingAuthMap,
     home: PathBuf,
     ssh_config_path: Option<PathBuf>,
+    pc_port: u16,
 ) -> miette::Result<()> {
     let bot = build_bot(token);
 
@@ -73,6 +74,7 @@ pub async fn run_telegram(
     let ssh_config_arc: Arc<SshConfigPath> = Arc::new(SshConfigPath(ssh_config_path));
     let pending_auth_arc: PendingAuthMap = pending_auth;
     let home_arc: Arc<RightclawHome> = Arc::new(RightclawHome(home));
+    let pc_port_arc: Arc<PcPort> = Arc::new(PcPort(pc_port));
 
     // Dispatch schema (RESEARCH.md Pattern 1)
     let command_handler = dptree::entry()
@@ -107,7 +109,8 @@ pub async fn run_telegram(
             Arc::clone(&debug_arc),
             pending_auth_arc,
             Arc::clone(&home_arc),
-            Arc::clone(&ssh_config_arc)
+            Arc::clone(&ssh_config_arc),
+            Arc::clone(&pc_port_arc)
         ])
         .build();
 

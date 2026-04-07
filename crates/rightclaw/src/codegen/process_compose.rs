@@ -29,6 +29,8 @@ struct BotProcessAgent {
     no_sandbox: bool,
     /// Absolute path to the generated OpenShell policy.yaml for this agent. None when no_sandbox.
     sandbox_policy_path: Option<String>,
+    /// Rightclaw home directory (for deterministic SSH config path in login process).
+    home_dir: String,
 }
 
 /// Template context for the cloudflared tunnel process entry.
@@ -62,6 +64,7 @@ pub fn generate_process_compose(
     debug: bool,
     no_sandbox: bool,
     run_dir: &Path,
+    home: &Path,
     cloudflared_script: Option<&Path>,
 ) -> miette::Result<String> {
     // Build cloudflared template context when tunnel script is provided.
@@ -116,6 +119,7 @@ pub fn generate_process_compose(
                             .to_string(),
                     )
                 },
+                home_dir: home.display().to_string(),
             })
         })
         .collect();
@@ -125,8 +129,12 @@ pub fn generate_process_compose(
         .map_err(|e| miette::miette!("template parse error: {e:#}"))?;
     let tmpl = env.get_template("pc").expect("template just added");
 
-    tmpl.render(context! { agents => bot_agents, cloudflared => cf_entry })
-        .map_err(|e| miette::miette!("template render error: {e:#}"))
+    tmpl.render(context! {
+        agents => bot_agents,
+        cloudflared => cf_entry,
+        pc_port => crate::runtime::pc_client::PC_PORT,
+    })
+    .map_err(|e| miette::miette!("template render error: {e:#}"))
 }
 
 #[cfg(test)]

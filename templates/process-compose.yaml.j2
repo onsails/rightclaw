@@ -24,6 +24,7 @@ processes:
       - ENABLE_CLAUDEAI_MCP_SERVERS=false
       - ENABLE_TOOL_SEARCH=false
       - MCP_CONNECTION_NONBLOCKING=1
+      - RC_PC_PORT={{ pc_port }}
     availability:
       restart: "{{ agent.restart_policy }}"
       backoff_seconds: {{ agent.backoff_seconds }}
@@ -31,6 +32,19 @@ processes:
     shutdown:
       signal: 15
       timeout_seconds: 30
+{% endfor %}
+{% for agent in agents %}
+{% if not agent.no_sandbox %}
+  login-{{ agent.name }}:
+    command: "ssh -t -F {{ agent.home_dir }}/run/ssh/rightclaw-{{ agent.agent_name }}.ssh-config openshell-rightclaw-{{ agent.agent_name }} -- claude"
+    is_tty: true
+    disabled: true
+    availability:
+      restart: "no"
+    shutdown:
+      signal: 15
+      timeout_seconds: 10
+{% endif %}
 {% endfor %}
 {% if cloudflared %}
   cloudflared:

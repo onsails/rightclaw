@@ -6,6 +6,7 @@
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -50,6 +51,10 @@ pub struct WorkerContext {
     pub debug: bool,
     /// Path to the SSH config file for this agent's OpenShell sandbox (None when --no-sandbox).
     pub ssh_config_path: Option<PathBuf>,
+    /// Process-compose API port (for auth watcher to start/stop login process).
+    pub pc_port: u16,
+    /// Guard: true when an auth watcher task is active for this agent. Prevents duplicates.
+    pub auth_watcher_active: Arc<AtomicBool>,
 }
 
 /// Parsed output from CC structured JSON response (`result` field per D-03).
@@ -128,6 +133,64 @@ pub fn format_error_reply(exit_code: i32, stderr: &str) -> String {
         stderr
     };
     format!("⚠️ Agent error (exit {exit_code}):\n```\n{truncated}\n```")
+}
+
+/// Check whether CC stdout JSON indicates an authentication failure (403/401).
+///
+/// Returns true when the JSON has `is_error: true` and the `result` string
+/// contains known auth-failure patterns. Returns false for non-JSON input,
+/// parse errors, or non-auth errors.
+pub fn is_auth_error(stdout: &str) -> bool {
+    let parsed: serde_json::Value = match serde_json::from_str(stdout) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    let is_error = parsed
+        .get("is_error")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !is_error {
+        return false;
+    }
+
+    let result = match parsed.get("result").and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return false,
+    };
+
+    const AUTH_PATTERNS: &[&str] = &[
+        "403",
+        "401",
+        "Failed to authenticate",
+        "Not logged in",
+        "Please run /login",
+    ];
+
+    AUTH_PATTERNS.iter().any(|pattern| result.contains(pattern))
+}
+
+/// Extract an OAuth URL from process log lines.
+///
+/// Scans for `https://` URLs containing `anthropic` or `claude.ai` --
+/// these are the login URLs produced by `claude auth login`.
+/// Returns the first matching URL, trimmed of surrounding text.
+pub fn extract_auth_url(lines: &[String]) -> Option<String> {
+    for line in lines {
+        let Some(start) = line.find("https://") else {
+            continue;
+        };
+        let url_part = &line[start..];
+        let end = url_part
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(url_part.len());
+        let url = &url_part[..end];
+
+        if url.contains("anthropic") || url.contains("claude.ai") {
+            return Some(url.to_string());
+        }
+    }
+    None
 }
 
 /// Parse CC structured JSON output (D-03, D-04).
@@ -348,6 +411,166 @@ fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Process-compose process name for the login session.
+fn login_process_name(agent_name: &str) -> String {
+    format!("login-{agent_name}")
+}
+
+/// Send a Telegram message, optionally in a thread.
+async fn send_tg(
+    bot: &super::BotType,
+    chat_id: teloxide::types::ChatId,
+    eff_thread_id: i64,
+    text: &str,
+) -> Result<(), teloxide::RequestError> {
+    let mut send = bot.send_message(chat_id, text);
+    if eff_thread_id != 0 {
+        send = send.message_thread_id(ThreadId(MessageId(eff_thread_id as i32)));
+    }
+    send.await?;
+    Ok(())
+}
+
+/// Spawn a background task that:
+/// 1. Starts the `login-{agent}` process via PC API.
+/// 2. Scrapes PC logs for the OAuth URL and sends it to Telegram.
+/// 3. Periodically probes `claude -p "say ok"` inside sandbox to check auth.
+/// 4. On success: stops login process, notifies Telegram.
+/// 5. On timeout (5 min): stops login process, notifies Telegram.
+fn spawn_auth_watcher(
+    ctx: &WorkerContext,
+    tg_chat_id: teloxide::types::ChatId,
+    eff_thread_id: i64,
+) {
+    let agent_name = ctx.agent_name.clone();
+    let pc_port = ctx.pc_port;
+    let bot = ctx.bot.clone();
+    let ssh_config_path = ctx.ssh_config_path.clone();
+    let active_flag = Arc::clone(&ctx.auth_watcher_active);
+
+    tokio::spawn(async move {
+        let login_name = login_process_name(&agent_name);
+        let pc = match rightclaw::runtime::pc_client::PcClient::new(pc_port) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!(agent = %agent_name, "auth watcher: failed to create PC client: {e:#}");
+                active_flag.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+
+        // Phase 1: Start login process
+        if let Err(e) = pc.start_process(&login_name).await {
+            tracing::error!(agent = %agent_name, "auth watcher: failed to start {login_name}: {e:#}");
+            let _ = send_tg(
+                &bot,
+                tg_chat_id,
+                eff_thread_id,
+                &format!("Failed to start login process: {e:#}"),
+            )
+            .await;
+            active_flag.store(false, Ordering::SeqCst);
+            return;
+        }
+        tracing::info!(agent = %agent_name, "auth watcher: started {login_name}");
+
+        // Phase 2: Extract OAuth URL from PC logs (poll for up to 30s)
+        let url_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let mut url_found = false;
+        while tokio::time::Instant::now() < url_deadline {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            match pc.get_process_logs(&login_name, 50).await {
+                Ok(lines) => {
+                    if let Some(url) = extract_auth_url(&lines) {
+                        let msg = format!("Open this link to authenticate:\n{url}");
+                        let _ = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await;
+                        tracing::info!(agent = %agent_name, "auth watcher: sent OAuth URL to Telegram");
+                        url_found = true;
+                        break;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(agent = %agent_name, "auth watcher: failed to read logs: {e:#}");
+                }
+            }
+        }
+        if !url_found {
+            let msg = format!(
+                "Could not extract login URL automatically. \
+                 Open the process-compose TUI and find {login_name} to authenticate."
+            );
+            let _ = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await;
+        }
+
+        // Phase 3: Probe auth status (every 10s, up to 5 min)
+        let auth_deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+        let ssh_config = match ssh_config_path {
+            Some(ref p) => p,
+            None => {
+                tracing::error!(agent = %agent_name, "auth watcher: no SSH config — cannot probe");
+                active_flag.store(false, Ordering::SeqCst);
+                return;
+            }
+        };
+        let ssh_host = rightclaw::openshell::ssh_host(&agent_name);
+
+        while tokio::time::Instant::now() < auth_deadline {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+
+            let probe_result = rightclaw::openshell::ssh_exec(
+                ssh_config,
+                &ssh_host,
+                &[
+                    "claude",
+                    "-p",
+                    "--dangerously-skip-permissions",
+                    "--output-format",
+                    "json",
+                    "--",
+                    "say ok",
+                ],
+                30,
+            )
+            .await;
+
+            match probe_result {
+                Ok(_) => {
+                    tracing::info!(agent = %agent_name, "auth watcher: auth probe succeeded");
+                    if let Err(e) = pc.stop_process(&login_name).await {
+                        tracing::warn!(agent = %agent_name, "auth watcher: failed to stop {login_name}: {e:#}");
+                    }
+                    let _ = send_tg(
+                        &bot,
+                        tg_chat_id,
+                        eff_thread_id,
+                        "Logged in successfully. You can continue chatting.",
+                    )
+                    .await;
+                    active_flag.store(false, Ordering::SeqCst);
+                    return;
+                }
+                Err(e) => {
+                    tracing::debug!(agent = %agent_name, "auth watcher: probe still failing (expected during login): {e:#}");
+                }
+            }
+        }
+
+        // Timeout — stop login process and notify
+        tracing::warn!(agent = %agent_name, "auth watcher: login timed out after 5 min");
+        if let Err(e) = pc.stop_process(&login_name).await {
+            tracing::warn!(agent = %agent_name, "auth watcher: failed to stop {login_name} on timeout: {e:#}");
+        }
+        let _ = send_tg(
+            &bot,
+            tg_chat_id,
+            eff_thread_id,
+            "Login timed out after 5 minutes. Send another message to retry.",
+        )
+        .await;
+        active_flag.store(false, Ordering::SeqCst);
+    });
+}
+
 /// Invoke `claude -p` and parse the reply tool call from its JSON output.
 ///
 /// Returns `Ok(Some(ReplyOutput))` on success,
@@ -490,9 +713,41 @@ async fn invoke_cc(
             stderr = %stderr_str,
             "claude -p failed"
         );
-        // If stderr is empty, include stdout (claude sometimes writes errors there).
+
+        // Check for auth error — trigger login flow if sandboxed.
+        if is_auth_error(&stdout_str) {
+            tracing::warn!(?chat_id, "detected auth error from CC");
+            if ctx.ssh_config_path.is_some() {
+                // Sandbox mode: spawn auth watcher if not already active.
+                if !ctx.auth_watcher_active.swap(true, Ordering::SeqCst) {
+                    let tg_chat_id = ctx.chat_id;
+                    let _ = send_tg(
+                        &ctx.bot,
+                        tg_chat_id,
+                        ctx.effective_thread_id,
+                        "Claude needs to log in. Starting login session...",
+                    )
+                    .await;
+                    spawn_auth_watcher(ctx, tg_chat_id, ctx.effective_thread_id);
+                }
+                return Err(
+                    "Login in progress. Please complete authentication using the link sent above."
+                        .to_string(),
+                );
+            } else {
+                return Err(
+                    "Claude needs to log in. Run `claude` in your terminal to authenticate."
+                        .to_string(),
+                );
+            }
+        }
+
+        // Non-auth error: generic error reply.
         let error_detail = if stderr_str.trim().is_empty() && !stdout_str.trim().is_empty() {
-            format!("(stderr empty, stdout): {}", stdout_str.chars().take(500).collect::<String>())
+            format!(
+                "(stderr empty, stdout): {}",
+                stdout_str.chars().take(500).collect::<String>()
+            )
         } else {
             stderr_str.to_string()
         };
@@ -735,6 +990,109 @@ mod tests {
             err.contains("timed out after 1s"),
             "expected timeout message, got: {err}"
         );
+    }
+
+    // is_auth_error tests
+    #[test]
+    fn is_auth_error_detects_403() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":true,"result":"Failed to authenticate. API Error: 403 status code (no body)"}"#;
+        assert!(is_auth_error(stdout));
+    }
+
+    #[test]
+    fn is_auth_error_detects_401() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":true,"result":"Failed to authenticate. API Error: 401 Unauthorized"}"#;
+        assert!(is_auth_error(stdout));
+    }
+
+    #[test]
+    fn is_auth_error_detects_not_logged_in() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}"#;
+        assert!(is_auth_error(stdout));
+    }
+
+    #[test]
+    fn is_auth_error_detects_please_run_login() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":true,"result":"Please run /login · API Error: 403"}"#;
+        assert!(is_auth_error(stdout));
+    }
+
+    #[test]
+    fn is_auth_error_false_for_normal_error() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":true,"result":"Tool execution failed: timeout"}"#;
+        assert!(!is_auth_error(stdout));
+    }
+
+    #[test]
+    fn is_auth_error_false_for_success() {
+        let stdout = r#"{"type":"result","subtype":"success","is_error":false,"result":{"content":"hello"}}"#;
+        assert!(!is_auth_error(stdout));
+    }
+
+    #[test]
+    fn is_auth_error_false_for_non_json() {
+        assert!(!is_auth_error("Not logged in. Run claude auth login."));
+    }
+
+    #[test]
+    fn is_auth_error_false_for_empty() {
+        assert!(!is_auth_error(""));
+    }
+
+    // extract_auth_url tests
+    #[test]
+    fn extract_auth_url_finds_anthropic_url() {
+        let lines = vec![
+            "Initializing...".to_string(),
+            "Open this URL to authenticate: https://console.anthropic.com/oauth/authorize?client_id=abc".to_string(),
+            "Waiting for callback...".to_string(),
+        ];
+        let url = extract_auth_url(&lines);
+        assert!(url.is_some());
+        assert!(url.unwrap().contains("console.anthropic.com"));
+    }
+
+    #[test]
+    fn extract_auth_url_finds_claude_ai_url() {
+        let lines = vec![
+            "Please visit: https://claude.ai/oauth/login?token=xyz".to_string(),
+        ];
+        let url = extract_auth_url(&lines);
+        assert!(url.is_some());
+        assert!(url.unwrap().contains("claude.ai"));
+    }
+
+    #[test]
+    fn extract_auth_url_returns_none_when_no_url() {
+        let lines = vec![
+            "Starting up...".to_string(),
+            "Checking credentials...".to_string(),
+        ];
+        assert!(extract_auth_url(&lines).is_none());
+    }
+
+    #[test]
+    fn extract_auth_url_ignores_non_auth_urls() {
+        let lines = vec![
+            "Connecting to https://api.example.com/v1".to_string(),
+        ];
+        assert!(extract_auth_url(&lines).is_none());
+    }
+
+    #[test]
+    fn extract_auth_url_handles_empty() {
+        let lines: Vec<String> = vec![];
+        assert!(extract_auth_url(&lines).is_none());
+    }
+
+    #[test]
+    fn extract_auth_url_extracts_just_url_from_line() {
+        let lines = vec![
+            "Go to https://console.anthropic.com/oauth/authorize?foo=bar to continue".to_string(),
+        ];
+        let url = extract_auth_url(&lines).unwrap();
+        assert!(url.starts_with("https://"));
+        assert!(!url.contains(" to continue"));
     }
 
     #[tokio::test]
