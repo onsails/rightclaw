@@ -5,6 +5,8 @@ use clap::{Parser, Subcommand};
 mod memory_server;
 
 /// Default port for the rightmemory MCP HTTP server.
+/// Used by policy generation when wiring OpenShell sandbox network rules.
+#[allow(dead_code)]
 const RIGHTMEMORY_PORT: u16 = 8100;
 
 #[derive(Parser)]

@@ -10,6 +10,7 @@ pub mod openshell;
 pub mod runtime;
 
 /// Generated protobuf types for the OpenShell gRPC API.
+#[allow(clippy::large_enum_variant)]
 pub mod openshell_proto {
     pub mod openshell {
         pub mod v1 {
