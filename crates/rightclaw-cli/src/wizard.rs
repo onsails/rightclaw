@@ -384,6 +384,114 @@ pub fn telegram_setup(
 }
 
 // ---------------------------------------------------------------------------
+// Chat ID setup (public)
+// ---------------------------------------------------------------------------
+
+/// Prompt for Telegram chat IDs during init.
+///
+/// Returns parsed IDs, or empty vec if the user skips.
+pub fn chat_ids_setup() -> miette::Result<Vec<i64>> {
+    let input = inquire::Text::new(
+        "Your Telegram user ID (send /start to @userinfobot to find it, empty to skip):",
+    )
+    .prompt()
+    .map_err(|e| miette::miette!("prompt failed: {e:#}"))?;
+
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let ids: Vec<i64> = trimmed
+        .split(',')
+        .map(|s| {
+            s.trim()
+                .parse::<i64>()
+                .map_err(|e| miette::miette!("invalid chat ID '{}': {e}", s.trim()))
+        })
+        .collect::<miette::Result<Vec<_>>>()?;
+
+    Ok(ids)
+}
+
+// ---------------------------------------------------------------------------
+// Combined settings menu (public)
+// ---------------------------------------------------------------------------
+
+/// Menu items for the combined (global + per-agent) settings menu.
+enum CombinedMenuItem {
+    Tunnel(String),
+    Agent(String),
+    Done,
+}
+
+impl fmt::Display for CombinedMenuItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tunnel(display) => write!(f, "{display}"),
+            Self::Agent(name) => write!(f, "Agent: {name}"),
+            Self::Done => write!(f, "Done"),
+        }
+    }
+}
+
+/// Interactive menu showing both global settings and per-agent settings.
+///
+/// Bare `rightclaw config` (no subcommand) launches this.
+pub fn combined_setting_menu(home: &Path) -> miette::Result<()> {
+    loop {
+        let config = read_global_config(home)?;
+
+        let tunnel_label = match &config.tunnel {
+            Some(t) => format!(
+                "Tunnel: {} ({})",
+                t.hostname,
+                &t.tunnel_uuid[..8.min(t.tunnel_uuid.len())]
+            ),
+            None => "Tunnel: (not configured)".to_string(),
+        };
+
+        let agents_dir = home.join("agents");
+        let agents = if agents_dir.exists() {
+            discover_agents(&agents_dir).unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        let mut options: Vec<CombinedMenuItem> = vec![CombinedMenuItem::Tunnel(tunnel_label)];
+        for agent in &agents {
+            options.push(CombinedMenuItem::Agent(agent.name.clone()));
+        }
+        options.push(CombinedMenuItem::Done);
+
+        let selection = inquire::Select::new("Settings:", options)
+            .prompt()
+            .map_err(|e| miette::miette!("prompt failed: {e:#}"))?;
+
+        match selection {
+            CombinedMenuItem::Done => break,
+            CombinedMenuItem::Tunnel(_) => {
+                let tunnel_name = inquire::Text::new("Tunnel name:")
+                    .with_default("rightclaw")
+                    .prompt()
+                    .map_err(|e| miette::miette!("prompt failed: {e:#}"))?;
+
+                let result = tunnel_setup(tunnel_name.trim(), None, true)?;
+
+                let new_config = rightclaw::config::GlobalConfig { tunnel: result };
+                write_global_config(home, &new_config)?;
+                println!("Global config saved.");
+            }
+            CombinedMenuItem::Agent(name) => {
+                agent_setting_menu(home, Some(&name))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Global settings menu (public)
 // ---------------------------------------------------------------------------
 

@@ -26,13 +26,17 @@ pub struct Cli {
 pub enum ConfigCommands {
     /// Enable machine-wide domain blocking via managed settings (requires sudo)
     StrictSandbox,
-    /// View or edit global settings (interactive menu if no key given)
-    #[command(name = "set")]
+    /// Read a config value by key (e.g. tunnel.hostname)
+    Get {
+        /// Config key (e.g. tunnel.hostname, tunnel.uuid, tunnel.credentials-file)
+        key: String,
+    },
+    /// Set a config value by key
     Set {
-        /// Config key (e.g. tunnel.hostname)
-        key: Option<String>,
-        /// New value (omit to print current value)
-        value: Option<String>,
+        /// Config key
+        key: String,
+        /// New value
+        value: String,
     },
 }
 
@@ -167,10 +171,10 @@ pub enum Commands {
         /// Agent name (defaults to "right")
         agent: Option<String>,
     },
-    /// Manage RightClaw configuration
+    /// Manage RightClaw configuration (interactive wizard if no subcommand)
     Config {
         #[command(subcommand)]
-        command: ConfigCommands,
+        command: Option<ConfigCommands>,
     },
     /// Manage agents
     Agent {
@@ -319,38 +323,34 @@ async fn main() -> miette::Result<()> {
         Commands::Attach => cmd_attach(&home),
         Commands::Pair { agent } => cmd_pair(&home, agent.as_deref()),
         Commands::Config { command } => match command {
-            ConfigCommands::StrictSandbox => cmd_config_strict_sandbox(),
-            ConfigCommands::Set { key, value } => {
-                match (key, value) {
-                    (None, None) => crate::wizard::global_setting_menu(&home)?,
-                    (Some(key), None) => {
-                        let config = rightclaw::config::read_global_config(&home)?;
-                        match key.as_str() {
-                            "tunnel.hostname" => println!(
-                                "{}",
-                                config.tunnel.as_ref().map(|t| t.hostname.as_str()).unwrap_or("(not set)")
-                            ),
-                            "tunnel.uuid" => println!(
-                                "{}",
-                                config.tunnel.as_ref().map(|t| t.tunnel_uuid.as_str()).unwrap_or("(not set)")
-                            ),
-                            "tunnel.credentials-file" => println!(
-                                "{}",
-                                config.tunnel.as_ref().map(|t| t.credentials_file.display().to_string()).unwrap_or("(not set)".to_string())
-                            ),
-                            other => return Err(miette::miette!("Unknown config key: {other}")),
-                        }
-                    }
-                    (Some(_key), Some(_value)) => {
-                        return Err(miette::miette!(
-                            "Direct set not yet implemented. Use `rightclaw config set` for interactive mode."
-                        ));
-                    }
-                    (None, Some(_)) => {
-                        return Err(miette::miette!("Cannot set a value without a key"));
-                    }
+            None => {
+                crate::wizard::combined_setting_menu(&home)?;
+                Ok(())
+            }
+            Some(ConfigCommands::StrictSandbox) => cmd_config_strict_sandbox(),
+            Some(ConfigCommands::Get { key }) => {
+                let config = rightclaw::config::read_global_config(&home)?;
+                match key.as_str() {
+                    "tunnel.hostname" => println!(
+                        "{}",
+                        config.tunnel.as_ref().map(|t| t.hostname.as_str()).unwrap_or("(not set)")
+                    ),
+                    "tunnel.uuid" => println!(
+                        "{}",
+                        config.tunnel.as_ref().map(|t| t.tunnel_uuid.as_str()).unwrap_or("(not set)")
+                    ),
+                    "tunnel.credentials-file" => println!(
+                        "{}",
+                        config.tunnel.as_ref().map(|t| t.credentials_file.display().to_string()).unwrap_or("(not set)".to_string())
+                    ),
+                    other => return Err(miette::miette!("Unknown config key: {other}")),
                 }
                 Ok(())
+            }
+            Some(ConfigCommands::Set { key, value }) => {
+                Err(miette::miette!(
+                    "Direct set not yet implemented for key '{key}' with value '{value}'. Use `rightclaw config` for interactive mode."
+                ))
             }
         },
         Commands::Agent {
@@ -417,7 +417,16 @@ fn cmd_init(
         None => crate::wizard::telegram_setup(None, true)?,
     };
 
-    rightclaw::init::init_rightclaw_home(home, token.as_deref(), telegram_allowed_chat_ids)?;
+    // Chat IDs: CLI flag > interactive prompt (only when token is set) > empty.
+    let chat_ids: Vec<i64> = if !telegram_allowed_chat_ids.is_empty() {
+        telegram_allowed_chat_ids.to_vec()
+    } else if interactive && token.is_some() {
+        crate::wizard::chat_ids_setup()?
+    } else {
+        vec![]
+    };
+
+    rightclaw::init::init_rightclaw_home(home, token.as_deref(), &chat_ids)?;
 
     println!("Initialized RightClaw at {}", home.display());
     println!(
@@ -427,7 +436,7 @@ fn cmd_init(
     if token.is_some() {
         println!("Telegram channel configured.");
     }
-    if !telegram_allowed_chat_ids.is_empty() {
+    if !chat_ids.is_empty() {
         println!("Telegram chat ID allowlist configured.");
     }
 
