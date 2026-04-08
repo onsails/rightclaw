@@ -282,6 +282,7 @@ pub fn spawn_worker(
 
             // Download attachments for all messages in batch
             let mut input_messages = Vec::with_capacity(batch.len());
+            let mut skip_batch = false;
             for msg in &batch {
                 let resolved = if msg.attachments.is_empty() {
                     vec![]
@@ -299,8 +300,9 @@ pub fn spawn_worker(
                         Ok(r) => r,
                         Err(e) => {
                             tracing::error!(?key, "attachment download failed: {:#}", e);
-                            let _ = send_tg(&ctx.bot, tg_chat_id, eff_thread_id, &format!("Failed to download attachments: {e}")).await;
-                            vec![]
+                            let _ = send_tg(&ctx.bot, tg_chat_id, eff_thread_id, &format!("⚠️ Failed to download attachments: {e:#}\nYour message was not forwarded.")).await;
+                            skip_batch = true;
+                            break;
                         }
                     }
                 };
@@ -310,6 +312,9 @@ pub fn spawn_worker(
                     timestamp: msg.timestamp,
                     attachments: resolved,
                 });
+            }
+            if skip_batch {
+                continue;
             }
 
             let Some(input) = super::attachments::format_cc_input(&input_messages) else {

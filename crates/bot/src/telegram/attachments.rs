@@ -148,21 +148,26 @@ pub fn format_cc_input(msgs: &[InputMessage]) -> Option<String> {
     let mut out = String::with_capacity(256);
     out.push_str("messages:\n");
     for m in msgs {
-        let _ = writeln!(out, "  - id: {}", m.message_id);
-        let _ = writeln!(out, "    ts: \"{}\"", m.timestamp.format("%Y-%m-%dT%H:%M:%SZ"));
+        writeln!(out, "  - id: {}", m.message_id).expect("write to String is infallible");
+        writeln!(out, "    ts: \"{}\"", m.timestamp.format("%Y-%m-%dT%H:%M:%SZ"))
+            .expect("write to String is infallible");
         if let Some(ref text) = m.text {
             let escaped = yaml_escape_string(text);
-            let _ = writeln!(out, "    text: \"{escaped}\"");
+            writeln!(out, "    text: \"{escaped}\"").expect("write to String is infallible");
         }
         if !m.attachments.is_empty() {
             out.push_str("    attachments:\n");
             for att in &m.attachments {
-                let _ = writeln!(out, "      - type: {}", att.kind.as_str());
-                let _ = writeln!(out, "        path: {}", att.path.display());
-                let _ = writeln!(out, "        mime_type: {}", att.mime_type);
+                writeln!(out, "      - type: {}", att.kind.as_str())
+                    .expect("write to String is infallible");
+                writeln!(out, "        path: {}", att.path.display())
+                    .expect("write to String is infallible");
+                writeln!(out, "        mime_type: {}", att.mime_type)
+                    .expect("write to String is infallible");
                 if let Some(ref fname) = att.filename {
                     let escaped = yaml_escape_string(fname);
-                    let _ = writeln!(out, "        filename: \"{escaped}\"");
+                    writeln!(out, "        filename: \"{escaped}\"")
+                        .expect("write to String is infallible");
                 }
             }
         }
@@ -393,6 +398,7 @@ pub async fn send_attachments(
     } else {
         agent_dir.join("outbox").to_string_lossy().into_owned()
     };
+    let outbox_path = agent_dir.join("outbox");
 
     // Pre-create tmp/outbox for sandboxed downloads (avoids repeated create_dir_all in loop)
     if sandboxed {
@@ -421,7 +427,36 @@ pub async fn send_attachments(
             rightclaw::openshell::download_file(agent_name, &att.path, &dest).await?;
             dest
         } else {
-            PathBuf::from(&att.path)
+            // Canonicalize to resolve any `..` components and verify the path
+            // truly resides under the outbox directory (string prefix check above
+            // is insufficient against paths like `outbox/../../etc/passwd`).
+            let canonical = std::fs::canonicalize(PathBuf::from(&att.path)).map_err(|e| {
+                tracing::warn!(
+                    "Outbound attachment path {} could not be canonicalized: {e} — skipping",
+                    att.path,
+                );
+                e
+            });
+            let canonical = match canonical {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let canonical_outbox = match std::fs::canonicalize(&outbox_path) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!("Failed to canonicalize outbox dir: {e} — skipping attachment");
+                    continue;
+                }
+            };
+            if !canonical.starts_with(&canonical_outbox) {
+                tracing::warn!(
+                    "Outbound attachment path {} resolves to {} which is outside outbox — skipping",
+                    att.path,
+                    canonical.display(),
+                );
+                continue;
+            }
+            canonical
         };
 
         // Check file size against limits
