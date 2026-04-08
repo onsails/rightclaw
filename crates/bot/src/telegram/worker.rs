@@ -32,8 +32,9 @@ const CC_TIMEOUT_SECS: u64 = 120;
 #[derive(Clone)]
 pub struct DebounceMsg {
     pub message_id: i32,
-    pub text: String,
+    pub text: Option<String>,
     pub timestamp: DateTime<Utc>,
+    pub attachments: Vec<super::attachments::InboundAttachment>,
 }
 
 /// Context passed to each worker task when it is spawned.
@@ -82,6 +83,8 @@ pub fn format_batch_xml(msgs: &[DebounceMsg]) -> String {
     for m in msgs {
         let escaped = m
             .text
+            .as_deref()
+            .unwrap_or("")
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;");
@@ -779,8 +782,9 @@ mod tests {
     fn make_msg(id: i32, text: &str) -> DebounceMsg {
         DebounceMsg {
             message_id: id,
-            text: text.to_string(),
+            text: Some(text.to_string()),
             timestamp: Utc.with_ymd_and_hms(2026, 3, 31, 12, 0, 0).unwrap(),
+            attachments: vec![],
         }
     }
 

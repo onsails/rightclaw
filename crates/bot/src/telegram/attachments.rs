@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -116,6 +117,68 @@ pub const CLEANUP_INTERVAL_SECS: u64 = 3600; // 1 hour
 pub const SANDBOX_INBOX: &str = "/sandbox/inbox";
 pub const SANDBOX_OUTBOX: &str = "/sandbox/outbox";
 
+/// Message in a debounce batch -- text and/or attachments.
+#[derive(Debug, Clone)]
+pub struct InputMessage {
+    pub message_id: i32,
+    pub text: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub attachments: Vec<ResolvedAttachment>,
+}
+
+/// Format input for CC stdin.
+///
+/// - Single message with no attachments: raw text string.
+/// - Otherwise: YAML with `messages:` root key.
+///
+/// Returns None if there is nothing to send.
+pub fn format_cc_input(msgs: &[InputMessage]) -> Option<String> {
+    if msgs.is_empty() {
+        return None;
+    }
+
+    // Single message, no attachments, has text: plain text
+    if msgs.len() == 1 && msgs[0].attachments.is_empty() {
+        return msgs[0].text.clone();
+    }
+
+    // YAML format
+    let mut out = String::from("messages:\n");
+    for m in msgs {
+        out.push_str(&format!("  - id: {}\n", m.message_id));
+        out.push_str(&format!(
+            "    ts: \"{}\"\n",
+            m.timestamp.format("%Y-%m-%dT%H:%M:%SZ")
+        ));
+        if let Some(ref text) = m.text {
+            let escaped = yaml_escape_string(text);
+            out.push_str(&format!("    text: \"{escaped}\"\n"));
+        }
+        if !m.attachments.is_empty() {
+            out.push_str("    attachments:\n");
+            for att in &m.attachments {
+                out.push_str(&format!("      - type: {}\n", att.kind.as_str()));
+                out.push_str(&format!("        path: {}\n", att.path.display()));
+                out.push_str(&format!("        mime_type: {}\n", att.mime_type));
+                if let Some(ref fname) = att.filename {
+                    let escaped = yaml_escape_string(fname);
+                    out.push_str(&format!("        filename: \"{escaped}\"\n"));
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Escape a string for inclusion in YAML double-quoted scalar.
+fn yaml_escape_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +234,135 @@ mod tests {
         let json = r#"{"type":"video_note","path":"/sandbox/outbox/note.mp4"}"#;
         let att: OutboundAttachment = serde_json::from_str(json).unwrap();
         assert_eq!(att.kind, OutboundKind::VideoNote);
+    }
+
+    #[test]
+    fn format_cc_input_single_text_returns_plain_string() {
+        let msgs = vec![InputMessage {
+            message_id: 1,
+            text: Some("hello world".into()),
+            timestamp: DateTime::parse_from_rfc3339("2026-04-08T12:00:00Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            attachments: vec![],
+        }];
+        let result = format_cc_input(&msgs).unwrap();
+        assert_eq!(result, "hello world");
+    }
+
+    #[test]
+    fn format_cc_input_empty_returns_none() {
+        assert!(format_cc_input(&[]).is_none());
+    }
+
+    #[test]
+    fn format_cc_input_single_no_text_no_attachments_returns_none() {
+        let msgs = vec![InputMessage {
+            message_id: 1,
+            text: None,
+            timestamp: Utc::now(),
+            attachments: vec![],
+        }];
+        assert!(format_cc_input(&msgs).is_none());
+    }
+
+    #[test]
+    fn format_cc_input_multiple_messages_returns_yaml() {
+        let ts = DateTime::parse_from_rfc3339("2026-04-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let msgs = vec![
+            InputMessage {
+                message_id: 1,
+                text: Some("first".into()),
+                timestamp: ts,
+                attachments: vec![],
+            },
+            InputMessage {
+                message_id: 2,
+                text: Some("second".into()),
+                timestamp: ts,
+                attachments: vec![],
+            },
+        ];
+        let result = format_cc_input(&msgs).unwrap();
+        assert!(result.starts_with("messages:\n"));
+        assert!(result.contains("  - id: 1\n"));
+        assert!(result.contains("    text: \"first\"\n"));
+        assert!(result.contains("  - id: 2\n"));
+        assert!(result.contains("    text: \"second\"\n"));
+    }
+
+    #[test]
+    fn format_cc_input_with_attachments_returns_yaml() {
+        let ts = DateTime::parse_from_rfc3339("2026-04-08T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let msgs = vec![InputMessage {
+            message_id: 42,
+            text: Some("check this".into()),
+            timestamp: ts,
+            attachments: vec![ResolvedAttachment {
+                kind: AttachmentKind::Photo,
+                path: PathBuf::from("/sandbox/inbox/photo_42_0.jpg"),
+                mime_type: "image/jpeg".into(),
+                filename: None,
+            }],
+        }];
+        let result = format_cc_input(&msgs).unwrap();
+        assert!(result.starts_with("messages:\n"));
+        assert!(result.contains("    attachments:\n"));
+        assert!(result.contains("      - type: photo\n"));
+        assert!(result.contains("        path: /sandbox/inbox/photo_42_0.jpg\n"));
+        assert!(result.contains("        mime_type: image/jpeg\n"));
+        assert!(!result.contains("filename:"));
+    }
+
+    #[test]
+    fn format_cc_input_document_with_filename() {
+        let ts = Utc::now();
+        let msgs = vec![InputMessage {
+            message_id: 10,
+            text: None,
+            timestamp: ts,
+            attachments: vec![ResolvedAttachment {
+                kind: AttachmentKind::Document,
+                path: PathBuf::from("/sandbox/inbox/doc_10_0.pdf"),
+                mime_type: "application/pdf".into(),
+                filename: Some("report.pdf".into()),
+            }],
+        }];
+        let result = format_cc_input(&msgs).unwrap();
+        assert!(result.contains("      - type: document\n"));
+        assert!(result.contains("        filename: \"report.pdf\"\n"));
+    }
+
+    #[test]
+    fn format_cc_input_text_with_special_chars_escaped() {
+        let msgs = vec![
+            InputMessage {
+                message_id: 1,
+                text: Some("hello".into()),
+                timestamp: Utc::now(),
+                attachments: vec![],
+            },
+            InputMessage {
+                message_id: 2,
+                text: Some("line1\nline2\ttab \"quoted\"".into()),
+                timestamp: Utc::now(),
+                attachments: vec![],
+            },
+        ];
+        let result = format_cc_input(&msgs).unwrap();
+        assert!(result.contains(r#"    text: "line1\nline2\ttab \"quoted\""#));
+    }
+
+    #[test]
+    fn yaml_escape_handles_all_special_chars() {
+        assert_eq!(yaml_escape_string(r#"a"b"#), r#"a\"b"#);
+        assert_eq!(yaml_escape_string("a\nb"), r"a\nb");
+        assert_eq!(yaml_escape_string("a\\b"), r"a\\b");
+        assert_eq!(yaml_escape_string("a\rb"), r"a\rb");
+        assert_eq!(yaml_escape_string("a\tb"), r"a\tb");
     }
 }
