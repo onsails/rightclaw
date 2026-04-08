@@ -106,6 +106,8 @@ pub async fn reverse_sync_md(agent_dir: &Path, sandbox_name: &str) -> miette::Re
         .map_err(|e| miette::miette!("reverse sync: failed to create temp dir: {e:#}"))?;
 
     let mut errors: Vec<String> = Vec::new();
+    let mut any_download_ok = false;
+    let mut pending_deletes: Vec<(&str, PathBuf)> = Vec::new();
 
     for &filename in REVERSE_SYNC_FILES {
         let sandbox_path = format!("/sandbox/{filename}");
@@ -114,6 +116,7 @@ pub async fn reverse_sync_md(agent_dir: &Path, sandbox_name: &str) -> miette::Re
         match rightclaw::openshell::download_file(sandbox_name, &sandbox_path, tmp_dir.path()).await
         {
             Ok(()) => {
+                any_download_ok = true;
                 let downloaded = tmp_dir.path().join(filename);
                 if !downloaded.exists() {
                     // download_file succeeded but no file materialized — skip
@@ -149,16 +152,30 @@ pub async fn reverse_sync_md(agent_dir: &Path, sandbox_name: &str) -> miette::Re
             }
             Err(e) => {
                 tracing::debug!(file = filename, "reverse sync: download failed: {e:#}");
-                // File absent in sandbox — if it exists on host, CC deleted it
+                // Defer deletion — only safe if at least one download succeeded
+                // (proves sandbox is reachable, so failure = file genuinely absent).
                 if host_path.exists() {
-                    if let Err(e) = std::fs::remove_file(&host_path) {
-                        errors.push(format!("{filename}: host delete failed: {e:#}"));
-                    } else {
-                        tracing::info!(file = filename, "reverse sync: deleted from host (absent in sandbox)");
-                    }
+                    pending_deletes.push((filename, host_path));
                 }
             }
         }
+    }
+
+    // Only apply deletions when at least one file downloaded successfully.
+    // This prevents wiping host files when the sandbox is unreachable.
+    if any_download_ok {
+        for (filename, host_path) in pending_deletes {
+            if let Err(e) = std::fs::remove_file(&host_path) {
+                errors.push(format!("{filename}: host delete failed: {e:#}"));
+            } else {
+                tracing::info!(file = filename, "reverse sync: deleted from host (absent in sandbox)");
+            }
+        }
+    } else if !pending_deletes.is_empty() {
+        tracing::warn!(
+            "reverse sync: all downloads failed — skipping {} pending deletion(s) (sandbox may be unreachable)",
+            pending_deletes.len()
+        );
     }
 
     if errors.is_empty() {
