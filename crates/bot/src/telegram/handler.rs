@@ -100,8 +100,9 @@ pub async fn handle_message(
 
     let debounce_msg = DebounceMsg {
         message_id: msg.id.0,
-        text,
+        text: Some(text),
         timestamp: chrono::Utc::now(),
+        attachments: vec![],
     };
 
     // Check for existing worker or spawn a new one.
