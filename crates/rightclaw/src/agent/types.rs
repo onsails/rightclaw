@@ -66,6 +66,20 @@ pub enum SandboxMode {
     None,
 }
 
+impl std::str::FromStr for SandboxMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "openshell" => Ok(SandboxMode::Openshell),
+            "none" => Ok(SandboxMode::None),
+            other => Err(format!(
+                "invalid sandbox mode: '{other}'. Expected 'openshell' or 'none'."
+            )),
+        }
+    }
+}
+
 /// Per-agent sandbox configuration in agent.yaml.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -82,7 +96,7 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
             mode: SandboxMode::Openshell,
-            policy_file: Option::None,
+            policy_file: Some(std::path::PathBuf::from("policy.yaml")),
         }
     }
 }

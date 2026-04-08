@@ -82,25 +82,20 @@ pub fn init_agent(
         .map_err(|e| miette::miette!("Failed to write settings.json: {}", e))?;
     }
 
-    // Write network policy to agent.yaml.
+    // Append dynamic config to agent.yaml in a single read-modify-write.
     {
         let agent_yaml_path = agents_dir.join("agent.yaml");
         let mut yaml = std::fs::read_to_string(&agent_yaml_path)
             .map_err(|e| miette::miette!("Failed to read agent.yaml: {}", e))?;
+
+        // Network policy.
         let policy_str = match network_policy {
             NetworkPolicy::Restrictive => "restrictive",
             NetworkPolicy::Permissive => "permissive",
         };
         yaml.push_str(&format!("\nnetwork_policy: {policy_str}\n"));
-        std::fs::write(&agent_yaml_path, &yaml)
-            .map_err(|e| miette::miette!("Failed to update agent.yaml: {}", e))?;
-    }
 
-    // Write sandbox config to agent.yaml.
-    {
-        let agent_yaml_path = agents_dir.join("agent.yaml");
-        let mut yaml = std::fs::read_to_string(&agent_yaml_path)
-            .map_err(|e| miette::miette!("Failed to read agent.yaml: {}", e))?;
+        // Sandbox config.
         match sandbox_mode {
             SandboxMode::Openshell => {
                 yaml.push_str("\nsandbox:\n  mode: openshell\n  policy_file: policy.yaml\n");
@@ -109,6 +104,18 @@ pub fn init_agent(
                 yaml.push_str("\nsandbox:\n  mode: none\n");
             }
         }
+
+        // Telegram token + chat IDs.
+        if let Some(token) = telegram_token {
+            yaml.push_str(&format!("\ntelegram_token: \"{token}\"\n"));
+            if !telegram_allowed_chat_ids.is_empty() {
+                yaml.push_str("\nallowed_chat_ids:\n");
+                for id in telegram_allowed_chat_ids {
+                    yaml.push_str(&format!("  - {id}\n"));
+                }
+            }
+        }
+
         std::fs::write(&agent_yaml_path, &yaml)
             .map_err(|e| miette::miette!("Failed to update agent.yaml: {}", e))?;
     }
@@ -121,23 +128,6 @@ pub fn init_agent(
         );
         std::fs::write(agents_dir.join("policy.yaml"), &policy_yaml)
             .map_err(|e| miette::miette!("Failed to write policy.yaml: {e}"))?;
-    }
-
-    // Write Telegram token inline into agent.yaml.
-    // The token is passed to process-compose via RC_TELEGRAM_TOKEN env var at runtime.
-    if let Some(token) = telegram_token {
-        let agent_yaml_path = agents_dir.join("agent.yaml");
-        let mut yaml = std::fs::read_to_string(&agent_yaml_path)
-            .map_err(|e| miette::miette!("Failed to read agent.yaml: {}", e))?;
-        yaml.push_str(&format!("\ntelegram_token: \"{token}\"\n"));
-        if !telegram_allowed_chat_ids.is_empty() {
-            yaml.push_str("\nallowed_chat_ids:\n");
-            for id in telegram_allowed_chat_ids {
-                yaml.push_str(&format!("  - {id}\n"));
-            }
-        }
-        std::fs::write(&agent_yaml_path, yaml)
-            .map_err(|e| miette::miette!("Failed to update agent.yaml: {}", e))?;
     }
 
     // Pre-trust the agent directory in the agent-local .claude.json (D-06).
@@ -181,7 +171,7 @@ pub fn init_rightclaw_home(
         ));
     }
 
-    let agents_dir = init_agent(
+    let _agents_dir = init_agent(
         &agents_parent,
         "right",
         telegram_token,
@@ -208,8 +198,6 @@ pub fn init_rightclaw_home(
     if matches!(sandbox_mode, SandboxMode::Openshell) {
         println!("  agents/right/policy.yaml (OpenShell sandbox policy)");
     }
-
-    let _ = agents_dir; // used above via init_agent
 
     Ok(())
 }
@@ -253,6 +241,27 @@ pub fn prompt_telegram_token() -> miette::Result<Option<String>> {
     }
     validate_telegram_token(token)?;
     Ok(Some(token.to_string()))
+}
+
+/// Prompt the user for sandbox mode choice interactively.
+///
+/// Returns the chosen `SandboxMode`. Defaults to `Openshell` on empty input.
+pub fn prompt_sandbox_mode() -> miette::Result<crate::agent::types::SandboxMode> {
+    use std::io::{self, Write};
+    println!("Sandbox mode:");
+    println!("  1. OpenShell — run in isolated container (recommended)");
+    println!("  2. None — run directly on host (for computer-use, Chrome, etc.)");
+    print!("Choose [1/2] (default: 1): ");
+    io::stdout().flush().map_err(|e| miette::miette!("stdout flush failed: {e}"))?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|e| miette::miette!("failed to read input: {e}"))?;
+    match input.trim() {
+        "" | "1" => Ok(crate::agent::types::SandboxMode::Openshell),
+        "2" => Ok(crate::agent::types::SandboxMode::None),
+        other => Err(miette::miette!("Invalid choice: '{other}'. Expected 1 or 2.")),
+    }
 }
 
 /// Prompt the user for network policy choice interactively.

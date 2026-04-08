@@ -236,7 +236,9 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
     let ssh_config_path: Option<std::path::PathBuf> = if is_sandboxed {
         // Resolve policy path from agent.yaml sandbox config.
         let policy_path = config.resolve_policy_path(&agent_dir)?
-            .expect("resolve_policy_path returns Some for openshell mode");
+            .ok_or_else(|| miette::miette!(
+                "sandbox mode is openshell but no policy path resolved — check sandbox.policy_file in agent.yaml"
+            ))?;
 
         let sandbox = rightclaw::openshell::sandbox_name(&args.agent);
 
