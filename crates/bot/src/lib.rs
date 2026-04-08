@@ -230,14 +230,30 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
 
         let sandbox = rightclaw::openshell::sandbox_name(&args.agent);
 
-        // mTLS certs dir.
-        let mtls_dir = std::env::var("OPENSHELL_MTLS_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                dirs::config_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("/etc"))
-                    .join("openshell/gateways/openshell/mtls")
-            });
+        // Verify OpenShell is ready before attempting gRPC connection.
+        let mtls_dir = match rightclaw::openshell::preflight_check() {
+            rightclaw::openshell::OpenShellStatus::Ready(dir) => dir,
+            rightclaw::openshell::OpenShellStatus::NotInstalled => {
+                return Err(miette::miette!(
+                    help = "Install from https://github.com/NVIDIA/OpenShell, or restart with `rightclaw up --no-sandbox`",
+                    "OpenShell is not installed"
+                ));
+            }
+            rightclaw::openshell::OpenShellStatus::NoGateway(_) => {
+                return Err(miette::miette!(
+                    help = "Run `openshell gateway start`, or restart with `rightclaw up --no-sandbox`",
+                    "OpenShell gateway is not running"
+                ));
+            }
+            rightclaw::openshell::OpenShellStatus::BrokenGateway(dir) => {
+                return Err(miette::miette!(
+                    help = "Try `openshell gateway destroy && openshell gateway start`,\n  \
+                            or restart with `rightclaw up --no-sandbox`",
+                    "OpenShell gateway exists but mTLS certificates are missing at {}",
+                    dir.display()
+                ));
+            }
+        };
 
         // Check if sandbox already exists and is READY.
         let mut grpc_client = rightclaw::openshell::connect_grpc(&mtls_dir).await?;

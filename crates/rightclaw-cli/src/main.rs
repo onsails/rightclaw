@@ -515,6 +515,57 @@ async fn cmd_up(
     // Fail fast if required tools are missing.
     rightclaw::runtime::verify_dependencies()?;
 
+    // Pre-flight: when sandbox mode is active, verify OpenShell is ready.
+    // The bot process needs mTLS certs to connect to the gateway's gRPC API —
+    // without them it will crash in a loop. Diagnose the specific issue and
+    // offer to fix it interactively.
+    if !no_sandbox {
+        match rightclaw::openshell::preflight_check() {
+            rightclaw::openshell::OpenShellStatus::Ready(_) => {}
+            rightclaw::openshell::OpenShellStatus::NotInstalled => {
+                println!("OpenShell is not installed. Sandbox mode requires OpenShell.");
+                println!();
+                let install = inquire::Confirm::new("Install OpenShell now?")
+                    .with_default(true)
+                    .prompt()
+                    .map_err(|e| miette::miette!("prompt failed: {e:#}"))?;
+                if install {
+                    println!("Installing OpenShell...");
+                    let status = std::process::Command::new("sh")
+                        .args(["-c", "curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh"])
+                        .status()
+                        .map_err(|e| miette::miette!("failed to run installer: {e:#}"))?;
+                    if !status.success() {
+                        return Err(miette::miette!(
+                            help = "Install manually: https://github.com/NVIDIA/OpenShell",
+                            "OpenShell installer failed"
+                        ));
+                    }
+                    // After install, still need a gateway — fall through to gateway check.
+                    println!();
+                    match rightclaw::openshell::preflight_check() {
+                        rightclaw::openshell::OpenShellStatus::Ready(_) => {}
+                        rightclaw::openshell::OpenShellStatus::NoGateway(_) => {
+                            start_openshell_gateway()?;
+                        }
+                        other => return Err(openshell_status_error(other)),
+                    }
+                } else {
+                    return Err(miette::miette!(
+                        help = "Install from https://github.com/NVIDIA/OpenShell, or use `rightclaw up --no-sandbox`",
+                        "OpenShell is required for sandbox mode"
+                    ));
+                }
+            }
+            rightclaw::openshell::OpenShellStatus::NoGateway(_) => {
+                start_openshell_gateway()?;
+            }
+            status @ rightclaw::openshell::OpenShellStatus::BrokenGateway(_) => {
+                return Err(openshell_status_error(status));
+            }
+        }
+    }
+
     // Read global config — needed for cloudflared tunnel block after the per-agent loop.
     let global_cfg = rightclaw::config::read_global_config(home)?;
 
@@ -904,6 +955,64 @@ async fn cmd_up(
     }
 
     Ok(())
+}
+
+/// Prompt the user to start an OpenShell gateway, then verify it came up.
+fn start_openshell_gateway() -> miette::Result<()> {
+    println!("OpenShell gateway is not running. Sandbox mode requires a running gateway.");
+    println!("Note: OpenShell requires Docker to be installed and running.");
+    println!();
+    let start = inquire::Confirm::new("Start OpenShell gateway now?")
+        .with_default(true)
+        .prompt()
+        .map_err(|e| miette::miette!("prompt failed: {e:#}"))?;
+    if !start {
+        return Err(miette::miette!(
+            help = "Run `openshell gateway start` manually, or use `rightclaw up --no-sandbox`",
+            "OpenShell gateway is required for sandbox mode"
+        ));
+    }
+    println!("Starting OpenShell gateway (this may take a minute on first run)...");
+    let status = std::process::Command::new("openshell")
+        .args(["gateway", "start"])
+        .status()
+        .map_err(|e| miette::miette!("failed to run `openshell gateway start`: {e:#}"))?;
+    if !status.success() {
+        return Err(miette::miette!(
+            help = "Check `openshell doctor check` for prerequisites (Docker must be running)",
+            "`openshell gateway start` failed"
+        ));
+    }
+    // Verify certs are now present.
+    match rightclaw::openshell::preflight_check() {
+        rightclaw::openshell::OpenShellStatus::Ready(_) => {
+            println!("OpenShell gateway started successfully.");
+            Ok(())
+        }
+        status => Err(openshell_status_error(status)),
+    }
+}
+
+/// Convert an `OpenShellStatus` into a user-facing miette error.
+fn openshell_status_error(status: rightclaw::openshell::OpenShellStatus) -> miette::Report {
+    match status {
+        rightclaw::openshell::OpenShellStatus::Ready(_) => unreachable!(),
+        rightclaw::openshell::OpenShellStatus::NotInstalled => miette::miette!(
+            help = "Install from https://github.com/NVIDIA/OpenShell, or use `rightclaw up --no-sandbox`",
+            "OpenShell is not installed"
+        ),
+        rightclaw::openshell::OpenShellStatus::NoGateway(_) => miette::miette!(
+            help = "Run `openshell gateway start`, or use `rightclaw up --no-sandbox`",
+            "OpenShell gateway is not running"
+        ),
+        rightclaw::openshell::OpenShellStatus::BrokenGateway(mtls_dir) => miette::miette!(
+            help = "Try `openshell gateway destroy && openshell gateway start` to recreate,\n  \
+                    or use `rightclaw up --no-sandbox`",
+            "OpenShell gateway exists but mTLS certificates are missing at {}\n\n  \
+             The gateway may be in a broken state.",
+            mtls_dir.display()
+        ),
+    }
 }
 
 /// Fail fast if a required port is already occupied by a stale process.
