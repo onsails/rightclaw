@@ -13,6 +13,11 @@ max_restarts: 5
 # Seconds to wait between restarts
 backoff_seconds: 10
 
+# Sandbox mode: openshell (container isolation) or none (direct host access)
+# sandbox:
+#   mode: openshell
+#   policy_file: policy.yaml
+
 # Network policy: restrictive = Anthropic/Claude only, permissive = all HTTPS
 # network_policy: restrictive
 

@@ -496,3 +496,59 @@ fn right_mcp_server_process_included_when_token_map_provided() {
     assert!(yaml.contains("--port 8100"), "must specify port");
     assert!(yaml.contains("depends_on:"), "bot must depend on mcp server");
 }
+
+#[test]
+fn mixed_mode_agents_correct_env_vars() {
+    let agents = vec![
+        make_agent_with_sandbox("coder", "111:tok", SandboxMode::Openshell, Some("policy.yaml")),
+        make_agent_with_sandbox("browser", "222:tok", SandboxMode::None, None),
+        make_agent_with_sandbox("reviewer", "333:tok", SandboxMode::Openshell, Some("custom-policy.yaml")),
+    ];
+    let exe = Path::new(EXE_PATH);
+    let output = generate_process_compose(&agents, exe, &default_config()).unwrap();
+
+    // coder: sandboxed
+    assert!(output.contains("coder-bot:"));
+    assert!(output.contains("RC_SANDBOX_POLICY=/home/user/.rightclaw/agents/coder/policy.yaml"));
+
+    // browser: unsandboxed — should not have RC_SANDBOX_POLICY in its section
+    assert!(output.contains("browser-bot:"));
+
+    // reviewer: sandboxed with custom policy
+    assert!(output.contains("RC_SANDBOX_POLICY=/home/user/.rightclaw/agents/reviewer/custom-policy.yaml"));
+}
+
+#[test]
+fn agent_without_sandbox_config_defaults_to_openshell_in_process_compose() {
+    let config = Some(AgentConfig {
+        restart: RestartPolicy::OnFailure,
+        max_restarts: 3,
+        backoff_seconds: 5,
+        network_policy: Default::default(),
+        model: None,
+        sandbox: None, // absent from yaml → default openshell
+        telegram_token: Some("123:tok".to_string()),
+        allowed_chat_ids: vec![],
+        env: std::collections::HashMap::new(),
+        secret: None,
+        attachments: Default::default(),
+    });
+    let agents = vec![AgentDef {
+        name: "default-agent".to_owned(),
+        path: PathBuf::from("/home/user/.rightclaw/agents/default-agent"),
+        identity_path: PathBuf::from("/home/user/.rightclaw/agents/default-agent/IDENTITY.md"),
+        config,
+        soul_path: None,
+        user_path: None,
+        agents_path: None,
+        tools_path: None,
+        bootstrap_path: None,
+        heartbeat_path: None,
+    }];
+    let exe = Path::new(EXE_PATH);
+    let output = generate_process_compose(&agents, exe, &default_config()).unwrap();
+    assert!(
+        output.contains("RC_SANDBOX_MODE=openshell"),
+        "agent without explicit sandbox config should default to openshell:\n{output}"
+    );
+}
