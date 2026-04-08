@@ -25,7 +25,7 @@ fn test_init_creates_structure() {
     let home = dir.path().to_str().unwrap();
 
     rightclaw()
-        .args(["--home", home, "init"])
+        .args(["--home", home, "init", "-y", "--tunnel-hostname", "test.example.com"])
         .assert()
         .success();
 
@@ -41,12 +41,12 @@ fn test_init_twice_fails() {
     let home = dir.path().to_str().unwrap();
 
     rightclaw()
-        .args(["--home", home, "init"])
+        .args(["--home", home, "init", "-y", "--tunnel-hostname", "test.example.com"])
         .assert()
         .success();
 
     rightclaw()
-        .args(["--home", home, "init"])
+        .args(["--home", home, "init", "-y", "--tunnel-hostname", "test.example.com"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("already initialized"));
@@ -58,7 +58,7 @@ fn test_list_after_init() {
     let home = dir.path().to_str().unwrap();
 
     rightclaw()
-        .args(["--home", home, "init"])
+        .args(["--home", home, "init", "-y", "--tunnel-hostname", "test.example.com"])
         .assert()
         .success();
 
@@ -113,7 +113,7 @@ fn test_doctor_in_valid_home() {
 
     // Initialize first so agent structure exists.
     rightclaw()
-        .args(["--home", home, "init"])
+        .args(["--home", home, "init", "-y", "--tunnel-hostname", "test.example.com"])
         .assert()
         .success();
 
@@ -146,7 +146,8 @@ fn test_init_with_telegram_token() {
     rightclaw()
         .args([
             "--home", home,
-            "init",
+            "init", "-y",
+            "--tunnel-hostname", "test.example.com",
             "--telegram-token", "123456:ABCdef",
             "--telegram-allowed-chat-ids", "12345678,100200300",
         ])
@@ -304,9 +305,9 @@ fn test_init_always_writes_config() {
     let dir = tempdir().unwrap();
     let home = dir.path().to_str().unwrap();
 
-    // Use --telegram-token to avoid interactive prompt; no cloudflared cert in tmpdir.
+    // Use -y to avoid interactive prompts (inquire requires TTY).
     rightclaw()
-        .args(["--home", home, "init", "--telegram-token", "123456:ABCdef"])
+        .args(["--home", home, "init", "-y", "--tunnel-hostname", "test.example.com", "--telegram-token", "123456:ABCdef"])
         .assert()
         .success();
 
