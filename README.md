@@ -72,6 +72,8 @@ NVIDIA OpenShell containers per agent, credential isolation, declarative network
 - [x] Restart policies with backoff
 - [x] `rightclaw doctor` diagnostics
 - [x] Claude skills ecosystem compatibility
+- [ ] Agent backup & restore (`rightclaw backup` / `rightclaw restore`)
+- [ ] Agent templates — pre-built configs with MCPs, skills, and identity presets
 - [ ] Telegram group chats
 - [ ] Telegram chat threads
 - [ ] Agent-to-agent communication
