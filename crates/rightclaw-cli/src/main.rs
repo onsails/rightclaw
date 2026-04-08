@@ -794,7 +794,15 @@ async fn cmd_up(
             .map_err(|e| miette::miette!("failed to create policy dir: {e:#}"))?;
 
         for agent in &agents {
-            let policy_yaml = rightclaw::codegen::policy::generate_policy(rightclaw::runtime::MCP_HTTP_PORT);
+            let network_policy = agent
+                .config
+                .as_ref()
+                .map(|c| &c.network_policy)
+                .unwrap_or(&rightclaw::agent::types::NetworkPolicy::Permissive);
+            let policy_yaml = rightclaw::codegen::policy::generate_policy(
+                rightclaw::runtime::MCP_HTTP_PORT,
+                network_policy,
+            );
             let policy_path = policy_dir.join(format!("{}.yaml", agent.name));
             std::fs::write(&policy_path, &policy_yaml)
                 .map_err(|e| miette::miette!("failed to write policy for '{}': {e:#}", agent.name))?;
