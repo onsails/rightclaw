@@ -138,7 +138,9 @@ async fn run_async(args: BotArgs) -> miette::Result<()> {
     if config.allowed_chat_ids.is_empty() {
         tracing::warn!(
             agent = %args.agent,
-            "allowed_chat_ids is empty -- all incoming messages will be dropped"
+            "allowed_chat_ids is empty -- all incoming messages will be dropped. \
+             Run `rightclaw agent config {}` to add your Telegram chat ID",
+            args.agent,
         );
     }
 
