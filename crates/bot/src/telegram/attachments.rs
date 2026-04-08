@@ -405,6 +405,7 @@ pub async fn send_attachments(
         tokio::fs::create_dir_all(agent_dir.join("tmp/outbox")).await?;
     }
 
+    let mut errors: Vec<String> = Vec::new();
     for att in attachments {
         // Validate path is within outbox
         if !att.path.starts_with(&outbox_prefix) {
@@ -567,7 +568,9 @@ pub async fn send_attachments(
         };
 
         if let Err(e) = send_result {
-            tracing::error!("Failed to send {:?} attachment {}: {e}", att.kind, att.path);
+            let msg = format!("failed to send {:?} attachment {}: {e:#}", att.kind, att.path);
+            tracing::error!("{msg}");
+            errors.push(msg);
         }
 
         // Clean up temp file if sandboxed
@@ -576,7 +579,11 @@ pub async fn send_attachments(
         }
     }
 
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; ").into())
+    }
 }
 
 /// Spawn a background task that periodically cleans up old attachment files.
@@ -626,8 +633,15 @@ async fn run_cleanup(
             30,
         )
         .await?;
+        // Also clean local tmp dirs (host-side, regardless of sandbox)
+        for subdir in &["tmp/inbox", "tmp/outbox"] {
+            let dir = agent_dir.join(subdir);
+            if dir.exists() {
+                cleanup_local_dir(&dir, retention_days).await?;
+            }
+        }
     } else {
-        for subdir in &["inbox", "outbox"] {
+        for subdir in &["inbox", "outbox", "tmp/inbox", "tmp/outbox"] {
             let dir = agent_dir.join(subdir);
             if dir.exists() {
                 cleanup_local_dir(&dir, retention_days).await?;
