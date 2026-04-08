@@ -11,7 +11,6 @@ const EXE_PATH: &str = "/usr/bin/rightclaw";
 fn default_config() -> ProcessComposeConfig<'static> {
     ProcessComposeConfig {
         debug: false,
-        run_dir: Path::new("/tmp/run"),
         home: Path::new("/home/user/.rightclaw"),
         cloudflared_script: None,
         token_map_path: None,
@@ -484,7 +483,6 @@ fn right_mcp_server_process_included_when_token_map_provided() {
         &agents,
         Path::new("/usr/bin/rightclaw"),
         &ProcessComposeConfig {
-            run_dir: dir.path(),
             home: dir.path(),
             token_map_path: Some(&token_map),
             ..default_config()

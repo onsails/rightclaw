@@ -64,7 +64,6 @@ fn restart_policy_str(policy: &RestartPolicy) -> &'static str {
 /// Configuration for process-compose.yaml generation.
 pub struct ProcessComposeConfig<'a> {
     pub debug: bool,
-    pub run_dir: &'a Path,
     pub home: &'a Path,
     pub cloudflared_script: Option<&'a Path>,
     pub token_map_path: Option<&'a Path>,
@@ -82,7 +81,7 @@ pub fn generate_process_compose(
     exe_path: &Path,
     config: &ProcessComposeConfig<'_>,
 ) -> miette::Result<String> {
-    let &ProcessComposeConfig { debug, run_dir: _, home, cloudflared_script, token_map_path } = config;
+    let &ProcessComposeConfig { debug, home, cloudflared_script, token_map_path } = config;
     // Build cloudflared template context when tunnel script is provided.
     // working_dir = parent of scripts/ dir (i.e., rightclaw home).
     let cf_entry: Option<CloudflaredEntry> = cloudflared_script.map(|script| {
@@ -120,17 +119,22 @@ pub fn generate_process_compose(
                 config.max_restarts,
             );
 
-            let sandbox_mode = match config.sandbox_mode() {
+            let mode = config.sandbox_mode();
+            let sandbox_mode = match mode {
                 crate::agent::types::SandboxMode::Openshell => "openshell",
                 crate::agent::types::SandboxMode::None => "none",
             };
 
-            let sandbox_policy_path = match config.sandbox_mode() {
-                crate::agent::types::SandboxMode::Openshell => config
-                    .sandbox
-                    .as_ref()
-                    .and_then(|s| s.policy_file.as_ref())
-                    .map(|rel| agent.path.join(rel).display().to_string()),
+            let sandbox_policy_path = match mode {
+                crate::agent::types::SandboxMode::Openshell => {
+                    let policy_file = config
+                        .sandbox
+                        .as_ref()
+                        .and_then(|s| s.policy_file.as_ref())
+                        .cloned()
+                        .unwrap_or_else(|| std::path::PathBuf::from("policy.yaml"));
+                    Some(agent.path.join(&policy_file).display().to_string())
+                }
                 crate::agent::types::SandboxMode::None => None,
             };
 

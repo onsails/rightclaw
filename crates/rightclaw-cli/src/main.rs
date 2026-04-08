@@ -55,7 +55,7 @@ pub enum AgentCommands {
         network_policy: Option<rightclaw::agent::types::NetworkPolicy>,
         /// Sandbox mode: openshell or none
         #[arg(long)]
-        sandbox_mode: Option<String>,
+        sandbox_mode: Option<rightclaw::agent::types::SandboxMode>,
     },
     /// Configure an agent interactively (or get/set a specific setting)
     Config {
@@ -450,19 +450,7 @@ fn cmd_init(
     let sandbox = if !interactive {
         rightclaw::agent::types::SandboxMode::Openshell
     } else {
-        use std::io::{self, Write};
-        println!("Sandbox mode for the default 'right' agent:");
-        println!("  1. OpenShell — run in isolated container (recommended)");
-        println!("  2. None — run directly on host (for computer-use, Chrome, etc.)");
-        print!("Choose [1/2] (default: 1): ");
-        io::stdout().flush().map_err(|e| miette::miette!("flush: {e}"))?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).map_err(|e| miette::miette!("read: {e}"))?;
-        match input.trim() {
-            "" | "1" => rightclaw::agent::types::SandboxMode::Openshell,
-            "2" => rightclaw::agent::types::SandboxMode::None,
-            other => return Err(miette::miette!("Invalid choice: '{other}'")),
-        }
+        rightclaw::init::prompt_sandbox_mode()?
     };
 
     rightclaw::init::init_rightclaw_home(home, token.as_deref(), &chat_ids, &network_policy, &sandbox)?;
@@ -502,37 +490,15 @@ fn cmd_agent_init(
     name: &str,
     yes: bool,
     network_policy: Option<rightclaw::agent::types::NetworkPolicy>,
-    sandbox_mode: Option<String>,
+    sandbox_mode: Option<rightclaw::agent::types::SandboxMode>,
 ) -> miette::Result<()> {
     let interactive = !yes;
 
     // Sandbox mode: CLI --sandbox-mode > interactive prompt > openshell default.
-    let sandbox = match sandbox_mode.as_deref() {
-        Some("openshell") => rightclaw::agent::types::SandboxMode::Openshell,
-        Some("none") => rightclaw::agent::types::SandboxMode::None,
-        Some(other) => {
-            return Err(miette::miette!(
-                "Invalid sandbox mode: '{other}'. Expected 'openshell' or 'none'."
-            ))
-        }
+    let sandbox = match sandbox_mode {
+        Some(mode) => mode,
         None if !interactive => rightclaw::agent::types::SandboxMode::Openshell,
-        None => {
-            use std::io::{self, Write};
-            println!("Sandbox mode:");
-            println!("  1. OpenShell — run in isolated container (recommended)");
-            println!("  2. None — run directly on host (for computer-use, Chrome, etc.)");
-            print!("Choose [1/2] (default: 1): ");
-            io::stdout().flush().map_err(|e| miette::miette!("flush: {e}"))?;
-            let mut input = String::new();
-            io::stdin()
-                .read_line(&mut input)
-                .map_err(|e| miette::miette!("read: {e}"))?;
-            match input.trim() {
-                "" | "1" => rightclaw::agent::types::SandboxMode::Openshell,
-                "2" => rightclaw::agent::types::SandboxMode::None,
-                other => return Err(miette::miette!("Invalid choice: '{other}'")),
-            }
-        }
+        None => rightclaw::init::prompt_sandbox_mode()?,
     };
 
     // Network policy: only relevant for openshell mode.
@@ -1012,7 +978,6 @@ async fn cmd_up(
         &self_exe,
         &rightclaw::codegen::ProcessComposeConfig {
             debug,
-            run_dir: &run_dir,
             home,
             cloudflared_script: cloudflared_script_path.as_deref(),
             token_map_path: Some(&token_map_path),
