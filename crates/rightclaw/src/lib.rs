@@ -8,6 +8,7 @@ pub mod mcp;
 pub mod memory;
 pub mod openshell;
 pub mod runtime;
+pub mod tunnel;
 
 /// Generated protobuf types for the OpenShell gRPC API.
 #[allow(clippy::large_enum_variant)]
