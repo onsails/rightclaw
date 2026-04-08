@@ -27,6 +27,77 @@ pub fn ssh_host(agent_name: &str) -> String {
     format!("openshell-rightclaw-{agent_name}")
 }
 
+/// Resolve the default mTLS directory for the OpenShell gateway.
+///
+/// Checks `OPENSHELL_MTLS_DIR` env var first, then falls back to the
+/// platform config directory: `<config_dir>/openshell/gateways/openshell/mtls`.
+pub fn default_mtls_dir() -> PathBuf {
+    std::env::var("OPENSHELL_MTLS_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            // OpenShell uses XDG_CONFIG_HOME (~/.config) on all platforms,
+            // not the macOS-native ~/Library/Application Support.
+            let config_base = std::env::var("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    dirs::home_dir()
+                        .unwrap_or_else(|| PathBuf::from("/"))
+                        .join(".config")
+                });
+            config_base.join("openshell/gateways/openshell/mtls")
+        })
+}
+
+/// Result of the OpenShell pre-flight check.
+pub enum OpenShellStatus {
+    /// mTLS certs are present — sandbox mode can proceed.
+    Ready(PathBuf),
+    /// `openshell` binary is not in PATH.
+    NotInstalled,
+    /// Binary is installed but no gateway has been started (mTLS dir missing).
+    NoGateway(PathBuf),
+    /// Gateway metadata exists but mTLS certs are missing/corrupt.
+    BrokenGateway(PathBuf),
+}
+
+/// Check whether the OpenShell environment is ready for sandbox mode.
+///
+/// Returns a diagnostic enum that callers can use to give targeted
+/// guidance (install, gateway start, or destroy+recreate).
+pub fn preflight_check() -> OpenShellStatus {
+    let mtls_dir = default_mtls_dir();
+
+    // Check if all three mTLS files are present.
+    let has_certs = mtls_dir.join("ca.crt").exists()
+        && mtls_dir.join("tls.crt").exists()
+        && mtls_dir.join("tls.key").exists();
+
+    if has_certs {
+        return OpenShellStatus::Ready(mtls_dir);
+    }
+
+    // No certs — figure out why.
+    if which::which("openshell").is_err() {
+        return OpenShellStatus::NotInstalled;
+    }
+
+    // Binary exists — check if a gateway has been configured.
+    // `openshell gateway info` exits non-zero when no gateway metadata exists.
+    let gateway_exists = std::process::Command::new("openshell")
+        .args(["gateway", "info"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if gateway_exists {
+        OpenShellStatus::BrokenGateway(mtls_dir)
+    } else {
+        OpenShellStatus::NoGateway(mtls_dir)
+    }
+}
+
 /// Connect to the OpenShell gRPC server with mTLS.
 ///
 /// Reads CA cert, client cert, and client key from `mtls_dir`:
