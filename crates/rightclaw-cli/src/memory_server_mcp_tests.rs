@@ -289,18 +289,22 @@ async fn test_mcp_list_shows_server_metadata() {
 }
 
 #[tokio::test]
-async fn test_mcp_auth_server_not_found() {
+async fn test_mcp_auth_returns_tunnel_error_when_not_configured() {
     let (server, _dir) = setup_server_with_dir();
-    let err = server
+    let result = server
         .mcp_auth(Parameters(McpAuthParams {
             server_name: "ghost".to_string(),
         }))
         .await
-        .expect_err("should return error for missing server");
-    let msg = format!("{err:?}");
+        .expect("mcp_auth should return Ok with error content");
+    assert_eq!(result.is_error, Some(true), "result should be an error");
+    let text = match &result.content[0].raw {
+        rmcp::model::RawContent::Text(t) => &t.text,
+        other => panic!("expected text content, got: {other:?}"),
+    };
     assert!(
-        msg.contains("ghost") || msg.contains("not found"),
-        "error should mention missing server: {msg}"
+        text.contains("Tunnel not configured"),
+        "error should mention tunnel not configured: {text}"
     );
 }
 
