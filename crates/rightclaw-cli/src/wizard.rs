@@ -167,14 +167,29 @@ pub fn tunnel_setup(
 
     let uuid = match existing {
         Some(entry) => {
+            let has_local_creds = cloudflared_credentials_path(&entry.id)
+                .map(|p| p.exists())
+                .unwrap_or(false);
+
             if interactive {
-                match handle_existing_tunnel(&cf_bin, &entry, tunnel_name)? {
+                match handle_existing_tunnel(&cf_bin, &entry, tunnel_name, has_local_creds)? {
                     TunnelOutcome::Uuid(id) => id,
                     TunnelOutcome::Skipped => return Ok(None),
                 }
-            } else {
-                // Non-interactive: silently reuse.
+            } else if has_local_creds {
+                // Non-interactive: silently reuse when credentials are present.
                 entry.id
+            } else {
+                // Non-interactive: cannot reuse without local credentials.
+                // Delete and recreate so cloudflared can actually start.
+                tracing::warn!(
+                    "Tunnel '{}' exists but credentials file is missing locally — recreating",
+                    entry.name
+                );
+                delete_tunnel(&cf_bin, &entry.name)?;
+                let fresh = create_tunnel(&cf_bin, tunnel_name)?;
+                println!("Recreated tunnel '{}' (UUID: {})", fresh.name, fresh.id);
+                fresh.id
             }
         }
         None => {
@@ -213,13 +228,15 @@ pub fn tunnel_setup(
     // Route DNS (non-fatal).
     route_dns(&cf_bin, &uuid, &hostname);
 
-    // Check credentials file.
+    // Verify credentials file exists — this should always pass after the
+    // checks above, but guard against unexpected state.
     let credentials_file = cloudflared_credentials_path(&uuid)?;
     if !credentials_file.exists() {
-        tracing::warn!(
-            "Credentials file not found at {} — tunnel may not start correctly",
+        return Err(miette::miette!(
+            help = "Run `rightclaw config set` and select Tunnel to reconfigure",
+            "Tunnel credentials file not found at {} — cloudflared cannot start without it",
             credentials_file.display()
-        );
+        ));
     }
 
     Ok(Some(TunnelConfig {
@@ -238,6 +255,7 @@ fn handle_existing_tunnel(
     cf_bin: &Path,
     existing: &TunnelListEntry,
     original_name: &str,
+    has_local_creds: bool,
 ) -> miette::Result<TunnelOutcome> {
     let short_uuid = if existing.id.len() > 8 {
         &existing.id[..8]
@@ -249,12 +267,21 @@ fn handle_existing_tunnel(
         existing.name
     );
 
-    let options = vec![
-        TunnelExistingAction::Reuse,
-        TunnelExistingAction::Rename,
-        TunnelExistingAction::DeleteAndRecreate,
-        TunnelExistingAction::Skip,
-    ];
+    if !has_local_creds {
+        println!(
+            "⚠ Credentials file for this tunnel is missing locally.\n  \
+             The tunnel may have been created on another machine.\n  \
+             Choose \"Delete and recreate\" to generate new credentials on this machine."
+        );
+    }
+
+    let mut options = Vec::new();
+    if has_local_creds {
+        options.push(TunnelExistingAction::Reuse);
+    }
+    options.push(TunnelExistingAction::DeleteAndRecreate);
+    options.push(TunnelExistingAction::Rename);
+    options.push(TunnelExistingAction::Skip);
 
     let selection = inquire::Select::new("What would you like to do?", options)
         .prompt()
@@ -309,7 +336,7 @@ fn handle_existing_tunnel(
                 Ok(TunnelOutcome::Skipped)
             } else {
                 // User declined skip — re-prompt.
-                handle_existing_tunnel(cf_bin, existing, original_name)
+                handle_existing_tunnel(cf_bin, existing, original_name, has_local_creds)
             }
         }
     }

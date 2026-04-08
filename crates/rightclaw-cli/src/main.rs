@@ -744,14 +744,24 @@ async fn cmd_up(
     // Generate cloudflared config and wrapper script when tunnel is configured (Phase 38).
     // (global_cfg is read before the per-agent loop — reused here for tunnel block)
 
-    // Pre-flight: if tunnel is configured, cloudflared binary must be in PATH.
-    // Check before generating any files to avoid leaving stale artifacts.
-    if global_cfg.tunnel.is_some() {
+    // Pre-flight: if tunnel is configured, cloudflared binary must be in PATH
+    // and credentials file must exist. Check before generating any files to
+    // avoid leaving stale artifacts or launching cloudflared in a crash loop.
+    if let Some(ref tunnel_cfg) = global_cfg.tunnel {
         which::which("cloudflared").map_err(|_| {
             miette::miette!(
                 "TunnelConfig is present but `cloudflared` is not in PATH — install cloudflared first"
             )
         })?;
+        if !tunnel_cfg.credentials_file.exists() {
+            return Err(miette::miette!(
+                help = "Run `rightclaw config set` and select Tunnel — choose \"Delete and recreate\" to generate new credentials on this machine",
+                "Tunnel credentials file not found: {}\n\n  \
+                 This usually means the tunnel was created on a different machine,\n  \
+                 or `rightclaw init` was re-run after the credentials file was removed.",
+                tunnel_cfg.credentials_file.display()
+            ));
+        }
     }
 
     let cloudflared_script_path: Option<std::path::PathBuf> = if let Some(tunnel_cfg) = global_cfg.tunnel {
