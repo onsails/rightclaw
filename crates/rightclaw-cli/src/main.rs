@@ -26,6 +26,28 @@ pub struct Cli {
 pub enum ConfigCommands {
     /// Enable machine-wide domain blocking via managed settings (requires sudo)
     StrictSandbox,
+    /// View or edit global settings (interactive menu if no key given)
+    #[command(name = "set")]
+    Set {
+        /// Config key (e.g. tunnel.hostname)
+        key: Option<String>,
+        /// New value (omit to print current value)
+        value: Option<String>,
+    },
+}
+
+/// Subcommands for `rightclaw agent`.
+#[derive(Subcommand)]
+pub enum AgentCommands {
+    /// Configure an agent interactively (or get/set a specific setting)
+    Config {
+        /// Agent name (interactive selection if omitted)
+        name: Option<String>,
+        /// Setting key (e.g. telegram-token)
+        key: Option<String>,
+        /// New value (omit to print current)
+        value: Option<String>,
+    },
 }
 
 /// Subcommands for `rightclaw memory`.
@@ -149,6 +171,11 @@ pub enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+    /// Manage agents
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
     },
     /// Inspect and manage agent memory databases
     Memory {
@@ -293,6 +320,54 @@ async fn main() -> miette::Result<()> {
         Commands::Pair { agent } => cmd_pair(&home, agent.as_deref()),
         Commands::Config { command } => match command {
             ConfigCommands::StrictSandbox => cmd_config_strict_sandbox(),
+            ConfigCommands::Set { key, value } => {
+                match (key, value) {
+                    (None, None) => crate::wizard::global_setting_menu(&home)?,
+                    (Some(key), None) => {
+                        let config = rightclaw::config::read_global_config(&home)?;
+                        match key.as_str() {
+                            "tunnel.hostname" => println!(
+                                "{}",
+                                config.tunnel.as_ref().map(|t| t.hostname.as_str()).unwrap_or("(not set)")
+                            ),
+                            "tunnel.uuid" => println!(
+                                "{}",
+                                config.tunnel.as_ref().map(|t| t.tunnel_uuid.as_str()).unwrap_or("(not set)")
+                            ),
+                            "tunnel.credentials-file" => println!(
+                                "{}",
+                                config.tunnel.as_ref().map(|t| t.credentials_file.display().to_string()).unwrap_or("(not set)".to_string())
+                            ),
+                            other => return Err(miette::miette!("Unknown config key: {other}")),
+                        }
+                    }
+                    (Some(_key), Some(_value)) => {
+                        return Err(miette::miette!(
+                            "Direct set not yet implemented. Use `rightclaw config set` for interactive mode."
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(miette::miette!("Cannot set a value without a key"));
+                    }
+                }
+                Ok(())
+            }
+        },
+        Commands::Agent {
+            command: AgentCommands::Config { name, key, value },
+        } => {
+            match (key, value) {
+                (None, None) => crate::wizard::agent_setting_menu(&home, name.as_deref())?,
+                (Some(_key), _) => {
+                    return Err(miette::miette!(
+                        "Direct get/set not yet implemented. Use `rightclaw agent config` for interactive mode."
+                    ));
+                }
+                (None, Some(_)) => {
+                    return Err(miette::miette!("Cannot set a value without a key"));
+                }
+            }
+            Ok(())
         },
         Commands::Memory { command } => match command {
             MemoryCommands::List { agent, limit, offset, json } =>
