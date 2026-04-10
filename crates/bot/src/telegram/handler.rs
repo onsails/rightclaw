@@ -52,17 +52,15 @@ pub struct AuthCodeSlot(pub Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::
 #[derive(Clone)]
 pub struct RefreshTx(pub tokio::sync::mpsc::Sender<rightclaw::mcp::refresh::RefreshMessage>);
 
-/// Max CC turns per invocation.
+/// Bundled agent invocation settings (reduces dptree injectable arity).
 #[derive(Clone)]
-pub struct MaxTurns(pub u32);
-
-/// Max dollar spend per CC invocation.
-#[derive(Clone)]
-pub struct MaxBudgetUsd(pub f64);
-
-/// Show live thinking indicator in Telegram.
-#[derive(Clone)]
-pub struct ShowThinking(pub bool);
+pub struct AgentSettings {
+    pub max_turns: u32,
+    pub max_budget_usd: f64,
+    pub show_thinking: bool,
+    /// Claude model override (passed as --model). None = inherit CLI default.
+    pub model: Option<String>,
+}
 
 /// Convert an arbitrary error into `RequestError::Io` so it propagates through `ResponseResult`.
 fn to_request_err(e: impl std::fmt::Display) -> RequestError {
@@ -87,9 +85,7 @@ pub async fn handle_message(
     ssh_config: Arc<SshConfigPath>,
     auth_watcher_flag: Arc<AuthWatcherFlag>,
     auth_code_slot: Arc<AuthCodeSlot>,
-    max_turns: Arc<MaxTurns>,
-    max_budget_usd: Arc<MaxBudgetUsd>,
-    show_thinking: Arc<ShowThinking>,
+    settings: Arc<AgentSettings>,
     stop_tokens: super::StopTokens,
 ) -> ResponseResult<()> {
     // Extract text from message body OR caption (media messages use captions)
@@ -160,9 +156,10 @@ pub async fn handle_message(
                     ssh_config_path: ssh_config.0.clone(),
                     auth_watcher_active: Arc::clone(&auth_watcher_flag.0),
                     auth_code_tx: Arc::clone(&auth_code_slot.0),
-                    max_turns: max_turns.0,
-                    max_budget_usd: max_budget_usd.0,
-                    show_thinking: show_thinking.0,
+                    max_turns: settings.max_turns,
+                    max_budget_usd: settings.max_budget_usd,
+                    show_thinking: settings.show_thinking,
+                    model: settings.model.clone(),
                     stop_tokens: Arc::clone(&stop_tokens),
                 };
                 let tx = spawn_worker(key, ctx, Arc::clone(&worker_map));

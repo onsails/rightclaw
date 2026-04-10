@@ -73,6 +73,8 @@ pub struct WorkerContext {
     pub max_budget_usd: f64,
     /// Show live thinking indicator in Telegram.
     pub show_thinking: bool,
+    /// Claude model override (passed as --model). None = inherit CLI default.
+    pub model: Option<String>,
     /// Shared map for stop button — worker inserts token before CC, removes after exit.
     pub stop_tokens: super::StopTokens,
 }
@@ -818,6 +820,10 @@ async fn invoke_cc(
     claude_args.push(ctx.max_turns.to_string());
     claude_args.push("--max-budget-usd".into());
     claude_args.push(format!("{:.2}", ctx.max_budget_usd));
+    if let Some(ref model) = ctx.model {
+        claude_args.push("--model".into());
+        claude_args.push(model.clone());
+    }
 
     // --json-schema on BOTH first and resume calls (D-01, Pitfall 4).
     // Bootstrap mode uses bootstrap-schema (adds bootstrap_complete field).

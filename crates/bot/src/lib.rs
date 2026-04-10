@@ -392,6 +392,7 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
             config.max_turns,
             config.max_budget_usd,
             config.show_thinking,
+            config.model.clone(),
             shutdown.clone(),
         ) => result,
         result = axum_handle => result
