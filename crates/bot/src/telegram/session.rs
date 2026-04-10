@@ -83,14 +83,26 @@ pub fn deactivate_current(
 }
 
 /// Re-activate a session by row id.
+///
+/// Atomically deactivates any other active session for the same (chat_id, thread_id)
+/// before activating the target. Uses a transaction to prevent partial state.
 pub fn activate_session(
     conn: &rusqlite::Connection,
     session_id: i64,
 ) -> Result<(), rusqlite::Error> {
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    // Deactivate any currently active session for the same (chat_id, thread_id)
+    tx.execute(
+        "UPDATE sessions SET is_active = 0 WHERE is_active = 1 AND \
+         chat_id = (SELECT chat_id FROM sessions WHERE id = ?1) AND \
+         thread_id = (SELECT thread_id FROM sessions WHERE id = ?1)",
+        rusqlite::params![session_id],
+    )?;
+    tx.execute(
         "UPDATE sessions SET is_active = 1 WHERE id = ?1",
         rusqlite::params![session_id],
     )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -122,7 +134,7 @@ pub fn list_sessions(
     rows.collect()
 }
 
-/// Find sessions matching a partial UUID for (chat_id, thread_id).
+/// Find sessions matching a partial UUID or label for (chat_id, thread_id).
 pub fn find_sessions_by_uuid(
     conn: &rusqlite::Connection,
     chat_id: i64,
@@ -132,7 +144,7 @@ pub fn find_sessions_by_uuid(
     let pattern = format!("%{partial}%");
     let mut stmt = conn.prepare_cached(
         "SELECT id, chat_id, thread_id, root_session_id, label, is_active, created_at, last_used_at \
-         FROM sessions WHERE chat_id = ?1 AND thread_id = ?2 AND root_session_id LIKE ?3",
+         FROM sessions WHERE chat_id = ?1 AND thread_id = ?2 AND (root_session_id LIKE ?3 OR label LIKE ?3)",
     )?;
     let rows = stmt.query_map(rusqlite::params![chat_id, thread_id, pattern], |row| {
         row_to_session(row)
@@ -319,5 +331,31 @@ mod tests {
         assert_eq!(active.root_session_id, "uuid-1");
 
         let _ = id2; // suppress unused warning
+    }
+
+    #[test]
+    fn find_session_by_label() {
+        let (_dir, conn) = test_conn();
+        create_session(&conn, 100, 0, "uuid-aaa", Some("crypto research")).unwrap();
+        deactivate_current(&conn, 100, 0).unwrap();
+        create_session(&conn, 100, 0, "uuid-bbb", Some("test cron")).unwrap();
+
+        let matches = find_sessions_by_uuid(&conn, 100, 0, "crypto").unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].root_session_id, "uuid-aaa");
+    }
+
+    #[test]
+    fn activate_session_is_atomic() {
+        let (_dir, conn) = test_conn();
+        let id1 = create_session(&conn, 100, 0, "uuid-1", None).unwrap();
+        deactivate_current(&conn, 100, 0).unwrap();
+        let id2 = create_session(&conn, 100, 0, "uuid-2", None).unwrap();
+
+        // activate_session should atomically deactivate uuid-2 and activate uuid-1
+        activate_session(&conn, id1).unwrap();
+        let active = get_active_session(&conn, 100, 0).unwrap().unwrap();
+        assert_eq!(active.root_session_id, "uuid-1");
+        assert!(!list_sessions(&conn, 100, 0).unwrap().iter().any(|s| s.id == id2 && s.is_active));
     }
 }
