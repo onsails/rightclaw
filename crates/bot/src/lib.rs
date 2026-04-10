@@ -188,10 +188,11 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
     let cron_bot = telegram::bot::build_bot(token.clone());
     let cron_agent_dir = agent_dir.clone();
     let cron_agent_name = args.agent.clone();
+    let cron_model = config.model.clone();
     let cron_chat_ids = config.allowed_chat_ids.clone();
     let cron_shutdown = shutdown.clone();
     let cron_handle = tokio::spawn(async move {
-        cron::run_cron_task(cron_agent_dir, cron_agent_name, cron_bot, cron_chat_ids, cron_shutdown).await;
+        cron::run_cron_task(cron_agent_dir, cron_agent_name, cron_model, cron_bot, cron_chat_ids, cron_shutdown).await;
     });
 
     // Build shared OAuth PendingAuth map
