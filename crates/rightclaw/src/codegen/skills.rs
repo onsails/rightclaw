@@ -1,7 +1,7 @@
 use std::path::Path;
 
 const SKILL_RIGHTSKILLS: &str = include_str!("../../../../skills/rightskills/SKILL.md");
-const SKILL_RIGHTCRON: &str = include_str!("../../../../skills/cronsync/SKILL.md");
+const SKILL_RIGHTCRON: &str = include_str!("../../../../skills/rightcron/SKILL.md");
 
 /// Install RightClaw built-in skills into an agent's `.claude/skills/` directory.
 ///
