@@ -18,7 +18,7 @@ use teloxide::types::{CallbackQuery, Message};
 use teloxide::RequestError;
 
 use super::oauth_callback::PendingAuthMap;
-use super::session::{activate_session, create_session, deactivate_current, effective_thread_id, find_sessions_by_uuid, list_sessions, truncate_label};
+use super::session::{activate_session, create_session, deactivate_current, effective_thread_id, find_sessions_by_uuid, list_sessions, touch_session, truncate_label};
 use super::worker::{DebounceMsg, SessionKey, WorkerContext, spawn_worker};
 use super::BotType;
 
@@ -365,10 +365,11 @@ pub async fn handle_switch(
                 return Ok(());
             }
 
-            deactivate_current(&conn, chat_id.0, eff_thread_id)
-                .map_err(|e| to_request_err(format!("switch: deactivate: {:#}", e)))?;
+            // activate_session atomically deactivates any other active session
             activate_session(&conn, target.id)
                 .map_err(|e| to_request_err(format!("switch: activate: {:#}", e)))?;
+            touch_session(&conn, target.id)
+                .map_err(|e| to_request_err(format!("switch: touch: {:#}", e)))?;
 
             worker_map.remove(&key);
 
@@ -969,5 +970,40 @@ mod tests {
 
         assert_eq!(agent.0, agent2.0);
         assert_eq!(home.0, home2.0);
+    }
+
+    #[test]
+    fn format_relative_time_just_now() {
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        assert_eq!(format_relative_time(&now), "just now");
+    }
+
+    #[test]
+    fn format_relative_time_minutes() {
+        let then = (chrono::Utc::now() - chrono::Duration::minutes(15))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        assert_eq!(format_relative_time(&then), "15m ago");
+    }
+
+    #[test]
+    fn format_relative_time_hours() {
+        let then = (chrono::Utc::now() - chrono::Duration::hours(3))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        assert_eq!(format_relative_time(&then), "3h ago");
+    }
+
+    #[test]
+    fn format_relative_time_days() {
+        let then = (chrono::Utc::now() - chrono::Duration::days(5))
+            .format("%Y-%m-%dT%H:%M:%SZ")
+            .to_string();
+        assert_eq!(format_relative_time(&then), "5d ago");
+    }
+
+    #[test]
+    fn format_relative_time_malformed() {
+        assert_eq!(format_relative_time("not-a-timestamp"), "not-a-timestamp");
     }
 }
