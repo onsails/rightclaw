@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::bot::build_bot;
 use super::filter::make_chat_id_filter;
-use super::handler::{handle_doctor, handle_mcp, handle_message, handle_reset, handle_start, AgentDir, AuthCodeSlot, AuthWatcherFlag, DebugFlag, MaxBudgetUsd, MaxTurns, RefreshTx, RightclawHome, ShowThinking, SshConfigPath};
+use super::handler::{handle_doctor, handle_mcp, handle_message, handle_reset, handle_start, handle_stop_callback, AgentDir, AuthCodeSlot, AuthWatcherFlag, DebugFlag, MaxBudgetUsd, MaxTurns, RefreshTx, RightclawHome, ShowThinking, SshConfigPath};
 use super::oauth_callback::PendingAuthMap;
 use super::worker::{DebounceMsg, SessionKey};
 
@@ -116,7 +116,12 @@ pub async fn run_telegram(
         .branch(command_handler)
         .endpoint(handle_message);
 
-    let schema = dptree::entry().branch(message_handler);
+    let callback_handler = Update::filter_callback_query()
+        .endpoint(handle_stop_callback);
+
+    let schema = dptree::entry()
+        .branch(message_handler)
+        .branch(callback_handler);
 
     let mut dispatcher = Dispatcher::builder(bot.clone(), schema)
         .dependencies(dptree::deps![
