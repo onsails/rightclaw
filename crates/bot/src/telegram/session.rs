@@ -291,4 +291,33 @@ mod tests {
         assert_eq!(t0.root_session_id, "thread0");
         assert_eq!(t5.root_session_id, "thread5");
     }
+
+    #[test]
+    fn full_lifecycle_new_switch_list() {
+        let (_dir, conn) = test_conn();
+
+        // First message creates session 1
+        let id1 = create_session(&conn, 100, 0, "uuid-1", Some("hello world")).unwrap();
+        let active = get_active_session(&conn, 100, 0).unwrap().unwrap();
+        assert_eq!(active.id, id1);
+
+        // /new — deactivate, create session 2
+        let prev = deactivate_current(&conn, 100, 0).unwrap();
+        assert_eq!(prev.as_deref(), Some("uuid-1"));
+        let id2 = create_session(&conn, 100, 0, "uuid-2", Some("second task")).unwrap();
+
+        // /list — both visible, session 2 active
+        let all = list_sessions(&conn, 100, 0).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().any(|s| s.root_session_id == "uuid-2" && s.is_active));
+        assert!(all.iter().any(|s| s.root_session_id == "uuid-1" && !s.is_active));
+
+        // /switch — back to session 1
+        deactivate_current(&conn, 100, 0).unwrap();
+        activate_session(&conn, id1).unwrap();
+        let active = get_active_session(&conn, 100, 0).unwrap().unwrap();
+        assert_eq!(active.root_session_id, "uuid-1");
+
+        let _ = id2; // suppress unused warning
+    }
 }
