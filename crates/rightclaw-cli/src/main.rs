@@ -470,6 +470,7 @@ fn filter_agents(
     Ok(filtered)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_init(
     home: &Path,
     telegram_token: Option<&str>,
