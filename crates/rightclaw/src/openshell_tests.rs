@@ -148,6 +148,90 @@ async fn mock_client(addr: SocketAddr) -> OpenShellClient<Channel> {
 }
 
 // ---------------------------------------------------------------------------
+// Ephemeral test sandbox — created per test, deleted on drop.
+// ---------------------------------------------------------------------------
+
+struct TestSandbox {
+    name: String,
+    _tmp: tempfile::TempDir, // keeps policy file alive
+}
+
+impl TestSandbox {
+    /// Create an ephemeral sandbox for testing. Cleans up any leftover from previous runs.
+    async fn create(test_name: &str) -> Self {
+        let name = format!("rightclaw-test-{test_name}");
+
+        let mtls_dir = match super::preflight_check() {
+            super::OpenShellStatus::Ready(dir) => dir,
+            other => panic!("OpenShell not ready: {other:?}"),
+        };
+
+        // Clean up leftover from a previous failed run.
+        let mut client = super::connect_grpc(&mtls_dir).await.unwrap();
+        if super::sandbox_exists(&mut client, &name).await.unwrap() {
+            super::delete_sandbox(&name).await;
+            super::wait_for_deleted(&mut client, &name, 60, 2)
+                .await
+                .expect("cleanup of leftover sandbox failed");
+        }
+
+        // Minimal policy — no network restrictions, fast startup.
+        let tmp = tempfile::tempdir().unwrap();
+        let policy_path = tmp.path().join("policy.yaml");
+        let policy = "version: v1\nnetwork_policies: []\nbinaries:\n  - path: \"**\"\n";
+        std::fs::write(&policy_path, policy).unwrap();
+
+        // spawn_sandbox uses raw sandbox name (not agent name).
+        let mut child = super::spawn_sandbox(&name, &policy_path, None)
+            .expect("failed to spawn sandbox");
+        super::wait_for_ready(&mut client, &name, 120, 2)
+            .await
+            .expect("sandbox did not become READY");
+
+        // Reap the child process.
+        let _ = child.wait().await;
+
+        Self { name, _tmp: tmp }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get a gRPC client + sandbox ID for exec operations.
+    async fn grpc(&self) -> (super::OpenShellClient<Channel>, String) {
+        let mtls_dir = match super::preflight_check() {
+            super::OpenShellStatus::Ready(dir) => dir,
+            other => panic!("OpenShell not ready: {other:?}"),
+        };
+        let mut client = super::connect_grpc(&mtls_dir).await.unwrap();
+        let id = super::resolve_sandbox_id(&mut client, &self.name)
+            .await
+            .unwrap();
+        (client, id)
+    }
+
+    /// Execute a command inside the sandbox, return (stdout, exit_code).
+    async fn exec(&self, cmd: &[&str]) -> (String, i32) {
+        let (mut client, id) = self.grpc().await;
+        super::exec_in_sandbox(&mut client, &id, cmd)
+            .await
+            .unwrap()
+    }
+
+    /// Delete the sandbox and wait for deletion to complete.
+    async fn destroy(self) {
+        super::delete_sandbox(&self.name).await;
+        let mtls_dir = match super::preflight_check() {
+            super::OpenShellStatus::Ready(dir) => dir,
+            _ => return,
+        };
+        let mut client = super::connect_grpc(&mtls_dir).await.unwrap();
+        let _ = super::wait_for_deleted(&mut client, &self.name, 60, 2).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
