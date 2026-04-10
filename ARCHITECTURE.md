@@ -180,7 +180,7 @@ Staging dir (for initial upload only):
   ├─ .claude/settings.json    — CC behavioral flags
   ├─ .claude/reply-schema.json — structured output schema
   ├─ .claude/agents/<name>.md  — agent definition
-  ├─ .claude/skills/{rightskills,cronsync}/ — builtin skills only
+  ├─ .claude/skills/{rightskills,rightcron}/ — builtin skills only
   ├─ .claude.json              — trust + onboarding
   └─ .mcp.json                 — MCP server entries
   EXCLUDED: .credentials.json (sandbox gets own via login), plugins/, shell-snapshots/
@@ -348,7 +348,7 @@ LoginEvent      // PTY→async: Url, WaitingForCode, Done, Error
 │       ├── bootstrap-schema.json      # generated per agent by bot on startup
 │       ├── agents/<name>.md           # main agent def (@ file references)
 │       ├── agents/<name>-bootstrap.md # bootstrap agent def (@ file references)
-│       └── skills/{rightskills,cronsync}/
+│       └── skills/{rightskills,rightcron}/
 ├── run/
 │   ├── process-compose.yaml
 │   ├── ssh/<agent>.ssh-config
