@@ -352,7 +352,8 @@ pub async fn download_attachments(
         let final_path = if sandboxed {
             // Upload to sandbox, then clean up host temp file
             let sandbox_path = format!("{SANDBOX_INBOX}/{file_name}");
-            rightclaw::openshell::upload_file(agent_name, &host_path, &sandbox_path).await?;
+            let sandbox = rightclaw::openshell::sandbox_name(agent_name);
+            rightclaw::openshell::upload_file(&sandbox, &host_path, &sandbox_path).await?;
             if let Err(e) = tokio::fs::remove_file(&host_path).await {
                 tracing::warn!("Failed to remove temp file {}: {e}", host_path.display());
             }
@@ -425,7 +426,8 @@ pub async fn send_attachments(
                 .to_string_lossy()
                 .into_owned();
             let dest = tmp_dir.join(&file_name);
-            rightclaw::openshell::download_file(agent_name, &att.path, &dest).await?;
+            let sandbox = rightclaw::openshell::sandbox_name(agent_name);
+            rightclaw::openshell::download_file(&sandbox, &att.path, &dest).await?;
             dest
         } else {
             // Canonicalize to resolve any `..` components and verify the path
