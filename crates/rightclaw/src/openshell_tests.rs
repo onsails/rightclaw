@@ -348,110 +348,57 @@ async fn wait_for_deleted_succeeds_when_sandbox_disappears() {
 }
 
 // ---------------------------------------------------------------------------
-// Live sandbox integration tests (require running OpenShell + rightclaw-right)
+// Live sandbox integration tests (require running OpenShell)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore = "requires live OpenShell sandbox 'rightclaw-right'"]
+#[ignore = "requires live OpenShell"]
 async fn exec_in_sandbox_runs_command() {
-    let mtls_dir = match super::preflight_check() {
-        super::OpenShellStatus::Ready(dir) => dir,
-        other => panic!("OpenShell not ready: {other:?}"),
-    };
-    let mut client = super::connect_grpc(&mtls_dir).await.unwrap();
-    let sandbox_id = super::resolve_sandbox_id(&mut client, "rightclaw-right")
-        .await
-        .unwrap();
-
-    let (stdout, exit_code) = super::exec_in_sandbox(
-        &mut client,
-        &sandbox_id,
-        &["echo", "hello-from-test"],
-    )
-    .await
-    .unwrap();
+    let sbox = TestSandbox::create("exec-run").await;
+    let (stdout, exit_code) = sbox.exec(&["echo", "hello-from-test"]).await;
 
     assert_eq!(exit_code, 0, "echo should exit 0");
     assert!(
         stdout.contains("hello-from-test"),
         "expected 'hello-from-test' in stdout, got: {stdout:?}"
     );
+
+    sbox.destroy().await;
 }
 
 #[tokio::test]
-#[ignore = "requires live OpenShell sandbox 'rightclaw-right'"]
+#[ignore = "requires live OpenShell"]
 async fn exec_in_sandbox_returns_exit_code() {
-    let mtls_dir = match super::preflight_check() {
-        super::OpenShellStatus::Ready(dir) => dir,
-        other => panic!("OpenShell not ready: {other:?}"),
-    };
-    let mut client = super::connect_grpc(&mtls_dir).await.unwrap();
-    let sandbox_id = super::resolve_sandbox_id(&mut client, "rightclaw-right")
-        .await
-        .unwrap();
-
-    let (_, exit_code) = super::exec_in_sandbox(
-        &mut client,
-        &sandbox_id,
-        &["sh", "-c", "exit 42"],
-    )
-    .await
-    .unwrap();
+    let sbox = TestSandbox::create("exec-exit").await;
+    let (_, exit_code) = sbox.exec(&["sh", "-c", "exit 42"]).await;
 
     assert_eq!(exit_code, 42, "should propagate remote exit code");
+
+    sbox.destroy().await;
 }
 
 #[tokio::test]
-#[ignore = "requires live OpenShell sandbox 'rightclaw-right'"]
+#[ignore = "requires live OpenShell"]
 async fn verify_sandbox_files_detects_missing_and_reuploads() {
-    // Create a temp dir with a test file.
+    let sbox = TestSandbox::create("verify-missing").await;
+
     let tmp = tempfile::tempdir().unwrap();
     let host_dir = tmp.path();
     std::fs::write(host_dir.join("VERIFY_TEST.md"), "# verify test\n").unwrap();
 
-    // First: ensure VERIFY_TEST.md does NOT exist in sandbox.
-    let mtls_dir = match super::preflight_check() {
-        super::OpenShellStatus::Ready(dir) => dir,
-        other => panic!("OpenShell not ready: {other:?}"),
-    };
-    let mut client = super::connect_grpc(&mtls_dir).await.unwrap();
-    let sandbox_id = super::resolve_sandbox_id(&mut client, "rightclaw-right")
-        .await
-        .unwrap();
-    let _ = super::exec_in_sandbox(
-        &mut client,
-        &sandbox_id,
-        &["rm", "-f", "/sandbox/VERIFY_TEST.md"],
-    )
-    .await;
+    // Ensure file does NOT exist in sandbox.
+    sbox.exec(&["rm", "-f", "/sandbox/VERIFY_TEST.md"]).await;
 
     // verify_sandbox_files should detect missing file and re-upload it.
-    super::verify_sandbox_files(
-        "rightclaw-right",
-        host_dir,
-        "/sandbox/",
-        &["VERIFY_TEST.md"],
-    )
-    .await
-    .expect("verify should succeed after re-upload");
+    super::verify_sandbox_files(sbox.name(), host_dir, "/sandbox/", &["VERIFY_TEST.md"])
+        .await
+        .expect("verify should succeed after re-upload");
 
     // Confirm file actually exists in sandbox now.
-    let (output, _) = super::exec_in_sandbox(
-        &mut client,
-        &sandbox_id,
-        &["cat", "/sandbox/VERIFY_TEST.md"],
-    )
-    .await
-    .unwrap();
+    let (output, _) = sbox.exec(&["cat", "/sandbox/VERIFY_TEST.md"]).await;
     assert_eq!(output, "# verify test\n", "file content should match");
 
-    // Cleanup.
-    let _ = super::exec_in_sandbox(
-        &mut client,
-        &sandbox_id,
-        &["rm", "-f", "/sandbox/VERIFY_TEST.md"],
-    )
-    .await;
+    sbox.destroy().await;
 }
 
 /// Reproduces the exact flow of `rightclaw init`:
@@ -460,6 +407,7 @@ async fn verify_sandbox_files_detects_missing_and_reuploads() {
 /// This is the scenario where gRPC reports READY but SSH transport
 /// may not be up yet, causing "Connection reset by peer".
 #[tokio::test]
+#[ignore = "requires live OpenShell"]
 async fn exec_immediately_after_sandbox_create_reproduces_init_flow() {
     // ensure_sandbox takes agent name and prepends "rightclaw-" via sandbox_name().
     const AGENT: &str = "test-lifecycle";
@@ -531,39 +479,21 @@ async fn exec_immediately_after_sandbox_create_reproduces_init_flow() {
 }
 
 #[tokio::test]
-#[ignore = "requires live OpenShell sandbox 'rightclaw-right'"]
+#[ignore = "requires live OpenShell"]
 async fn verify_sandbox_files_passes_when_all_present() {
-    // Upload a file first, then verify it passes.
+    let sbox = TestSandbox::create("verify-present").await;
+
     let tmp = tempfile::tempdir().unwrap();
     let host_dir = tmp.path();
     std::fs::write(host_dir.join("PRESENT_TEST.md"), "exists\n").unwrap();
 
-    super::upload_file("rightclaw-right", &host_dir.join("PRESENT_TEST.md"), "/sandbox/")
+    super::upload_file(sbox.name(), &host_dir.join("PRESENT_TEST.md"), "/sandbox/")
         .await
         .unwrap();
 
-    super::verify_sandbox_files(
-        "rightclaw-right",
-        host_dir,
-        "/sandbox/",
-        &["PRESENT_TEST.md"],
-    )
-    .await
-    .expect("verify should pass when file exists");
-
-    // Cleanup.
-    let mtls_dir = match super::preflight_check() {
-        super::OpenShellStatus::Ready(dir) => dir,
-        _ => return,
-    };
-    let mut client = super::connect_grpc(&mtls_dir).await.unwrap();
-    let sandbox_id = super::resolve_sandbox_id(&mut client, "rightclaw-right")
+    super::verify_sandbox_files(sbox.name(), host_dir, "/sandbox/", &["PRESENT_TEST.md"])
         .await
-        .unwrap();
-    let _ = super::exec_in_sandbox(
-        &mut client,
-        &sandbox_id,
-        &["rm", "-f", "/sandbox/PRESENT_TEST.md"],
-    )
-    .await;
+        .expect("verify should pass when file exists");
+
+    sbox.destroy().await;
 }
