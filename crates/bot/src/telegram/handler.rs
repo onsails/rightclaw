@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicBool;
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 use teloxide::prelude::*;
-use teloxide::types::Message;
+use teloxide::types::{CallbackQuery, Message};
 use teloxide::RequestError;
 
 use super::oauth_callback::PendingAuthMap;
@@ -659,6 +659,49 @@ pub async fn handle_doctor(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Stop button callback query handler
+// ---------------------------------------------------------------------------
+
+/// Handle the Stop button callback query from thinking messages.
+///
+/// Callback data format: `stop:{chat_id}:{eff_thread_id}`
+/// Looks up the CancellationToken in StopTokens and cancels it.
+pub async fn handle_stop_callback(
+    bot: BotType,
+    q: CallbackQuery,
+    stop_tokens: super::StopTokens,
+) -> ResponseResult<()> {
+    let data = q.data.as_deref().unwrap_or("");
+    let parts: Vec<&str> = data.splitn(3, ':').collect();
+    let qid = q.id;
+
+    let text = if parts.len() == 3
+        && parts[0] == "stop"
+        && let Ok(chat_id) = parts[1].parse::<i64>()
+        && let Ok(thread_id) = parts[2].parse::<i64>()
+    {
+        let key = (chat_id, thread_id);
+        if let Some(entry) = stop_tokens.get(&key) {
+            entry.value().cancel();
+            drop(entry); // release DashMap read guard before await
+            Some("Stopping...")
+        } else {
+            Some("Already finished")
+        }
+    } else {
+        None
+    };
+
+    let mut answer = bot.answer_callback_query(qid);
+    if let Some(t) = text {
+        answer = answer.text(t);
+    }
+    answer.await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -685,6 +728,30 @@ mod tests {
         assert_eq!(agent.0, PathBuf::from("/agents/myagent"));
         assert_eq!(home.0, PathBuf::from("/home/user/.rightclaw"));
         assert_ne!(agent.0, home.0);
+    }
+
+    #[test]
+    fn parse_stop_callback_data_valid() {
+        let data = "stop:12345:678";
+        let parts: Vec<&str> = data.splitn(3, ':').collect();
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0], "stop");
+        assert_eq!(parts[1].parse::<i64>().unwrap(), 12345);
+        assert_eq!(parts[2].parse::<i64>().unwrap(), 678);
+    }
+
+    #[test]
+    fn parse_stop_callback_data_zero_thread() {
+        let data = "stop:12345:0";
+        let parts: Vec<&str> = data.splitn(3, ':').collect();
+        assert_eq!(parts[2].parse::<i64>().unwrap(), 0);
+    }
+
+    #[test]
+    fn parse_stop_callback_data_invalid() {
+        let data = "stop:notanumber:0";
+        let parts: Vec<&str> = data.splitn(3, ':').collect();
+        assert!(parts[1].parse::<i64>().is_err());
     }
 
     #[test]
