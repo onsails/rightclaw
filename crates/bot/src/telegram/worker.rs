@@ -28,6 +28,16 @@ const DEBOUNCE_MS: u64 = 500;
 /// Maximum time to wait for a CC subprocess to complete.
 const CC_TIMEOUT_SECS: u64 = 600;
 
+/// Build the inline keyboard with a single "Stop" button for thinking messages.
+fn stop_keyboard(chat_id: i64, eff_thread_id: i64) -> teloxide::types::InlineKeyboardMarkup {
+    teloxide::types::InlineKeyboardMarkup::new(vec![vec![
+        teloxide::types::InlineKeyboardButton::callback(
+            "\u{26d4} Stop",
+            format!("stop:{chat_id}:{eff_thread_id}"),
+        ),
+    ]])
+}
+
 /// A single Telegram message queued into the debounce channel.
 #[derive(Clone)]
 pub struct DebounceMsg {
@@ -900,6 +910,10 @@ async fn invoke_cc(
             .map_err(|e| format_error_reply(-1, &format!("stdin write failed: {:#}", e)))?;
     }
 
+    // Insert stop token so callback handler can kill this CC session.
+    let stop_token = CancellationToken::new();
+    ctx.stop_tokens.insert((chat_id, eff_thread_id), stop_token.clone());
+
     // Stream stdout line-by-line: log to file, parse events, update thinking message.
     let stdout = child
         .stdout
@@ -941,6 +955,7 @@ async fn invoke_cc(
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(CC_TIMEOUT_SECS);
     let mut timed_out = false;
+    let mut stopped = false;
 
     loop {
         tokio::select! {
@@ -959,19 +974,6 @@ async fn invoke_cc(
                             super::stream::StreamEvent::Result(json) => {
                                 usage = super::stream::parse_usage(json);
                                 result_line = Some(json.clone());
-                                // Final update of thinking message with real cost.
-                                if let Some(msg_id) = thinking_msg_id {
-                                    let text = super::stream::format_thinking_message(
-                                        ring_buffer.events(),
-                                        &usage,
-                                        ctx.max_turns,
-                                    );
-                                    let _ = ctx
-                                        .bot
-                                        .edit_message_text(tg_chat_id, msg_id, &text)
-                                        .parse_mode(teloxide::types::ParseMode::Html)
-                                        .await;
-                                }
                             }
                             _ => {
                                 if let Some(formatted) = super::stream::format_event(&event) {
@@ -988,37 +990,54 @@ async fn invoke_cc(
                             }
                         }
 
-                        // Update thinking message (throttled to 2s).
-                        if ctx.show_thinking
-                            && super::stream::format_event(&event).is_some()
-                            && last_edit.elapsed() >= Duration::from_secs(2)
-                        {
-                            let text = super::stream::format_thinking_message(
-                                ring_buffer.events(),
-                                &usage,
-                                ctx.max_turns,
-                            );
-                            if let Some(msg_id) = thinking_msg_id {
-                                let _ = ctx
-                                    .bot
-                                    .edit_message_text(tg_chat_id, msg_id, &text)
-                                    .parse_mode(teloxide::types::ParseMode::Html)
-                                    .await;
-                            } else {
+                        // Thinking message: always send (Stop button anchor).
+                        // show_thinking=true: update with events every 2s.
+                        // show_thinking=false: send static "Working..." once, no updates.
+                        if super::stream::format_event(&event).is_some() {
+                            let kb = stop_keyboard(chat_id, eff_thread_id);
+
+                            if thinking_msg_id.is_none() {
+                                // First displayable event — send thinking message.
+                                let text = if ctx.show_thinking {
+                                    super::stream::format_thinking_message(
+                                        ring_buffer.events(),
+                                        &usage,
+                                        ctx.max_turns,
+                                    )
+                                } else {
+                                    "\u{23f3} Working...".to_string()
+                                };
                                 let mut send = ctx.bot.send_message(tg_chat_id, &text)
-                                    .parse_mode(teloxide::types::ParseMode::Html);
+                                    .parse_mode(teloxide::types::ParseMode::Html)
+                                    .reply_markup(kb);
                                 if eff_thread_id != 0 {
                                     send = send.message_thread_id(
-                                        teloxide::types::ThreadId(
-                                            teloxide::types::MessageId(eff_thread_id as i32),
-                                        ),
+                                        ThreadId(MessageId(eff_thread_id as i32)),
                                     );
                                 }
                                 if let Ok(msg) = send.await {
                                     thinking_msg_id = Some(msg.id);
                                 }
+                                last_edit = tokio::time::Instant::now();
+                            } else if ctx.show_thinking
+                                && last_edit.elapsed() >= Duration::from_secs(2)
+                            {
+                                // Throttled update (show_thinking=true only).
+                                let text = super::stream::format_thinking_message(
+                                    ring_buffer.events(),
+                                    &usage,
+                                    ctx.max_turns,
+                                );
+                                if let Some(msg_id) = thinking_msg_id {
+                                    let _ = ctx
+                                        .bot
+                                        .edit_message_text(tg_chat_id, msg_id, &text)
+                                        .parse_mode(teloxide::types::ParseMode::Html)
+                                        .reply_markup(kb)
+                                        .await;
+                                }
+                                last_edit = tokio::time::Instant::now();
                             }
-                            last_edit = tokio::time::Instant::now();
                         }
                     }
                     Ok(None) => break, // stdout closed — process exited
@@ -1033,12 +1052,20 @@ async fn invoke_cc(
                 child.kill().await.ok();
                 break;
             }
+            _ = stop_token.cancelled() => {
+                stopped = true;
+                child.kill().await.ok();
+                break;
+            }
         }
     }
 
     // Wait for process exit.
     let exit_status = child.wait().await.ok();
     let exit_code = exit_status.and_then(|s| s.code()).unwrap_or(-1);
+
+    // Remove stop token — session no longer cancellable.
+    ctx.stop_tokens.remove(&(chat_id, eff_thread_id));
 
     // Read any remaining stderr.
     let stderr_str = if let Some(mut stderr) = child.stderr.take() {
@@ -1054,6 +1081,7 @@ async fn invoke_cc(
         ?chat_id,
         exit_code,
         timed_out,
+        stopped,
         stream_log = %stream_log_path.display(),
         sandboxed,
         "claude -p finished"
@@ -1061,6 +1089,48 @@ async fn invoke_cc(
 
     if !stderr_str.is_empty() {
         tracing::warn!(?chat_id, stderr = %stderr_str, "CC stderr");
+    }
+
+    // Final thinking message update based on completion mode.
+    if let Some(msg_id) = thinking_msg_id {
+        if stopped {
+            // Stopped by user — show final state, remove keyboard.
+            let text = if ctx.show_thinking {
+                let mut msg = super::stream::format_thinking_message(
+                    ring_buffer.events(),
+                    &usage,
+                    ctx.max_turns,
+                );
+                msg.push_str("\n\u{26d4} Stopped");
+                msg
+            } else {
+                "\u{23f3} Working...\n\u{26d4} Stopped".to_string()
+            };
+            let _ = ctx.bot
+                .edit_message_text(tg_chat_id, msg_id, &text)
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await;
+        } else if ctx.show_thinking {
+            // Normal finish with thinking — final cost/turns, remove keyboard.
+            let text = super::stream::format_thinking_message(
+                ring_buffer.events(),
+                &usage,
+                ctx.max_turns,
+            );
+            let _ = ctx.bot
+                .edit_message_text(tg_chat_id, msg_id, &text)
+                .parse_mode(teloxide::types::ParseMode::Html)
+                .await;
+        } else {
+            // Normal finish without thinking — delete the anchor message.
+            let _ = ctx.bot.delete_message(tg_chat_id, msg_id).await;
+        }
+    }
+
+    // Handle user-initiated stop.
+    if stopped {
+        tracing::info!(?chat_id, "CC session stopped by user");
+        return Ok(None); // No reply to send — thinking message already updated.
     }
 
     // Handle timeout.
@@ -1599,5 +1669,20 @@ mod tests {
         // No BOOTSTRAP.md
         let result = assemble_host_system_prompt("Base\n", true, dir.path());
         assert_eq!(result, "Base\n");
+    }
+
+    #[test]
+    fn stop_keyboard_format() {
+        let kb = stop_keyboard(12345, 678);
+        let buttons = &kb.inline_keyboard;
+        assert_eq!(buttons.len(), 1);
+        assert_eq!(buttons[0].len(), 1);
+        assert_eq!(buttons[0][0].text, "\u{26d4} Stop");
+        match &buttons[0][0].kind {
+            teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => {
+                assert_eq!(data, "stop:12345:678");
+            }
+            other => panic!("expected CallbackData, got {other:?}"),
+        }
     }
 }
