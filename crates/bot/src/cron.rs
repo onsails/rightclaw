@@ -11,7 +11,12 @@ pub struct CronSpec {
     pub schedule: String,
     pub prompt: String,
     pub lock_ttl: Option<String>, // default "30m"
-    pub max_turns: Option<u32>,
+    #[serde(default = "default_cron_max_budget_usd")]
+    pub max_budget_usd: f64,
+}
+
+fn default_cron_max_budget_usd() -> f64 {
+    1.0
 }
 
 /// Lock file JSON: {"heartbeat": "2026-...Z"}
@@ -128,6 +133,7 @@ async fn execute_job(
     spec: &CronSpec,
     agent_dir: &std::path::Path,
     agent_name: &str,
+    model: Option<&str>,
     bot: &BotType,
     notify_chat_ids: &[i64],
 ) {
@@ -212,9 +218,10 @@ async fn execute_job(
     cmd.arg("-p");
     cmd.arg("--dangerously-skip-permissions");
     cmd.arg("--agent").arg(agent_name);
-    if let Some(max_turns) = spec.max_turns {
-        cmd.arg("--max-turns").arg(max_turns.to_string());
+    if let Some(model) = model {
+        cmd.arg("--model").arg(model);
     }
+    cmd.arg("--max-budget-usd").arg(format!("{:.2}", spec.max_budget_usd));
     // --output-format json is always required: it enables the structured reply parsing path
     // below. Even when reply-schema.json is absent, JSON mode is needed so parse_reply_output
     // can attempt to extract a plain-string result field.
@@ -358,6 +365,7 @@ fn update_run_record(
 pub async fn run_cron_task(
     agent_dir: std::path::PathBuf,
     agent_name: String,
+    model: Option<String>,
     bot: BotType,
     notify_chat_ids: Vec<i64>,
     shutdown: CancellationToken,
@@ -368,12 +376,12 @@ pub async fn run_cron_task(
     interval.tick().await; // consume immediate first tick
 
     // Run immediately on startup too
-    reconcile_jobs(&mut handles, &agent_dir, &agent_name, &bot, &notify_chat_ids).await;
+    reconcile_jobs(&mut handles, &agent_dir, &agent_name, &model, &bot, &notify_chat_ids).await;
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                reconcile_jobs(&mut handles, &agent_dir, &agent_name, &bot, &notify_chat_ids).await;
+                reconcile_jobs(&mut handles, &agent_dir, &agent_name, &model, &bot, &notify_chat_ids).await;
             }
             _ = shutdown.cancelled() => {
                 tracing::info!(agent = %agent_name, "cron shutdown: stopping reconciler, waiting for running jobs");
@@ -394,6 +402,7 @@ async fn reconcile_jobs(
     handles: &mut HashMap<String, (CronSpec, JoinHandle<()>)>,
     agent_dir: &std::path::Path,
     agent_name: &str,
+    model: &Option<String>,
     bot: &BotType,
     notify_chat_ids: &[i64],
 ) {
@@ -422,11 +431,12 @@ async fn reconcile_jobs(
         let job_spec = spec.clone();
         let job_agent_dir = agent_dir.to_path_buf();
         let job_agent_name = agent_name.to_string();
+        let job_model = model.clone();
         let job_bot = bot.clone();
         let job_chat_ids = notify_chat_ids.to_vec();
 
         let handle = tokio::spawn(async move {
-            run_job_loop(job_name, job_spec, job_agent_dir, job_agent_name, job_bot, job_chat_ids)
+            run_job_loop(job_name, job_spec, job_agent_dir, job_agent_name, job_model, job_bot, job_chat_ids)
                 .await;
         });
         handles.insert(name.clone(), (spec.clone(), handle));
@@ -440,6 +450,7 @@ async fn run_job_loop(
     spec: CronSpec,
     agent_dir: std::path::PathBuf,
     agent_name: String,
+    model: Option<String>,
     bot: BotType,
     notify_chat_ids: Vec<i64>,
 ) {
@@ -477,10 +488,11 @@ async fn run_job_loop(
         let sp = spec.clone();
         let ad = agent_dir.clone();
         let an = agent_name.clone();
+        let md = model.clone();
         let bt = bot.clone();
         let nc = notify_chat_ids.clone();
         tokio::spawn(async move {
-            execute_job(&jn, &sp, &ad, &an, &bt, &nc).await;
+            execute_job(&jn, &sp, &ad, &an, md.as_deref(), &bt, &nc).await;
         });
     }
 }
@@ -571,7 +583,7 @@ mod tests {
 schedule: "*/5 * * * *"
 prompt: "Check system health"
 lock_ttl: "1h"
-max_turns: 10
+max_budget_usd: 0.50
 "#;
         std::fs::write(crons_dir.join("health-check.yaml"), yaml).unwrap();
 
@@ -581,7 +593,24 @@ max_turns: 10
         assert_eq!(spec.schedule, "*/5 * * * *");
         assert_eq!(spec.prompt, "Check system health");
         assert_eq!(spec.lock_ttl.as_deref(), Some("1h"));
-        assert_eq!(spec.max_turns, Some(10));
+        assert_eq!(spec.max_budget_usd, 0.50);
+    }
+
+    #[test]
+    fn test_load_specs_default_budget() {
+        let dir = tempdir().unwrap();
+        let crons_dir = dir.path().join("crons");
+        std::fs::create_dir_all(&crons_dir).unwrap();
+
+        let yaml = r#"
+schedule: "17 9 * * *"
+prompt: "Do stuff"
+"#;
+        std::fs::write(crons_dir.join("simple.yaml"), yaml).unwrap();
+
+        let specs = load_specs(dir.path());
+        let spec = specs.get("simple").unwrap();
+        assert_eq!(spec.max_budget_usd, 1.0, "default budget should be 1.0");
     }
 
     // parse_cron_reply_content tests — cover gating logic for CRON-reply delivery
