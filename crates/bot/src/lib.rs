@@ -183,18 +183,6 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
     let agent_yaml_path = agent_dir.join("agent.yaml");
     config_watcher::spawn_config_watcher(&agent_yaml_path, shutdown.clone(), Arc::clone(&config_changed))?;
 
-    // CRON-01: spawn cron task alongside Telegram dispatcher.
-    // Build bot here so cron can send replies; run_telegram builds its own independent instance.
-    let cron_bot = telegram::bot::build_bot(token.clone());
-    let cron_agent_dir = agent_dir.clone();
-    let cron_agent_name = args.agent.clone();
-    let cron_model = config.model.clone();
-    let cron_chat_ids = config.allowed_chat_ids.clone();
-    let cron_shutdown = shutdown.clone();
-    let cron_handle = tokio::spawn(async move {
-        cron::run_cron_task(cron_agent_dir, cron_agent_name, cron_model, cron_bot, cron_chat_ids, cron_shutdown).await;
-    });
-
     // Build shared OAuth PendingAuth map
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -379,6 +367,17 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
             cleanup_retention,
         );
     }
+
+    // CRON-01: spawn cron task alongside Telegram dispatcher.
+    // Cron results are persisted to DB; Telegram delivery is handled separately.
+    let cron_agent_dir = agent_dir.clone();
+    let cron_agent_name = args.agent.clone();
+    let cron_model = config.model.clone();
+    let cron_ssh_config = ssh_config_path.clone();
+    let cron_shutdown = shutdown.clone();
+    let cron_handle = tokio::spawn(async move {
+        cron::run_cron_task(cron_agent_dir, cron_agent_name, cron_model, cron_ssh_config, cron_shutdown).await;
+    });
 
     let result = tokio::select! {
         result = telegram::run_telegram(
