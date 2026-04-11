@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 
 /// Status of a ProxyBackend connection to an upstream MCP server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BackendStatus {
+pub enum BackendStatus {
     Connected,
     NeedsAuth,
     Unreachable,
