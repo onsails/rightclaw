@@ -337,7 +337,7 @@ pub fn trigger_spec(conn: &rusqlite::Connection, job_name: &str) -> Result<Strin
     if rows == 0 {
         return Err(format!("job '{job_name}' not found"));
     }
-    Ok(format!("Triggered job '{job_name}'. Will execute on next engine tick (≤30s)."))
+    Ok(format!("Triggered job '{job_name}'. Will execute on next engine tick (≤60s)."))
 }
 
 /// Clear the `triggered_at` flag after the cron engine has picked up the trigger.
@@ -611,7 +611,7 @@ pub struct CronTriggerParams {
 Add inside the `#[tool_router] impl MemoryServer` block, after `cron_list`:
 
 ```rust
-#[tool(description = "Trigger a cron job for immediate execution. The job is queued and will run on the next engine tick (≤30s). Lock check still applies — if the job is currently running, the trigger is skipped.")]
+#[tool(description = "Trigger a cron job for immediate execution. The job is queued and will run on the next engine tick (≤60s). Lock check still applies — if the job is currently running, the trigger is skipped.")]
 async fn cron_trigger(
     &self,
     Parameters(params): Parameters<CronTriggerParams>,
@@ -641,7 +641,7 @@ Add this line after the `cron_list` entry in the instructions string.
 In `crates/rightclaw-cli/src/memory_server_http.rs`, add inside the `#[tool_router] impl HttpMemoryServer` block, after `cron_list`. Also add `CronTriggerParams` to the import from `memory_server`:
 
 ```rust
-#[tool(description = "Trigger a cron job for immediate execution. The job is queued and will run on the next engine tick (≤30s). Lock check still applies — if the job is currently running, the trigger is skipped.")]
+#[tool(description = "Trigger a cron job for immediate execution. The job is queued and will run on the next engine tick (≤60s). Lock check still applies — if the job is currently running, the trigger is skipped.")]
 async fn cron_trigger(
     &self,
     Extension(parts): Extension<http::request::Parts>,
@@ -922,9 +922,9 @@ Use the `cron_trigger` MCP tool to run a job immediately:
 cron_trigger(job_name: "health-check")
 ```
 
-The job is queued and executes on the next engine tick (≤30s). Lock check still applies — if the job is currently running, the trigger is skipped. The result is delivered through the normal delivery loop.
+The job is queued and executes on the next engine tick (≤60s). Lock check still applies — if the job is currently running, the trigger is skipped. The result is delivered through the normal delivery loop.
 
-Confirm: "Job triggered. Execution starts within ~30 seconds."
+Confirm: "Job triggered. Execution starts within ~60 seconds."
 ```
 
 - [ ] **Step 2: Add `cron_trigger` to the Parameters table**

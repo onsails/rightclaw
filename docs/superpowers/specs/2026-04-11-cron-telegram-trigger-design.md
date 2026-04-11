@@ -59,7 +59,7 @@ pub struct CronTriggerParams {
 **Behavior:**
 1. Validate job exists in `cron_specs`
 2. `UPDATE cron_specs SET triggered_at = datetime('now') WHERE job_name = ?`
-3. Return success message: `"Triggered job '{name}'. Will execute on next engine tick (≤30s)."`
+3. Return success message: `"Triggered job '{name}'. Will execute on next engine tick (≤60s)."`
 4. If job not found: return error
 
 **Shared helper** in `cron_spec.rs` (`trigger_spec(conn, job_name)`), called from both MCP servers (stdio `memory_server.rs` + HTTP `memory_server_http.rs`).
@@ -88,7 +88,7 @@ if should_run && !locked {
 
 - Lock check applies equally — if locked, trigger waits (not cleared until job actually spawns)
 - `execute_job()` unchanged — doesn't know/care about trigger source
-- Max 30s delay between trigger and execution (engine tick interval)
+- Max 60s delay between trigger and execution (engine tick interval)
 
 ### SKILL.md Update
 
