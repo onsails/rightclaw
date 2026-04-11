@@ -6,6 +6,7 @@ const V3_SCHEMA: &str = include_str!("sql/v3_cron_runs.sql");
 const V4_SCHEMA: &str = include_str!("sql/v4_sessions.sql");
 const V5_SCHEMA: &str = include_str!("sql/v5_cron_feedback.sql");
 const V6_SCHEMA: &str = include_str!("sql/v6_cron_specs.sql");
+const V7_SCHEMA: &str = include_str!("sql/v7_cron_trigger.sql");
 
 pub static MIGRATIONS: std::sync::LazyLock<Migrations<'static>> =
     std::sync::LazyLock::new(|| {
@@ -16,6 +17,7 @@ pub static MIGRATIONS: std::sync::LazyLock<Migrations<'static>> =
             M::up(V4_SCHEMA),
             M::up(V5_SCHEMA),
             M::up(V6_SCHEMA),
+            M::up(V7_SCHEMA),
         ])
     });
 
@@ -99,6 +101,23 @@ mod tests {
         assert!(cols.contains(&"summary".to_string()), "summary column missing");
         assert!(cols.contains(&"notify_json".to_string()), "notify_json column missing");
         assert!(cols.contains(&"delivered_at".to_string()), "delivered_at column missing");
+    }
+
+    #[test]
+    fn migrations_apply_cleanly_to_v7() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        MIGRATIONS.to_latest(&mut conn).unwrap();
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('cron_specs')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+        assert!(
+            cols.contains(&"triggered_at".to_string()),
+            "triggered_at column missing"
+        );
     }
 
     #[test]

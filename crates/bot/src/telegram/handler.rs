@@ -305,6 +305,16 @@ fn format_session_line(s: &super::session::SessionRow) -> String {
     format!("{marker} {label} — {ago}\n<pre>{}</pre>\n", s.root_session_id)
 }
 
+/// Map cron run status to a Unicode icon.
+fn status_icon(status: &str) -> &'static str {
+    match status {
+        "success" => "\u{2705}",
+        "failed" => "\u{274c}",
+        "running" => "\u{23f3}",
+        _ => "?",
+    }
+}
+
 /// Format an ISO timestamp as a relative time string.
 fn format_relative_time(iso_timestamp: &str) -> String {
     let Ok(then) = chrono::NaiveDateTime::parse_from_str(iso_timestamp, "%Y-%m-%dT%H:%M:%SZ")
@@ -835,18 +845,16 @@ async fn handle_cron_list(
 
     for name in names {
         let spec = &specs[name];
-        let desc = rightclaw::cron_spec::describe_schedule(&spec.schedule);
+        let desc = super::markdown::html_escape(
+            &rightclaw::cron_spec::describe_schedule(&spec.schedule),
+        );
 
-        let last_run = rightclaw::cron_spec::get_recent_runs(&conn, name, 1).unwrap_or_default();
+        let last_run = rightclaw::cron_spec::get_recent_runs(&conn, name, 1)
+            .map_err(|e| to_request_err(format!("get runs failed: {e:#}")))?;
 
         let status_str = match last_run.first() {
             Some(run) => {
-                let icon = match run.status.as_str() {
-                    "success" => "\u{2705}",
-                    "failed" => "\u{274c}",
-                    "running" => "\u{23f3}",
-                    _ => "?",
-                };
+                let icon = status_icon(&run.status);
                 let ago = format_relative_time(&run.started_at);
                 format!("last: {ago} {icon}")
             }
@@ -882,32 +890,31 @@ async fn handle_cron_detail(
         return Ok(());
     };
 
-    let desc = rightclaw::cron_spec::describe_schedule(&detail.schedule);
+    let desc = super::markdown::html_escape(
+        &rightclaw::cron_spec::describe_schedule(&detail.schedule),
+    );
+    let schedule_escaped = super::markdown::html_escape(&detail.schedule);
     let mut text = format!(
         "<b>{}</b>\nSchedule: {} (<code>{}</code>)\nBudget: ${:.2}",
-        detail.job_name, desc, detail.schedule, detail.max_budget_usd,
+        detail.job_name, desc, schedule_escaped, detail.max_budget_usd,
     );
     if let Some(ref ttl) = detail.lock_ttl {
-        text.push_str(&format!("\nLock TTL: {ttl}"));
+        let ttl_escaped = super::markdown::html_escape(ttl);
+        text.push_str(&format!("\nLock TTL: {ttl_escaped}"));
     }
     if detail.triggered_at.is_some() {
         text.push_str("\n\u{26a1} Trigger pending");
     }
 
-    let runs =
-        rightclaw::cron_spec::get_recent_runs(&conn, job_name, 5).unwrap_or_default();
+    let runs = rightclaw::cron_spec::get_recent_runs(&conn, job_name, 5)
+        .map_err(|e| to_request_err(format!("get runs failed: {e:#}")))?;
 
     if runs.is_empty() {
         text.push_str("\n\nNo runs yet.");
     } else {
         text.push_str("\n\nRecent runs:");
         for (i, run) in runs.iter().enumerate() {
-            let icon = match run.status.as_str() {
-                "success" => "\u{2705}",
-                "failed" => "\u{274c}",
-                "running" => "\u{23f3}",
-                _ => "?",
-            };
+            let icon = status_icon(&run.status);
             let ago = format_relative_time(&run.started_at);
             let duration = match &run.finished_at {
                 Some(end) => format_duration(&run.started_at, end),

@@ -76,6 +76,12 @@ pub struct CronDeleteParams {
 pub struct CronListParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CronTriggerParams {
+    #[schemars(description = "Job name to trigger for immediate execution")]
+    pub job_name: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct McpAddParams {
     #[schemars(description = "MCP server identifier (e.g. 'notion', 'linear')")]
     pub name: String,
@@ -367,6 +373,20 @@ impl MemoryServer {
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
+    #[tool(description = "Trigger a cron job for immediate execution. The job is queued and will run on the next engine tick (≤30s). Lock check still applies — if the job is currently running, the trigger is skipped.")]
+    async fn cron_trigger(
+        &self,
+        Parameters(params): Parameters<CronTriggerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| McpError::internal_error(format!("mutex poisoned: {e}"), None))?;
+        let msg = rightclaw::cron_spec::trigger_spec(&conn, &params.job_name)
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        Ok(CallToolResult::success(vec![Content::text(msg)]))
+    }
+
     #[tool(description = "Add an HTTP MCP server to this agent's mcp.json. Use /mcp auth <name> in Telegram to complete OAuth if the server requires authentication.")]
     async fn mcp_add(
         &self,
@@ -546,7 +566,8 @@ impl rmcp::ServerHandler for MemoryServer {
                  - cron_delete: Delete a cron job spec\n\
                  - cron_list: List all current cron job specs\n\
                  - cron_list_runs: List recent cron job executions\n\
-                 - cron_show_run: Get details of a specific cron run\n\n\
+                 - cron_show_run: Get details of a specific cron run\n\
+                 - cron_trigger: Trigger a cron job for immediate execution\n\n\
                  ## MCP Management\n\
                  - mcp_add: Add an external HTTP MCP server\n\
                  - mcp_remove: Remove an MCP server (cannot remove 'right')\n\
