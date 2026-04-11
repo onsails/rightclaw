@@ -1,7 +1,7 @@
 //! MCP Aggregator: prefix-based routing across built-in and proxied backends.
 //!
 //! Three-layer architecture:
-//! - [`Aggregator`] — top-level struct (will impl `ServerHandler` in Task 6)
+//! - [`Aggregator`] — top-level `ServerHandler` impl for `StreamableHttpService`
 //! - [`ToolDispatcher`] — prefix parsing + per-agent routing
 //! - [`BackendRegistry`] — per-agent backend management (RightBackend + proxies)
 
@@ -12,9 +12,15 @@ use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use dashmap::DashMap;
-use rmcp::model::{CallToolResult, Content, Tool};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
+    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+};
+use rmcp::service::{RequestContext, RoleServer};
+use rmcp::ErrorData as McpError;
 use rightclaw::mcp::proxy::BackendStatus;
 
+use crate::memory_server_http::AgentInfo;
 use crate::right_backend::RightBackend;
 
 /// Maximum characters per backend in merged instructions.
@@ -24,13 +30,6 @@ const INSTRUCTIONS_TRUNCATION_LIMIT: usize = 4000;
 /// Returns `None` if no `__` found (tool belongs to RightBackend, unprefixed).
 pub(crate) fn split_prefix(tool_name: &str) -> Option<(&str, &str)> {
     tool_name.split_once("__")
-}
-
-/// Metadata for a connected agent.
-#[derive(Clone, Debug)]
-pub(crate) struct AgentInfo {
-    pub name: String,
-    pub dir: PathBuf,
 }
 
 /// Lightweight handle for a registered external MCP server.
@@ -214,9 +213,99 @@ impl ToolDispatcher {
     }
 }
 
-/// Top-level aggregator. Will implement `ServerHandler` in Task 6.
+/// Top-level aggregator: rmcp `ServerHandler` backed by prefix-based tool routing.
+///
+/// Each HTTP request creates a fresh `Aggregator` via the factory closure.
+/// Agent identity is extracted from HTTP request extensions (set by bearer auth middleware).
 pub(crate) struct Aggregator {
     pub dispatcher: Arc<ToolDispatcher>,
+}
+
+impl Aggregator {
+    /// Factory closure for `StreamableHttpService::new`.
+    ///
+    /// In stateless mode, each HTTP POST creates a fresh `Aggregator`.
+    pub(crate) fn factory(
+        dispatcher: Arc<ToolDispatcher>,
+    ) -> impl FnMut() -> Result<Self, Box<dyn std::error::Error + Send + Sync>> + Clone {
+        move || {
+            Ok(Self {
+                dispatcher: dispatcher.clone(),
+            })
+        }
+    }
+
+    /// Extract `AgentInfo` from the rmcp request context.
+    ///
+    /// The bearer auth middleware injects `AgentInfo` into the HTTP request extensions.
+    /// rmcp's `StreamableHttpService` then injects `http::request::Parts` into the
+    /// rmcp `Extensions` on the `RequestContext`.
+    fn agent_from_context(context: &RequestContext<RoleServer>) -> Result<AgentInfo, McpError> {
+        let parts = context
+            .extensions
+            .get::<http::request::Parts>()
+            .ok_or_else(|| {
+                McpError::internal_error("HTTP request parts not found in context", None)
+            })?;
+        parts
+            .extensions
+            .get::<AgentInfo>()
+            .cloned()
+            .ok_or_else(|| {
+                McpError::internal_error("agent context not found in request extensions", None)
+            })
+    }
+}
+
+impl rmcp::ServerHandler for Aggregator {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("rightclaw", env!("CARGO_PKG_VERSION")))
+            .with_instructions(
+                "RightClaw MCP Aggregator — routes tool calls to built-in RightClaw tools \
+                 and connected external MCP servers via prefix-based dispatch.",
+            )
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
+        async move {
+            let agent = Self::agent_from_context(&context)?;
+            let tools = self.dispatcher.tools_list(&agent.name);
+            Ok(ListToolsResult { tools, next_cursor: None, meta: None })
+        }
+    }
+
+    fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
+        async move {
+            let agent = Self::agent_from_context(&context)?;
+            let tool_name = request.name.as_ref();
+            let args = request
+                .arguments
+                .map(|m| serde_json::Value::Object(m))
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+            self.dispatcher
+                .dispatch(&agent.name, tool_name, args)
+                .await
+                .map_err(|e| McpError::internal_error(format!("{e:#}"), None))
+        }
+    }
+
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        // No agent context available here (no RequestContext), so we cannot
+        // do per-agent lookup. Return None to bypass task-support validation.
+        // This is acceptable because all our tools use default TaskSupport::Forbidden.
+        let _ = name;
+        None
+    }
 }
 
 #[cfg(test)]
