@@ -1,8 +1,14 @@
 use std::io::Write as _;
+use std::net::IpAddr;
 use std::path::Path;
 
+use rusqlite::Connection;
 use serde_json::json;
 use tempfile::NamedTempFile;
+use url::Url;
+
+/// Reserved server names that cannot be registered.
+const RESERVED_NAMES: &[&str] = &["right", "rightmeta"];
 
 /// Error type for credential operations.
 #[derive(Debug, thiserror::Error)]
@@ -17,6 +23,10 @@ pub enum CredentialError {
     InvalidPath,
     #[error("atomic write failed: {0}")]
     Persist(#[from] tempfile::PersistError),
+    #[error("invalid server name: {0}")]
+    InvalidServerName(String),
+    #[error("invalid server URL: {0}")]
+    InvalidServerUrl(String),
 }
 
 /// Atomically write JSON value to path using same-dir NamedTempFile + rename.
@@ -149,6 +159,256 @@ pub fn set_server_header(
         .insert(header_name.to_string(), json!(header_value));
 
     write_json_atomic(mcp_json_path, &root)
+}
+
+// ---------------------------------------------------------------------------
+// SQLite-based server registry
+// ---------------------------------------------------------------------------
+
+/// Map a `rusqlite::Error` into `CredentialError::Io`.
+fn map_db_err(e: rusqlite::Error) -> CredentialError {
+    CredentialError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{e:#}")))
+}
+
+/// Validate an MCP server name.
+///
+/// Rejects empty names, reserved names (`right`, `rightmeta`), and names
+/// containing `__` (double underscore — reserved for internal namespacing).
+pub fn validate_server_name(name: &str) -> Result<(), CredentialError> {
+    if name.is_empty() {
+        return Err(CredentialError::InvalidServerName(
+            "server name must not be empty".to_string(),
+        ));
+    }
+    if RESERVED_NAMES.contains(&name) {
+        return Err(CredentialError::InvalidServerName(format!(
+            "'{name}' is a reserved server name"
+        )));
+    }
+    if name.contains("__") {
+        return Err(CredentialError::InvalidServerName(format!(
+            "'{name}' must not contain '__'"
+        )));
+    }
+    Ok(())
+}
+
+/// Validate an MCP server URL.
+///
+/// Requires HTTPS scheme. Rejects private/loopback/link-local IP addresses
+/// and `localhost`.
+pub fn validate_server_url(url_str: &str) -> Result<(), CredentialError> {
+    let parsed = Url::parse(url_str)
+        .map_err(|e| CredentialError::InvalidServerUrl(format!("invalid URL: {e}")))?;
+
+    if parsed.scheme() != "https" {
+        return Err(CredentialError::InvalidServerUrl(format!(
+            "only HTTPS URLs are allowed, got '{}'",
+            parsed.scheme()
+        )));
+    }
+
+    let url_host = parsed
+        .host()
+        .ok_or_else(|| CredentialError::InvalidServerUrl("URL has no host".to_string()))?;
+
+    match url_host {
+        url::Host::Domain(domain) => {
+            if domain == "localhost" {
+                return Err(CredentialError::InvalidServerUrl(
+                    "localhost is not allowed".to_string(),
+                ));
+            }
+        }
+        url::Host::Ipv4(v4) => {
+            if v4.is_loopback() || v4.is_private() || v4.is_link_local() {
+                return Err(CredentialError::InvalidServerUrl(format!(
+                    "private/loopback IP address '{v4}' is not allowed"
+                )));
+            }
+        }
+        url::Host::Ipv6(v6) => {
+            if v6.is_loopback() {
+                return Err(CredentialError::InvalidServerUrl(format!(
+                    "loopback IP address '{v6}' is not allowed"
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Register (or update) an external MCP server in the SQLite registry.
+pub fn db_add_server(
+    conn: &Connection,
+    name: &str,
+    url: &str,
+) -> Result<(), CredentialError> {
+    validate_server_name(name)?;
+    validate_server_url(url)?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO mcp_servers (name, url) VALUES (?1, ?2)",
+        rusqlite::params![name, url],
+    )
+    .map_err(map_db_err)?;
+
+    Ok(())
+}
+
+/// Remove an external MCP server from the SQLite registry.
+///
+/// Returns `CredentialError::ServerNotFound` if no matching row exists.
+pub fn db_remove_server(conn: &Connection, name: &str) -> Result<(), CredentialError> {
+    let rows = conn
+        .execute(
+            "DELETE FROM mcp_servers WHERE name = ?1",
+            rusqlite::params![name],
+        )
+        .map_err(map_db_err)?;
+
+    if rows == 0 {
+        return Err(CredentialError::ServerNotFound(name.to_string()));
+    }
+    Ok(())
+}
+
+/// List all registered external MCP servers, sorted by name.
+///
+/// Returns `(name, url)` pairs.
+pub fn db_list_servers(conn: &Connection) -> Result<Vec<(String, String)>, CredentialError> {
+    let mut stmt = conn
+        .prepare("SELECT name, url FROM mcp_servers ORDER BY name")
+        .map_err(map_db_err)?;
+
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(map_db_err)?;
+
+    let mut result = Vec::new();
+    for row in rows {
+        result.push(row.map_err(map_db_err)?);
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod db_tests {
+    use super::*;
+    use crate::memory::migrations::MIGRATIONS;
+
+    fn setup_db() -> Connection {
+        let mut conn = Connection::open_in_memory().unwrap();
+        MIGRATIONS.to_latest(&mut conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn add_and_list_servers() {
+        let conn = setup_db();
+        db_add_server(&conn, "notion", "https://mcp.notion.com/mcp").unwrap();
+        db_add_server(&conn, "linear", "https://mcp.linear.app/mcp").unwrap();
+
+        let servers = db_list_servers(&conn).unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].0, "linear");
+        assert_eq!(servers[0].1, "https://mcp.linear.app/mcp");
+        assert_eq!(servers[1].0, "notion");
+        assert_eq!(servers[1].1, "https://mcp.notion.com/mcp");
+    }
+
+    #[test]
+    fn remove_server() {
+        let conn = setup_db();
+        db_add_server(&conn, "notion", "https://mcp.notion.com/mcp").unwrap();
+        db_remove_server(&conn, "notion").unwrap();
+
+        let servers = db_list_servers(&conn).unwrap();
+        assert!(servers.is_empty());
+    }
+
+    #[test]
+    fn remove_nonexistent_server() {
+        let conn = setup_db();
+        let err = db_remove_server(&conn, "ghost").unwrap_err();
+        assert!(matches!(err, CredentialError::ServerNotFound(_)));
+    }
+
+    #[test]
+    fn upsert_server() {
+        let conn = setup_db();
+        db_add_server(&conn, "notion", "https://old.notion.com/mcp").unwrap();
+        db_add_server(&conn, "notion", "https://new.notion.com/mcp").unwrap();
+
+        let servers = db_list_servers(&conn).unwrap();
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].1, "https://new.notion.com/mcp");
+    }
+
+    #[test]
+    fn validate_server_name_valid() {
+        validate_server_name("notion").unwrap();
+        validate_server_name("my-server").unwrap();
+        validate_server_name("server_one").unwrap();
+    }
+
+    #[test]
+    fn validate_server_name_reserved() {
+        assert!(matches!(
+            validate_server_name("right"),
+            Err(CredentialError::InvalidServerName(_))
+        ));
+        assert!(matches!(
+            validate_server_name("rightmeta"),
+            Err(CredentialError::InvalidServerName(_))
+        ));
+    }
+
+    #[test]
+    fn validate_server_name_double_underscore() {
+        assert!(matches!(
+            validate_server_name("my__server"),
+            Err(CredentialError::InvalidServerName(_))
+        ));
+    }
+
+    #[test]
+    fn validate_server_name_empty() {
+        assert!(matches!(
+            validate_server_name(""),
+            Err(CredentialError::InvalidServerName(_))
+        ));
+    }
+
+    #[test]
+    fn validate_server_url_https_ok() {
+        validate_server_url("https://mcp.notion.com/mcp").unwrap();
+    }
+
+    #[test]
+    fn validate_server_url_http_rejected() {
+        assert!(matches!(
+            validate_server_url("http://mcp.notion.com/mcp"),
+            Err(CredentialError::InvalidServerUrl(_))
+        ));
+    }
+
+    #[test]
+    fn validate_server_url_private_ips_rejected() {
+        // RFC1918
+        assert!(validate_server_url("https://192.168.1.1/mcp").is_err());
+        assert!(validate_server_url("https://10.0.0.1/mcp").is_err());
+        assert!(validate_server_url("https://172.16.0.1/mcp").is_err());
+        // Loopback
+        assert!(validate_server_url("https://127.0.0.1/mcp").is_err());
+        // Link-local
+        assert!(validate_server_url("https://169.254.1.1/mcp").is_err());
+        // localhost
+        assert!(validate_server_url("https://localhost/mcp").is_err());
+        // IPv6 loopback
+        assert!(validate_server_url("https://[::1]/mcp").is_err());
+    }
 }
 
 #[cfg(test)]
