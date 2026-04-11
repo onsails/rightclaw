@@ -7,6 +7,7 @@ const V4_SCHEMA: &str = include_str!("sql/v4_sessions.sql");
 const V5_SCHEMA: &str = include_str!("sql/v5_cron_feedback.sql");
 const V6_SCHEMA: &str = include_str!("sql/v6_cron_specs.sql");
 const V7_SCHEMA: &str = include_str!("sql/v7_cron_trigger.sql");
+const V8_SCHEMA: &str = include_str!("sql/v8_mcp_servers.sql");
 
 pub static MIGRATIONS: std::sync::LazyLock<Migrations<'static>> =
     std::sync::LazyLock::new(|| {
@@ -18,6 +19,7 @@ pub static MIGRATIONS: std::sync::LazyLock<Migrations<'static>> =
             M::up(V5_SCHEMA),
             M::up(V6_SCHEMA),
             M::up(V7_SCHEMA),
+            M::up(V8_SCHEMA),
         ])
     });
 
@@ -118,6 +120,42 @@ mod tests {
             cols.contains(&"triggered_at".to_string()),
             "triggered_at column missing"
         );
+    }
+
+    #[test]
+    fn v8_mcp_servers_table() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        MIGRATIONS.to_latest(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO mcp_servers (name, url) VALUES (?1, ?2)",
+            ("notion", "https://mcp.notion.com/mcp"),
+        )
+        .unwrap();
+
+        let url: String = conn
+            .query_row(
+                "SELECT url FROM mcp_servers WHERE name = ?1",
+                ["notion"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(url, "https://mcp.notion.com/mcp");
+
+        // Test upsert
+        conn.execute(
+            "INSERT OR REPLACE INTO mcp_servers (name, url) VALUES (?1, ?2)",
+            ("notion", "https://new-url.com/mcp"),
+        )
+        .unwrap();
+        let url: String = conn
+            .query_row(
+                "SELECT url FROM mcp_servers WHERE name = ?1",
+                ["notion"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(url, "https://new-url.com/mcp");
     }
 
     #[test]
