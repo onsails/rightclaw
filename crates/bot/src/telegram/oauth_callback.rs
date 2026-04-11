@@ -21,7 +21,7 @@ use serde::Deserialize;
 use tokio::net::UnixListener;
 use tokio::sync::Mutex;
 
-use rightclaw::mcp::credentials::{add_http_server, set_server_header};
+use rightclaw::mcp::internal_client::{InternalClient, SetTokenRequest};
 use rightclaw::mcp::oauth::{exchange_token, verify_state, PendingAuth};
 
 /// Shared in-memory map of OAuth state -> pending auth session.
@@ -41,16 +41,14 @@ pub struct CallbackParams {
 #[derive(Clone)]
 pub struct OAuthCallbackState {
     pub pending_auth: PendingAuthMap,
-    /// Path to agent's mcp.json (for Bearer token storage)
-    pub mcp_json_path: PathBuf,
     /// Agent name (for logging and notifications)
     pub agent_name: String,
     /// Telegram Bot for sending notifications
     pub bot: teloxide::Bot,
     /// Chat IDs to notify after OAuth completes
     pub notify_chat_ids: Vec<i64>,
-    /// Channel to notify refresh scheduler about new OAuth tokens
-    pub refresh_tx: tokio::sync::mpsc::Sender<rightclaw::mcp::refresh::RefreshMessage>,
+    /// Internal API client for delivering OAuth tokens to the aggregator
+    pub internal_client: Arc<InternalClient>,
 }
 
 /// Build the axum router for the OAuth callback server.
@@ -172,7 +170,7 @@ async fn handle_oauth_callback(
         .into_response()
 }
 
-/// Exchange the authorization code for tokens and write Bearer token to .claude.json.
+/// Exchange the authorization code for tokens and deliver via internal API.
 ///
 /// Called in a background task after the callback response has been sent.
 async fn complete_oauth_flow(
@@ -202,68 +200,50 @@ async fn complete_oauth_flow(
         "token exchange succeeded"
     );
 
-    // Ensure server entry exists in mcp.json (idempotent)
-    add_http_server(
-        &cb_state.mcp_json_path,
-        &pending.server_name,
-        &pending.server_url,
-    )
-    .map_err(|e| miette::miette!("add_http_server failed: {e:#}"))?;
+    // Deliver token to aggregator via internal API
+    let set_token_req = SetTokenRequest {
+        agent: agent_name.to_string(),
+        server: pending.server_name.clone(),
+        access_token: token_resp.access_token.clone(),
+        refresh_token: token_resp.refresh_token.clone().unwrap_or_default(),
+        expires_in: token_resp.expires_in.unwrap_or(3600) as u64,
+        token_endpoint: pending.token_endpoint.clone(),
+        client_id: pending.client_id.clone(),
+        client_secret: pending.client_secret.clone(),
+    };
 
-    // Set Authorization: Bearer <token> header
-    set_server_header(
-        &cb_state.mcp_json_path,
-        &pending.server_name,
-        "Authorization",
-        &format!("Bearer {}", token_resp.access_token),
-    )
-    .map_err(|e| miette::miette!("set_server_header failed: {e:#}"))?;
-
-    tracing::info!(
-        agent = %agent_name,
-        server = %pending.server_name,
-        url = %pending.server_url,
-        "Bearer token written to mcp.json"
-    );
-
-    // Upload updated mcp.json to sandbox so CC picks it up immediately
-    let sandbox = rightclaw::openshell::sandbox_name(agent_name);
-    if cb_state.mcp_json_path.exists() {
-        if let Err(e) =
-            rightclaw::openshell::upload_file(&sandbox, &cb_state.mcp_json_path, "/sandbox/").await
-        {
-            tracing::warn!(agent = %agent_name, "failed to upload mcp.json to sandbox after OAuth: {e:#}");
-        } else {
-            tracing::info!(agent = %agent_name, "uploaded mcp.json to sandbox after OAuth");
+    match cb_state.internal_client.set_token(&set_token_req).await {
+        Ok(resp) => {
+            let msg = if let Some(ref warning) = resp.warning {
+                format!(
+                    "Authenticated with {} (agent {agent_name}). {warning}",
+                    pending.server_name,
+                )
+            } else {
+                format!(
+                    "Authenticated with {} (agent {agent_name}). Tools available on next session.",
+                    pending.server_name,
+                )
+            };
+            notify_telegram(&cb_state.bot, &cb_state.notify_chat_ids, &msg).await;
+        }
+        Err(e) => {
+            tracing::error!(
+                agent = %agent_name,
+                server = %pending.server_name,
+                "set_token failed: {e:#}"
+            );
+            notify_telegram(
+                &cb_state.bot,
+                &cb_state.notify_chat_ids,
+                &format!(
+                    "Authentication succeeded but token delivery failed for {} (agent {agent_name}): {e}",
+                    pending.server_name,
+                ),
+            )
+            .await;
         }
     }
-
-    // Notify refresh scheduler about new token
-    if let Some(expires_in) = token_resp.expires_in {
-        let oauth_entry = rightclaw::mcp::refresh::OAuthServerState {
-            refresh_token: token_resp.refresh_token.clone(),
-            token_endpoint: pending.token_endpoint.clone(),
-            client_id: pending.client_id.clone(),
-            client_secret: pending.client_secret.clone(),
-            expires_at: chrono::Utc::now() + chrono::Duration::seconds(expires_in as i64),
-            server_url: pending.server_url.clone(),
-        };
-        let _ = cb_state.refresh_tx.send(rightclaw::mcp::refresh::RefreshMessage::NewEntry {
-            server_name: pending.server_name.clone(),
-            state: oauth_entry,
-        }).await;
-    }
-
-    // Notify Telegram
-    notify_telegram(
-        &cb_state.bot,
-        &cb_state.notify_chat_ids,
-        &format!(
-            "OAuth complete for {} (agent {agent_name}). Token written to mcp.json.",
-            pending.server_name,
-        ),
-    )
-    .await;
 
     Ok(())
 }
@@ -345,14 +325,12 @@ mod tests {
 
     /// Build a minimal OAuthCallbackState for tests (no real bot/credentials)
     fn dummy_state(map: PendingAuthMap) -> OAuthCallbackState {
-        let (tx, _rx) = tokio::sync::mpsc::channel(1);
         OAuthCallbackState {
             pending_auth: map,
-            mcp_json_path: PathBuf::from("/tmp/fake-mcp.json"),
             agent_name: "test-agent".to_string(),
             bot: teloxide::Bot::new("0:fake_token_for_tests"),
             notify_chat_ids: vec![],
-            refresh_tx: tx,
+            internal_client: Arc::new(InternalClient::new("/tmp/fake-internal.sock")),
         }
     }
 

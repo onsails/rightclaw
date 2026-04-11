@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::bot::build_bot;
 use super::filter::make_chat_id_filter;
-use super::handler::{handle_cron, handle_doctor, handle_list, handle_mcp, handle_message, handle_new, handle_start, handle_stop_callback, handle_switch, AgentDir, AgentSettings, AuthCodeSlot, AuthWatcherFlag, DebugFlag, IdleTimestamp, RefreshTx, RightclawHome, SshConfigPath};
+use super::handler::{handle_cron, handle_doctor, handle_list, handle_mcp, handle_message, handle_new, handle_start, handle_stop_callback, handle_switch, AgentDir, AgentSettings, AuthCodeSlot, AuthWatcherFlag, DebugFlag, IdleTimestamp, InternalApi, RefreshTx, RightclawHome, SshConfigPath};
 use super::oauth_callback::PendingAuthMap;
 use super::worker::{DebounceMsg, SessionKey};
 
@@ -73,6 +73,7 @@ pub async fn run_telegram(
     model: Option<String>,
     shutdown: CancellationToken,
     idle_ts: Arc<IdleTimestamp>,
+    internal_client: Arc<rightclaw::mcp::internal_client::InternalClient>,
 ) -> miette::Result<()> {
     let bot = build_bot(token);
 
@@ -95,6 +96,7 @@ pub async fn run_telegram(
         Arc::new(tokio::sync::Mutex::new(None)),
     ));
     let refresh_tx_arc: Arc<RefreshTx> = Arc::new(RefreshTx(refresh_tx));
+    let internal_api_arc: Arc<InternalApi> = Arc::new(InternalApi(internal_client));
     let settings_arc: Arc<AgentSettings> = Arc::new(AgentSettings {
         max_turns,
         max_budget_usd,
@@ -140,6 +142,7 @@ pub async fn run_telegram(
             Arc::clone(&auth_watcher_flag_arc),
             Arc::clone(&auth_code_slot_arc),
             Arc::clone(&refresh_tx_arc),
+            Arc::clone(&internal_api_arc),
             Arc::clone(&settings_arc),
             Arc::clone(&stop_tokens),
             Arc::clone(&idle_ts)
