@@ -3,7 +3,7 @@ use teloxide::prelude::Requester as _;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::telegram::{worker::parse_reply_output, BotType};
+use crate::telegram::BotType;
 
 /// Deserialized from crons/*.yaml
 #[derive(Debug, Clone, serde::Deserialize, PartialEq)]
@@ -38,6 +38,20 @@ pub enum CronError {
     Io(#[from] std::io::Error),
     #[error("db error: {0:#}")]
     Db(#[from] rightclaw::memory::MemoryError),
+}
+
+/// Structured output from a cron CC invocation.
+#[derive(Debug, serde::Deserialize)]
+pub struct CronReplyOutput {
+    pub notify: Option<CronNotify>,
+    pub summary: String,
+}
+
+/// User-facing notification from a cron job.
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
+pub struct CronNotify {
+    pub content: String,
+    pub attachments: Option<Vec<crate::telegram::attachments::OutboundAttachment>>,
 }
 
 /// Convert a 5-field user expression to the 7-field format required by the cron crate.
@@ -335,19 +349,37 @@ async fn execute_job(
     }
 }
 
-/// Extract reply content from CC stdout for Telegram delivery.
+/// Parse CC stdout into `CronReplyOutput`.
 ///
-/// Returns `Some(content)` when CC produced a non-empty reply, `None` otherwise.
-/// Called only when `has_schema` is true (gating is the caller's responsibility).
-/// Parses via `parse_reply_output` so both `structured_output` and plain-string `result`
-/// fields are handled (CC does not always comply with `--json-schema` after MCP tool use).
+/// Tries `structured_output` first, falls back to `result`.
+/// Returns `Err` if neither field is present or JSON is invalid.
+pub(crate) fn parse_cron_output(stdout: &[u8]) -> Result<CronReplyOutput, String> {
+    let raw = String::from_utf8_lossy(stdout);
+
+    let envelope: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|e| format!("CC output is not valid JSON: {e}"))?;
+
+    let payload = if let Some(so) = envelope.get("structured_output") {
+        if !so.is_null() { so } else { envelope.get("result").unwrap_or(so) }
+    } else if let Some(r) = envelope.get("result") {
+        r
+    } else {
+        return Err("CC output has neither 'structured_output' nor 'result' field".into());
+    };
+
+    serde_json::from_value(payload.clone())
+        .map_err(|e| format!("failed to parse CronReplyOutput: {e}"))
+}
+
+/// Legacy wrapper: extract reply content from CC stdout for Telegram delivery.
+///
+/// Delegates to `parse_cron_output` and extracts notify content.
 pub(crate) fn parse_cron_reply_content(stdout: &[u8], has_schema: bool) -> Option<String> {
     if !has_schema {
         return None;
     }
-    let raw = String::from_utf8_lossy(stdout);
-    match parse_reply_output(&raw) {
-        Ok((reply_output, _)) => reply_output.content,
+    match parse_cron_output(stdout) {
+        Ok(output) => output.notify.map(|n| n.content),
         Err(reason) => {
             tracing::warn!(reason, "CC cron output parse failed — no Telegram notification sent");
             None
@@ -627,48 +659,46 @@ prompt: "Do stuff"
         assert_eq!(spec.max_budget_usd, 1.0, "default budget should be 1.0");
     }
 
-    // parse_cron_reply_content tests — cover gating logic for CRON-reply delivery
+    // -- CronReplyOutput parser tests --
 
     #[test]
-    fn parse_cron_reply_content_no_schema_returns_none() {
-        // Even if stdout has valid CC JSON, no schema → no delivery
-        let json = r#"{"result":{"content":"hello","reply_to_message_id":null,"media_paths":null}}"#;
-        assert!(parse_cron_reply_content(json.as_bytes(), false).is_none());
+    fn parse_cron_output_full_notify() {
+        let json = r#"{"result":{"notify":{"content":"BTC broke 100k","attachments":null},"summary":"Checked 5 pairs"}}"#;
+        let out = parse_cron_output(json.as_bytes()).unwrap();
+        assert_eq!(out.summary, "Checked 5 pairs");
+        let notify = out.notify.unwrap();
+        assert_eq!(notify.content, "BTC broke 100k");
+        assert!(notify.attachments.is_none());
     }
 
     #[test]
-    fn parse_cron_reply_content_with_schema_returns_content() {
-        let json = r#"{"result":{"content":"cron says hi","reply_to_message_id":null,"media_paths":null}}"#;
-        let result = parse_cron_reply_content(json.as_bytes(), true);
-        assert_eq!(result.as_deref(), Some("cron says hi"));
+    fn parse_cron_output_silent_null_notify() {
+        let json = r#"{"result":{"notify":null,"summary":"Nothing interesting"}}"#;
+        let out = parse_cron_output(json.as_bytes()).unwrap();
+        assert!(out.notify.is_none());
+        assert_eq!(out.summary, "Nothing interesting");
     }
 
     #[test]
-    fn parse_cron_reply_content_null_content_returns_none() {
-        // content: null → silent job, nothing sent to Telegram
-        let json = r#"{"result":{"content":null,"reply_to_message_id":null,"media_paths":null}}"#;
-        assert!(parse_cron_reply_content(json.as_bytes(), true).is_none());
+    fn parse_cron_output_with_attachments() {
+        let json = r#"{"result":{"notify":{"content":"Chart","attachments":[{"type":"photo","path":"/sandbox/outbox/chart.png"}]},"summary":"Generated chart"}}"#;
+        let out = parse_cron_output(json.as_bytes()).unwrap();
+        let notify = out.notify.unwrap();
+        assert_eq!(notify.attachments.as_ref().unwrap().len(), 1);
+        assert_eq!(notify.attachments.unwrap()[0].path, "/sandbox/outbox/chart.png");
     }
 
     #[test]
-    fn parse_cron_reply_content_plain_string_result_wrapped() {
-        // CC sometimes returns result as plain string after MCP tool use
-        let json = r#"{"result":"market update: BTC up 2%"}"#;
-        let result = parse_cron_reply_content(json.as_bytes(), true);
-        assert_eq!(result.as_deref(), Some("market update: BTC up 2%"));
+    fn parse_cron_output_structured_output_preferred() {
+        let json = r#"{"result":"ignored","structured_output":{"notify":null,"summary":"from structured"}}"#;
+        let out = parse_cron_output(json.as_bytes()).unwrap();
+        assert_eq!(out.summary, "from structured");
     }
 
     #[test]
-    fn parse_cron_reply_content_unparseable_json_returns_none() {
-        let result = parse_cron_reply_content(b"not json at all", true);
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn parse_cron_reply_content_structured_output_preferred_over_result() {
-        let json = r#"{"result":"ignored","structured_output":{"content":"from structured","reply_to_message_id":null,"media_paths":null}}"#;
-        let result = parse_cron_reply_content(json.as_bytes(), true);
-        assert_eq!(result.as_deref(), Some("from structured"));
+    fn parse_cron_output_unparseable_returns_err() {
+        let result = parse_cron_output(b"not json");
+        assert!(result.is_err());
     }
 
     #[test]
