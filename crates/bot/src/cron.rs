@@ -473,8 +473,7 @@ async fn reconcile_jobs(
     agent_dir: &std::path::Path,
     agent_name: &str,
     model: &Option<String>,
-    bot: &BotType,
-    notify_chat_ids: &[i64],
+    ssh_config_path: &Option<std::path::PathBuf>,
 ) {
     let new_specs = load_specs(agent_dir);
 
@@ -502,11 +501,10 @@ async fn reconcile_jobs(
         let job_agent_dir = agent_dir.to_path_buf();
         let job_agent_name = agent_name.to_string();
         let job_model = model.clone();
-        let job_bot = bot.clone();
-        let job_chat_ids = notify_chat_ids.to_vec();
+        let job_ssh_config = ssh_config_path.clone();
 
         let handle = tokio::spawn(async move {
-            run_job_loop(job_name, job_spec, job_agent_dir, job_agent_name, job_model, job_bot, job_chat_ids)
+            run_job_loop(job_name, job_spec, job_agent_dir, job_agent_name, job_model, job_ssh_config)
                 .await;
         });
         handles.insert(name.clone(), (spec.clone(), handle));
@@ -521,8 +519,7 @@ async fn run_job_loop(
     agent_dir: std::path::PathBuf,
     agent_name: String,
     model: Option<String>,
-    bot: BotType,
-    notify_chat_ids: Vec<i64>,
+    ssh_config_path: Option<std::path::PathBuf>,
 ) {
     use cron::Schedule;
     use std::str::FromStr;
@@ -559,10 +556,9 @@ async fn run_job_loop(
         let ad = agent_dir.clone();
         let an = agent_name.clone();
         let md = model.clone();
-        let bt = bot.clone();
-        let nc = notify_chat_ids.clone();
+        let sc = ssh_config_path.clone();
         tokio::spawn(async move {
-            execute_job(&jn, &sp, &ad, &an, md.as_deref(), &bt, &nc).await;
+            execute_job(&jn, &sp, &ad, &an, md.as_deref(), sc.as_deref()).await;
         });
     }
 }
