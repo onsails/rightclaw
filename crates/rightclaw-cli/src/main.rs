@@ -3,6 +3,7 @@ use std::path::Path;
 use clap::{Parser, Subcommand};
 
 pub(crate) mod aggregator;
+pub(crate) mod internal_api;
 mod memory_server;
 mod memory_server_http;
 pub(crate) mod right_backend;
@@ -301,7 +302,7 @@ async fn main() -> miette::Result<()> {
         for (name, _token) in &raw_map {
             let agent_dir = agents_dir.join(name);
             let right = right_backend::RightBackend::new(agents_dir.clone(), home.clone());
-            let proxies = std::collections::HashMap::new(); // ProxyBackend added in Task 8
+            let proxies = std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
 
             dispatcher.agents.insert(name.clone(), aggregator::BackendRegistry {
                 right,
@@ -316,6 +317,7 @@ async fn main() -> miette::Result<()> {
             token_map,
             dispatcher,
             agents_dir,
+            home,
         ).await;
     }
 

@@ -1,0 +1,606 @@
+//! Internal REST API served on a Unix domain socket for bot→aggregator IPC.
+//!
+//! Exposes endpoints for MCP server management (add/remove/set-token) that are
+//! accessible only to the Telegram bot process, not to agents.
+
+use std::sync::Arc;
+
+use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
+use rightclaw::mcp::credentials::{self, CredentialError};
+use rightclaw::mcp::proxy::ProxyBackend;
+use serde::{Deserialize, Serialize};
+
+use crate::aggregator::{ProxyHandle, ToolDispatcher};
+
+// ---------------------------------------------------------------------------
+// Request / Response types
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(crate) struct McpAddRequest {
+    pub agent: String,
+    pub name: String,
+    pub url: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct McpAddResponse {
+    pub tools_count: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub excluded: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct McpRemoveRequest {
+    pub agent: String,
+    pub name: String,
+}
+
+#[derive(Serialize)]
+pub(crate) struct McpRemoveResponse {
+    pub removed: bool,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct SetTokenRequest {
+    pub agent: String,
+    pub server: String,
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_in: u64,
+    pub token_endpoint: String,
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: Option<String>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct SetTokenResponse {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Router
+// ---------------------------------------------------------------------------
+
+pub(crate) fn internal_router(dispatcher: Arc<ToolDispatcher>) -> Router {
+    Router::new()
+        .route("/mcp-add", post(handle_mcp_add))
+        .route("/mcp-remove", post(handle_mcp_remove))
+        .route("/set-token", post(handle_set_token))
+        .with_state(dispatcher)
+}
+
+// ---------------------------------------------------------------------------
+// Error helpers
+// ---------------------------------------------------------------------------
+
+fn error_response(
+    status: StatusCode,
+    error: impl Into<String>,
+    detail: Option<String>,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        status,
+        Json(ErrorResponse {
+            error: error.into(),
+            detail,
+        }),
+    )
+}
+
+fn validation_error(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    error_response(StatusCode::BAD_REQUEST, msg, None)
+}
+
+fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    error_response(StatusCode::NOT_FOUND, msg, None)
+}
+
+fn internal_error(msg: impl Into<String>) -> (StatusCode, Json<ErrorResponse>) {
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, msg, None)
+}
+
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+async fn handle_mcp_add(
+    State(dispatcher): State<Arc<ToolDispatcher>>,
+    Json(req): Json<McpAddRequest>,
+) -> axum::response::Response {
+    // Validate name
+    if let Err(e) = credentials::validate_server_name(&req.name) {
+        return validation_error(format!("{e}")).into_response();
+    }
+
+    // Validate URL
+    if let Err(e) = credentials::validate_server_url(&req.url) {
+        return validation_error(format!("{e}")).into_response();
+    }
+
+    // Get DB connection and add to SQLite (scope DashMap ref guard before await)
+    let conn_arc = {
+        let Some(registry) = dispatcher.agents.get(&req.agent) else {
+            return not_found(format!("agent '{}' not found", req.agent)).into_response();
+        };
+        match registry.right.get_conn(&req.agent) {
+            Ok(c) => c,
+            Err(e) => return internal_error(format!("db open: {e:#}")).into_response(),
+        }
+    };
+
+    {
+        let conn = match conn_arc.lock() {
+            Ok(c) => c,
+            Err(e) => return internal_error(format!("mutex poisoned: {e}")).into_response(),
+        };
+        if let Err(e) = credentials::db_add_server(&conn, &req.name, &req.url) {
+            return internal_error(format!("db_add_server: {e:#}")).into_response();
+        }
+    }
+
+    // Create ProxyBackend with Unreachable status
+    let token = Arc::new(tokio::sync::RwLock::new(None));
+    let backend = ProxyBackend::new(req.name.clone(), req.url.clone(), token);
+    let handle = Arc::new(ProxyHandle { backend });
+
+    // Insert into proxies map (clone Arc<RwLock> to avoid holding DashMap guard across await)
+    let proxies_lock = {
+        let registry = dispatcher.agents.get(&req.agent).unwrap();
+        Arc::clone(&registry.proxies)
+    };
+    {
+        let mut proxies = proxies_lock.write().await;
+        proxies.insert(req.name.clone(), Arc::clone(&handle));
+    }
+
+    // Connection is deferred — ProxyBackend starts as Unreachable.
+    // The aggregator's background reconnect loop will connect it, or
+    // the bot can trigger a reconnect via set-token.
+    let tools_count = 0usize;
+    let warning: Option<String> = Some(
+        "Server registered in Unreachable state. Connection will be attempted on next tool call or when a token is set."
+            .to_owned(),
+    );
+
+    (
+        StatusCode::OK,
+        Json(McpAddResponse {
+            tools_count,
+            excluded: Vec::new(),
+            warning,
+        }),
+    )
+        .into_response()
+}
+
+async fn handle_mcp_remove(
+    State(dispatcher): State<Arc<ToolDispatcher>>,
+    Json(req): Json<McpRemoveRequest>,
+) -> axum::response::Response {
+    // Reject protected names
+    if req.name == rightclaw::mcp::PROTECTED_MCP_SERVER || req.name == "rightmeta" {
+        return validation_error(format!(
+            "'{}' is a protected server and cannot be removed",
+            req.name
+        ))
+        .into_response();
+    }
+
+    // Clone proxies Arc and conn (scope DashMap guard before await)
+    let (proxies_lock, conn_arc) = {
+        let Some(registry) = dispatcher.agents.get(&req.agent) else {
+            return not_found(format!("agent '{}' not found", req.agent)).into_response();
+        };
+        let conn = match registry.right.get_conn(&req.agent) {
+            Ok(c) => c,
+            Err(e) => return internal_error(format!("db open: {e:#}")).into_response(),
+        };
+        (Arc::clone(&registry.proxies), conn)
+    };
+
+    // Remove from proxies
+    let removed = {
+        let mut proxies = proxies_lock.write().await;
+        proxies.remove(&req.name).is_some()
+    };
+
+    if !removed {
+        return not_found(format!(
+            "server '{}' not found for agent '{}'",
+            req.name, req.agent
+        ))
+        .into_response();
+    }
+
+    // Remove from SQLite
+    {
+        let conn = match conn_arc.lock() {
+            Ok(c) => c,
+            Err(e) => return internal_error(format!("mutex poisoned: {e}")).into_response(),
+        };
+        // Ignore ServerNotFound — we already removed from the in-memory map.
+        match credentials::db_remove_server(&conn, &req.name) {
+            Ok(()) => {}
+            Err(CredentialError::ServerNotFound(_)) => {}
+            Err(e) => return internal_error(format!("db_remove_server: {e:#}")).into_response(),
+        }
+    }
+
+    (StatusCode::OK, Json(McpRemoveResponse { removed: true })).into_response()
+}
+
+async fn handle_set_token(
+    State(dispatcher): State<Arc<ToolDispatcher>>,
+    Json(req): Json<SetTokenRequest>,
+) -> axum::response::Response {
+    // Extract what we need from DashMap guard (scope guard before await)
+    let (proxies_lock, agent_dir) = {
+        let Some(registry) = dispatcher.agents.get(&req.agent) else {
+            return not_found(format!("agent '{}' not found", req.agent)).into_response();
+        };
+        (Arc::clone(&registry.proxies), registry.agent_dir.clone())
+    };
+
+    // Find proxy handle
+    let handle = {
+        let proxies = proxies_lock.read().await;
+        proxies.get(&req.server).cloned()
+    };
+
+    let Some(handle) = handle else {
+        return not_found(format!(
+            "server '{}' not found for agent '{}'",
+            req.server, req.agent
+        ))
+        .into_response();
+    };
+
+    // Update the token in the shared Arc<RwLock<Option<String>>>
+    {
+        let mut token_guard = handle.backend.token().write().await;
+        *token_guard = Some(format!("Bearer {}", req.access_token));
+    }
+
+    // Save OAuth state to oauth-state.json
+    let oauth_state_path = agent_dir.join("oauth-state.json");
+    let mut oauth_state =
+        match rightclaw::mcp::refresh::load_oauth_state(&oauth_state_path) {
+            Ok(s) => s,
+            Err(e) => {
+                return internal_error(format!("load oauth state: {e:#}")).into_response();
+            }
+        };
+
+    let expires_at =
+        chrono::Utc::now() + chrono::Duration::seconds(req.expires_in as i64);
+    oauth_state.servers.insert(
+        req.server.clone(),
+        rightclaw::mcp::refresh::OAuthServerState {
+            refresh_token: Some(req.refresh_token),
+            token_endpoint: req.token_endpoint,
+            client_id: req.client_id,
+            client_secret: req.client_secret,
+            expires_at,
+            server_url: handle.backend.url().to_owned(),
+        },
+    );
+
+    if let Err(e) = rightclaw::mcp::refresh::save_oauth_state(&oauth_state_path, &oauth_state) {
+        return internal_error(format!("save oauth state: {e:#}")).into_response();
+    }
+
+    // Reconnection is deferred — ProxyBackend::connect contains !Send types
+    // (tracing spans). The aggregator's background loop or next tool call
+    // will trigger a reconnect attempt with the new token.
+    let warning: Option<String> = None;
+
+    (
+        StatusCode::OK,
+        Json(SetTokenResponse {
+            ok: true,
+            warning,
+        }),
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use http::Request;
+    use tower::ServiceExt;
+
+    fn make_test_dispatcher(tmp: &std::path::Path) -> Arc<ToolDispatcher> {
+        use crate::aggregator::BackendRegistry;
+        use crate::right_backend::RightBackend;
+        use dashmap::DashMap;
+        use std::collections::HashMap;
+
+        let agents_dir = tmp.join("agents");
+        let agent_dir = agents_dir.join("test-agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+
+        let right = RightBackend::new(agents_dir, tmp.to_path_buf());
+        let registry = BackendRegistry {
+            right,
+            proxies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            agent_name: "test-agent".into(),
+            agent_dir,
+        };
+
+        let agents = DashMap::new();
+        agents.insert("test-agent".into(), registry);
+        Arc::new(ToolDispatcher { agents })
+    }
+
+    async fn send_json(
+        app: Router,
+        path: &str,
+        body: serde_json::Value,
+    ) -> (StatusCode, serde_json::Value) {
+        let req = Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        let status = resp.status();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn mcp_add_validates_name_reserved() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, body) = send_json(
+            app,
+            "/mcp-add",
+            serde_json::json!({
+                "agent": "test-agent",
+                "name": "right",
+                "url": "https://example.com/mcp"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"].as_str().unwrap().contains("reserved"),
+            "expected reserved name error, got: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_add_validates_name_double_underscore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, _body) = send_json(
+            app,
+            "/mcp-add",
+            serde_json::json!({
+                "agent": "test-agent",
+                "name": "my__server",
+                "url": "https://example.com/mcp"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn mcp_add_validates_url_non_https() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, body) = send_json(
+            app,
+            "/mcp-add",
+            serde_json::json!({
+                "agent": "test-agent",
+                "name": "notion",
+                "url": "http://mcp.notion.com/mcp"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"].as_str().unwrap().contains("HTTPS"),
+            "expected HTTPS error, got: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_add_validates_url_private_ip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, _body) = send_json(
+            app,
+            "/mcp-add",
+            serde_json::json!({
+                "agent": "test-agent",
+                "name": "notion",
+                "url": "https://192.168.1.1/mcp"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn mcp_remove_protected_name_right() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, body) = send_json(
+            app,
+            "/mcp-remove",
+            serde_json::json!({
+                "agent": "test-agent",
+                "name": "right"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"].as_str().unwrap().contains("protected"),
+            "expected protected error, got: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_remove_protected_name_rightmeta() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, _body) = send_json(
+            app,
+            "/mcp-remove",
+            serde_json::json!({
+                "agent": "test-agent",
+                "name": "rightmeta"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn mcp_remove_agent_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, _body) = send_json(
+            app,
+            "/mcp-remove",
+            serde_json::json!({
+                "agent": "nonexistent",
+                "name": "notion"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn mcp_remove_server_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, _body) = send_json(
+            app,
+            "/mcp-remove",
+            serde_json::json!({
+                "agent": "test-agent",
+                "name": "nonexistent"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn set_token_agent_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, _body) = send_json(
+            app,
+            "/set-token",
+            serde_json::json!({
+                "agent": "nonexistent",
+                "server": "notion",
+                "access_token": "tok-abc",
+                "refresh_token": "ref-abc",
+                "expires_in": 3600,
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "my-client"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn set_token_server_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, _body) = send_json(
+            app,
+            "/set-token",
+            serde_json::json!({
+                "agent": "test-agent",
+                "server": "nonexistent",
+                "access_token": "tok-abc",
+                "refresh_token": "ref-abc",
+                "expires_in": 3600,
+                "token_endpoint": "https://auth.example.com/token",
+                "client_id": "my-client"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn mcp_add_agent_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dispatcher = make_test_dispatcher(tmp.path());
+        let app = internal_router(dispatcher);
+
+        let (status, _body) = send_json(
+            app,
+            "/mcp-add",
+            serde_json::json!({
+                "agent": "nonexistent",
+                "name": "notion",
+                "url": "https://mcp.notion.com/mcp"
+            }),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+}
