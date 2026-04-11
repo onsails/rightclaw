@@ -54,6 +54,10 @@ pub struct AuthCodeSlot(pub Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::
 #[derive(Clone)]
 pub struct RefreshTx(pub tokio::sync::mpsc::Sender<rightclaw::mcp::refresh::RefreshMessage>);
 
+/// Newtype wrapper for the InternalClient used to communicate with the MCP aggregator.
+#[derive(Clone)]
+pub struct InternalApi(pub Arc<rightclaw::mcp::internal_client::InternalClient>);
+
 /// Shared timestamp of last interaction (unix seconds).
 /// Updated by handler on incoming messages and by worker after sending replies.
 #[derive(Clone)]
@@ -425,7 +429,7 @@ pub async fn handle_mcp(
     agent_dir: Arc<AgentDir>,
     pending_auth: PendingAuthMap,
     home: Arc<RightclawHome>,
-    refresh_tx: Arc<RefreshTx>,
+    internal: Arc<InternalApi>,
 ) -> ResponseResult<()> {
     tracing::info!(agent_dir = %agent_dir.0.display(), "mcp: dispatching");
     let parts: Vec<&str> = args.split_whitespace().collect();
@@ -443,7 +447,7 @@ pub async fn handle_mcp(
         }
         Some("add") => {
             let rest = parts[1..].join(" ");
-            handle_mcp_add(&bot, &msg, &rest, &agent_dir.0).await
+            handle_mcp_add(&bot, &msg, &rest, &agent_dir.0, &internal.0).await
         }
         Some("remove") => {
             let server = match parts.get(1) {
@@ -453,7 +457,7 @@ pub async fn handle_mcp(
                     return Ok(());
                 }
             };
-            handle_mcp_remove(&bot, &msg, server, &agent_dir.0, &refresh_tx.0).await
+            handle_mcp_remove(&bot, &msg, server, &agent_dir.0, &internal.0).await
         }
         Some(unknown) => {
             bot.send_message(
@@ -466,24 +470,6 @@ pub async fn handle_mcp(
     };
     result.map_err(|e| to_request_err(format!("{e:#}")))?;
     Ok(())
-}
-
-/// Best-effort upload of mcp.json to sandbox after modification.
-/// Derives sandbox name from agent directory name.
-async fn upload_mcp_json_to_sandbox(agent_dir: &Path) {
-    let agent_name = agent_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-    let sandbox = rightclaw::openshell::sandbox_name(agent_name);
-    let mcp_json = agent_dir.join("mcp.json");
-    if mcp_json.exists() {
-        if let Err(e) = rightclaw::openshell::upload_file(&sandbox, &mcp_json, "/sandbox/").await {
-            tracing::warn!(agent = agent_name, "failed to upload mcp.json to sandbox: {e:#}");
-        } else {
-            tracing::info!(agent = agent_name, "uploaded mcp.json to sandbox after MCP config change");
-        }
-    }
 }
 
 /// `/mcp list` -- show all MCP servers from .claude.json and mcp.json.
@@ -714,12 +700,13 @@ async fn handle_mcp_auth(
     Ok(())
 }
 
-/// `/mcp add <name> <url>` -- add a server entry to .claude.json.
+/// `/mcp add <name> <url>` -- add an MCP server via the internal aggregator API.
 async fn handle_mcp_add(
     bot: &BotType,
     msg: &Message,
     config_str: &str,
     agent_dir: &Path,
+    internal: &rightclaw::mcp::internal_client::InternalClient,
 ) -> Result<(), RequestError> {
     tracing::info!(agent_dir = %agent_dir.display(), "mcp add");
     let parts: Vec<&str> = config_str.split_whitespace().collect();
@@ -731,33 +718,41 @@ async fn handle_mcp_add(
     let name = parts[0];
     let url = parts[1];
 
-    let mcp_json_path = agent_dir.join("mcp.json");
+    let agent_name = agent_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
 
-    match rightclaw::mcp::credentials::add_http_server(
-        &mcp_json_path,
-        name,
-        url,
-    ) {
-        Ok(()) => {
-            upload_mcp_json_to_sandbox(agent_dir).await;
-            bot.send_message(msg.chat.id, format!("Added MCP server: {name} ({url})"))
-                .await?;
+    let eff_thread_id = effective_thread_id(msg);
+
+    match internal.mcp_add(agent_name, name, url).await {
+        Ok(resp) => {
+            let escaped_name = super::markdown::html_escape(name);
+            let mut reply = format!("Added MCP server <b>{escaped_name}</b>.");
+            if resp.tools_count > 0 {
+                reply.push_str(&format!(" {} tools available.", resp.tools_count));
+            }
+            if let Some(ref warning) = resp.warning {
+                let escaped_warning = super::markdown::html_escape(warning);
+                reply.push_str(&format!("\n{escaped_warning}"));
+            }
+            reply.push_str("\nTools available on agent's next session.");
+            send_html_reply(bot, msg.chat.id, eff_thread_id, &reply).await?;
         }
         Err(e) => {
-            bot.send_message(msg.chat.id, format!("Failed to add server: {e:#}"))
-                .await?;
+            send_html_reply(bot, msg.chat.id, eff_thread_id, &format!("Failed: {e}")).await?;
         }
     }
     Ok(())
 }
 
-/// `/mcp remove <server>` -- remove a server entry from mcp.json and cancel refresh timer.
+/// `/mcp remove <server>` -- remove an MCP server via the internal aggregator API.
 async fn handle_mcp_remove(
     bot: &BotType,
     msg: &Message,
     server_name: &str,
     agent_dir: &Path,
-    refresh_tx: &tokio::sync::mpsc::Sender<rightclaw::mcp::refresh::RefreshMessage>,
+    internal: &rightclaw::mcp::internal_client::InternalClient,
 ) -> Result<(), RequestError> {
     tracing::info!(agent_dir = %agent_dir.display(), server = %server_name, "mcp remove");
 
@@ -770,32 +765,32 @@ async fn handle_mcp_remove(
         return Ok(());
     }
 
-    let mcp_json_path = agent_dir.join("mcp.json");
+    let agent_name = agent_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
 
-    match rightclaw::mcp::credentials::remove_http_server(
-        &mcp_json_path,
-        server_name,
-    ) {
-        Ok(()) => {
-            // Cancel pending refresh timer and clean up oauth state for this server
-            let _ = refresh_tx.send(rightclaw::mcp::refresh::RefreshMessage::RemoveServer {
-                server_name: server_name.to_owned(),
-            }).await;
+    let eff_thread_id = effective_thread_id(msg);
+    let escaped_name = super::markdown::html_escape(server_name);
 
-            upload_mcp_json_to_sandbox(agent_dir).await;
-            bot.send_message(msg.chat.id, format!("Removed MCP server: {server_name}"))
-                .await?;
-        }
-        Err(rightclaw::mcp::credentials::CredentialError::ServerNotFound(_)) => {
-            bot.send_message(
+    match internal.mcp_remove(agent_name, server_name).await {
+        Ok(_) => {
+            send_html_reply(
+                bot,
                 msg.chat.id,
-                format!("Server '{server_name}' not found in mcp.json"),
+                eff_thread_id,
+                &format!("Removed MCP server <b>{escaped_name}</b>."),
             )
             .await?;
         }
         Err(e) => {
-            bot.send_message(msg.chat.id, format!("Failed to remove server: {e:#}"))
-                .await?;
+            send_html_reply(
+                bot,
+                msg.chat.id,
+                eff_thread_id,
+                &format!("Failed: {e}"),
+            )
+            .await?;
         }
     }
     Ok(())

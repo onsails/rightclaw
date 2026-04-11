@@ -195,21 +195,22 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
     let notify_chat_ids = config.allowed_chat_ids.clone();
     let agent_name = args.agent.clone();
 
-    let mcp_json_path = agent_dir.join("mcp.json");
-
     // Create refresh scheduler channels
     let (refresh_tx, refresh_rx) = tokio::sync::mpsc::channel::<rightclaw::mcp::refresh::RefreshMessage>(32);
     let (notify_refresh_tx, mut notify_refresh_rx) = tokio::sync::mpsc::channel::<String>(32);
 
     let refresh_tx_for_handler = refresh_tx.clone();
 
+    // Internal API client for bot→aggregator IPC (MCP add/remove/set-token)
+    let internal_socket = home.join("run/internal.sock");
+    let internal_client = Arc::new(rightclaw::mcp::internal_client::InternalClient::new(internal_socket));
+
     let oauth_state = OAuthCallbackState {
         pending_auth: Arc::clone(&pending_auth),
-        mcp_json_path,
         agent_name: agent_name.clone(),
         bot: notify_bot,
         notify_chat_ids,
-        refresh_tx,
+        internal_client: Arc::clone(&internal_client),
     };
 
     // Spawn cleanup task
@@ -227,16 +228,8 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
 
     // Spawn OAuth refresh scheduler
     let oauth_state_path = agent_dir.join("oauth-state.json");
-    let mcp_json_path_for_refresh = agent_dir.join("mcp.json");
-    let sandbox_for_refresh = if is_sandboxed {
-        Some(rightclaw::openshell::sandbox_name(&agent_name))
-    } else {
-        None
-    };
     tokio::spawn(rightclaw::mcp::refresh::run_refresh_scheduler(
         oauth_state_path,
-        mcp_json_path_for_refresh,
-        sandbox_for_refresh,
         refresh_rx,
         notify_refresh_tx,
     ));
@@ -424,6 +417,7 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
             config.model.clone(),
             shutdown.clone(),
             Arc::clone(&idle_timestamp),
+            Arc::clone(&internal_client),
         ) => result,
         result = axum_handle => result
             .map_err(|e| miette::miette!("axum task panicked: {e:#}"))?,
