@@ -166,7 +166,7 @@ impl RightBackend {
     // Connection helpers
     // ------------------------------------------------------------------
 
-    fn get_conn(&self, agent_name: &str) -> Result<Arc<Mutex<rusqlite::Connection>>, anyhow::Error> {
+    pub(crate) fn get_conn(&self, agent_name: &str) -> Result<Arc<Mutex<rusqlite::Connection>>, anyhow::Error> {
         if let Some(entry) = self.conn_cache.get(agent_name) {
             return Ok(Arc::clone(entry.value()));
         }

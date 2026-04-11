@@ -45,7 +45,7 @@ pub(crate) struct ProxyHandle {
 /// Per-agent backend management: built-in tools + external proxy handles.
 pub(crate) struct BackendRegistry {
     pub right: RightBackend,
-    pub proxies: HashMap<String, Arc<ProxyHandle>>,
+    pub proxies: Arc<tokio::sync::RwLock<HashMap<String, Arc<ProxyHandle>>>>,
     pub agent_name: String,
     pub agent_dir: PathBuf,
 }
@@ -70,7 +70,8 @@ impl BackendRegistry {
         tool: &str,
         args: serde_json::Value,
     ) -> Result<CallToolResult, anyhow::Error> {
-        let proxy = self.proxies.get(proxy_name).ok_or_else(|| {
+        let proxies = self.proxies.read().await;
+        let proxy = proxies.get(proxy_name).ok_or_else(|| {
             anyhow::anyhow!(
                 "Server '{proxy_name}' not found. It may have been removed."
             )
@@ -80,14 +81,15 @@ impl BackendRegistry {
 
     /// List all registered proxy backends with status info.
     pub(crate) async fn do_mcp_list(&self) -> Result<CallToolResult, anyhow::Error> {
-        if self.proxies.is_empty() {
+        let proxies = self.proxies.read().await;
+        if proxies.is_empty() {
             return Ok(CallToolResult::success(vec![Content::text(
                 "No external MCP servers registered. (none)",
             )]));
         }
 
-        let mut lines = Vec::with_capacity(self.proxies.len());
-        for (name, handle) in &self.proxies {
+        let mut lines = Vec::with_capacity(proxies.len());
+        for (name, handle) in proxies.iter() {
             let status = handle.backend.status().await;
             let tool_count = handle.backend.tools().await.len();
             let status_str = match status {
@@ -119,7 +121,8 @@ impl BackendRegistry {
         // Right backend instructions (static).
         parts.push("## RightClaw Built-in Tools\nMemory, cron, and MCP management tools.".into());
 
-        for (name, handle) in &self.proxies {
+        let proxies = self.proxies.read().await;
+        for (name, handle) in proxies.iter() {
             if let Some(ref instr) = handle.backend.instructions().await {
                 let truncated = if instr.len() > INSTRUCTIONS_TRUNCATION_LIMIT {
                     format!(
@@ -185,8 +188,11 @@ impl ToolDispatcher {
         // Add rightmeta__mcp_list
         tools.push(BackendRegistry::mcp_list_tool_def());
 
-        // Add prefixed proxy tools
-        for (proxy_name, handle) in &registry.proxies {
+        // Add prefixed proxy tools. Use try_read to avoid blocking in sync context.
+        let Some(proxies) = registry.proxies.try_read().ok() else {
+            return tools;
+        };
+        for (proxy_name, handle) in proxies.iter() {
             // We read the tools using try_read on the internal lock via a
             // synchronous accessor. tools_list is not async to keep the
             // ServerHandler impl simple. Fallback: skip if lock is contended.
@@ -320,6 +326,7 @@ pub(crate) async fn run_aggregator_http(
     token_map: AgentTokenMap,
     dispatcher: Arc<ToolDispatcher>,
     agents_dir: PathBuf,
+    home: PathBuf,
 ) -> miette::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -337,7 +344,7 @@ pub(crate) async fn run_aggregator_http(
         .with_cancellation_token(ct.clone());
 
     let session_manager = Arc::new(LocalSessionManager::default());
-    let factory = Aggregator::factory(dispatcher);
+    let factory = Aggregator::factory(dispatcher.clone());
 
     let mcp_service = StreamableHttpService::new(factory, session_manager, config);
 
@@ -352,7 +359,36 @@ pub(crate) async fn run_aggregator_http(
         .await
         .map_err(|e| miette::miette!("bind to 0.0.0.0:{port} failed: {e:#}"))?;
 
-    tracing::info!(port, agents = ?agents_dir, "MCP Aggregator listening");
+    // Start internal REST API on Unix domain socket
+    let socket_path = home.join("run/internal.sock");
+    if socket_path.exists() {
+        std::fs::remove_file(&socket_path)
+            .map_err(|e| miette::miette!("remove stale UDS: {e:#}"))?;
+    }
+    if let Some(parent) = socket_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| miette::miette!("create UDS parent dir: {e:#}"))?;
+    }
+
+    let internal_app = crate::internal_api::internal_router(dispatcher);
+    let uds_listener = tokio::net::UnixListener::bind(&socket_path)
+        .map_err(|e| miette::miette!("bind UDS {}: {e:#}", socket_path.display()))?;
+
+    tracing::info!(
+        port,
+        uds = %socket_path.display(),
+        agents = ?agents_dir,
+        "MCP Aggregator listening"
+    );
+
+    let ct2 = ct.clone();
+    tokio::spawn(async move {
+        axum::serve(uds_listener, internal_app.into_make_service())
+            .with_graceful_shutdown(async move { ct2.cancelled().await })
+            .await
+            .map_err(|e| tracing::error!("UDS server error: {e:#}"))
+            .ok();
+    });
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { ct.cancelled().await })
@@ -372,7 +408,7 @@ mod tests {
         let right = RightBackend::new(agents_dir, tmp.to_path_buf());
         BackendRegistry {
             right,
-            proxies: HashMap::new(),
+            proxies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             agent_name: "test-agent".into(),
             agent_dir,
         }

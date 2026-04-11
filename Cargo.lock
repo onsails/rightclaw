@@ -2789,6 +2789,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-util",
+ "tower",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

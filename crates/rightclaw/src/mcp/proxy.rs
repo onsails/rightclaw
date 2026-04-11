@@ -302,6 +302,11 @@ impl ProxyBackend {
     pub fn url(&self) -> &str {
         &self.url
     }
+
+    /// Shared token reference for external token updates (e.g., from internal API).
+    pub fn token(&self) -> &Arc<RwLock<Option<String>>> {
+        &self.token
+    }
 }
 
 #[cfg(test)]
