@@ -2,6 +2,7 @@ use std::path::Path;
 
 use clap::{Parser, Subcommand};
 
+pub(crate) mod aggregator;
 mod memory_server;
 mod memory_server_http;
 pub(crate) mod right_backend;
