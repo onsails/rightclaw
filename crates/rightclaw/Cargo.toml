@@ -28,6 +28,9 @@ owo-colors = { workspace = true }
 rmcp = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 sse-stream = { workspace = true }
 chrono = { workspace = true }
 cron = { workspace = true }

@@ -28,6 +28,9 @@ rusqlite_migration = "2.5"
 rmcp = { version = "1.3", default-features = false, features = ["client", "server", "transport-io", "transport-streamable-http-server", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "macros"] }
 futures = "0.3"
 http = "1.0"
+http-body-util = "0.1"
+hyper = { version = "1.9", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 sse-stream = "0.2"
 schemars = "1.1"
 teloxide = { version = "0.17", default-features = false, features = ["macros", "throttle", "cache-me", "rustls"] }
