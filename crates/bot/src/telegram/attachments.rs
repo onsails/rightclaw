@@ -52,7 +52,7 @@ pub struct ResolvedAttachment {
 }
 
 /// From CC JSON response.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 pub struct OutboundAttachment {
     #[serde(rename = "type")]
     pub kind: OutboundKind,
@@ -62,7 +62,7 @@ pub struct OutboundAttachment {
 }
 
 /// Attachment kinds CC can produce in output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutboundKind {
     Photo,
