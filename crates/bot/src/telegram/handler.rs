@@ -244,7 +244,7 @@ pub async fn handle_new(
 
     if let Some(prev) = prev_uuid {
         reply.push_str(&format!(
-            "Previous session:\n<pre>{prev}</pre>\nTap to copy, then /switch to return."
+            "Previous session:\n<pre>/switch {prev}</pre>\nTap to copy to return."
         ));
     }
 
