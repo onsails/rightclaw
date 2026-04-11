@@ -303,7 +303,7 @@ pub fn trigger_spec(conn: &rusqlite::Connection, job_name: &str) -> Result<Strin
         return Err(format!("job '{job_name}' not found"));
     }
     Ok(format!(
-        "Triggered job '{job_name}'. Will execute on next engine tick (≤30s)."
+        "Triggered job '{job_name}'. Will execute on next engine tick (≤60s)."
     ))
 }
 

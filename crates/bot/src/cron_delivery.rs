@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -176,6 +177,10 @@ pub async fn run_delivery_loop(
         }
     };
 
+    // Track run IDs that were successfully sent to Telegram but failed to be marked
+    // as delivered in the DB. Prevents duplicate sends on subsequent delivery ticks.
+    let mut delivered_in_memory: HashSet<String> = HashSet::new();
+
     loop {
         tokio::select! {
             () = tokio::time::sleep(std::time::Duration::from_secs(POLL_INTERVAL_SECS)) => {}
@@ -209,6 +214,11 @@ pub async fn run_delivery_loop(
             }
         };
 
+        if delivered_in_memory.contains(&to_deliver.id) {
+            tracing::debug!(run_id = %to_deliver.id, "skipping already-delivered run (in-memory dedup)");
+            continue;
+        }
+
         let yaml = format_cron_yaml(&to_deliver, skipped);
         tracing::info!(
             job = %to_deliver.job_name,
@@ -216,6 +226,19 @@ pub async fn run_delivery_loop(
             skipped,
             "delivering cron result through main session"
         );
+
+        let session_id = if notify_chat_ids.is_empty() {
+            None
+        } else {
+            let chat_id = notify_chat_ids[0];
+            match crate::telegram::session::get_active_session(&conn, chat_id, 0) {
+                Ok(s) => s.map(|s| s.root_session_id),
+                Err(e) => {
+                    tracing::error!("cron delivery: session lookup failed: {e:#}");
+                    None
+                }
+            }
+        };
 
         match deliver_through_session(
             &yaml,
@@ -225,12 +248,14 @@ pub async fn run_delivery_loop(
             &bot,
             &notify_chat_ids,
             ssh_config_path.as_deref(),
+            session_id,
         )
         .await
         {
             Ok(()) => {
                 if let Err(e) = mark_delivered(&conn, &to_deliver.id) {
                     tracing::error!(run_id = %to_deliver.id, "mark_delivered failed: {e:#}");
+                    delivered_in_memory.insert(to_deliver.id.clone());
                 }
                 let outbox_dir = agent_dir.join("outbox").join("cron").join(&to_deliver.id);
                 if outbox_dir.exists()
@@ -262,22 +287,13 @@ async fn deliver_through_session(
     bot: &crate::telegram::BotType,
     notify_chat_ids: &[i64],
     ssh_config_path: Option<&Path>,
+    session_id: Option<String>,
 ) -> Result<(), String> {
     use std::process::Stdio;
 
     if notify_chat_ids.is_empty() {
         return Err("no notify_chat_ids configured".into());
     }
-
-    let chat_id = notify_chat_ids[0];
-    let eff_thread_id: i64 = 0;
-
-    let conn = rightclaw::memory::open_connection(agent_dir)
-        .map_err(|e| format!("DB open: {e:#}"))?;
-
-    let session_id = crate::telegram::session::get_active_session(&conn, chat_id, eff_thread_id)
-        .map_err(|e| format!("session lookup: {e:#}"))?
-        .map(|s| s.root_session_id);
 
     // Build the list of claude CLI arguments (first element is "claude" for SSH mode).
     let mut claude_args: Vec<String> = vec![
@@ -355,9 +371,10 @@ async fn deliver_through_session(
             .map_err(|e| format!("stdin write: {e:#}"))?;
     }
 
-    let output = child
-        .wait_with_output()
+    const DELIVERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+    let output = tokio::time::timeout(DELIVERY_TIMEOUT, child.wait_with_output())
         .await
+        .map_err(|_| "delivery CC subprocess timed out after 120s".to_string())?
         .map_err(|e| format!("wait_with_output: {e:#}"))?;
 
     if !output.status.success() {

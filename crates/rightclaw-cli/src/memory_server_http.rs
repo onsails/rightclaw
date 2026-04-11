@@ -345,7 +345,7 @@ impl HttpMemoryServer {
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
-    #[tool(description = "Trigger a cron job for immediate execution. The job is queued and will run on the next engine tick (≤30s). Lock check still applies — if the job is currently running, the trigger is skipped.")]
+    #[tool(description = "Trigger a cron job for immediate execution. The job is queued and will run on the next engine tick (≤60s). Lock check still applies — if the job is currently running, the trigger is skipped.")]
     async fn cron_trigger(
         &self,
         Extension(parts): Extension<http::request::Parts>,

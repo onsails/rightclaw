@@ -69,9 +69,9 @@ Use the `cron_trigger` MCP tool to run a job immediately:
 cron_trigger(job_name: "health-check")
 ```
 
-The job is queued and executes on the next engine tick (≤30s). Lock check still applies — if the job is currently running, the trigger is skipped. The result is delivered through the normal delivery loop.
+The job is queued and executes on the next engine tick (≤60s). Lock check still applies — if the job is currently running, the trigger is skipped. The result is delivered through the normal delivery loop.
 
-Confirm: "Job triggered. Execution starts within ~30 seconds."
+Confirm: "Job triggered. Execution starts within ~60 seconds."
 
 ## Listing Current Cron Jobs
 
