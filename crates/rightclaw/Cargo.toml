@@ -27,6 +27,7 @@ subtle = { workspace = true }
 owo-colors = { workspace = true }
 chrono = { workspace = true }
 cron = { workspace = true }
+cron-descriptor = { workspace = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 prost = { workspace = true }
