@@ -26,8 +26,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::memory_server::{
     CronCreateParams, CronDeleteParams, CronListParams, CronListRunsParams, CronShowRunParams,
-    DeleteRecordParams, McpAddParams, McpAuthParams, McpListParams, McpRemoveParams,
-    QueryRecordsParams, SearchRecordsParams, StoreRecordParams, cron_run_to_json, entry_to_json,
+    CronTriggerParams, DeleteRecordParams, McpAddParams, McpAuthParams, McpListParams,
+    McpRemoveParams, QueryRecordsParams, SearchRecordsParams, StoreRecordParams, cron_run_to_json,
+    entry_to_json,
 };
 
 // ---------------------------------------------------------------------------
@@ -344,6 +345,21 @@ impl HttpMemoryServer {
         Ok(CallToolResult::success(vec![Content::text(output)]))
     }
 
+    #[tool(description = "Trigger a cron job for immediate execution. The job is queued and will run on the next engine tick (≤30s). Lock check still applies — if the job is currently running, the trigger is skipped.")]
+    async fn cron_trigger(
+        &self,
+        Extension(parts): Extension<http::request::Parts>,
+        Parameters(params): Parameters<CronTriggerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let agent = Self::agent_from_parts(&parts)?;
+        let conn_arc = self.get_conn_for_agent(&agent)?;
+        let conn = conn_arc.lock()
+            .map_err(|e| McpError::internal_error(format!("mutex poisoned: {e}"), None))?;
+        let msg = rightclaw::cron_spec::trigger_spec(&conn, &params.job_name)
+            .map_err(|e| McpError::invalid_params(e, None))?;
+        Ok(CallToolResult::success(vec![Content::text(msg)]))
+    }
+
     #[tool(description = "Add an HTTP MCP server to this agent's mcp.json. Use /mcp auth <name> in Telegram to complete OAuth if the server requires authentication.")]
     async fn mcp_add(
         &self,
@@ -510,7 +526,8 @@ impl rmcp::ServerHandler for HttpMemoryServer {
                  - cron_delete: Delete a cron job spec\n\
                  - cron_list: List all current cron job specs\n\
                  - cron_list_runs: List recent cron job executions\n\
-                 - cron_show_run: Get details of a specific cron run\n\n\
+                 - cron_show_run: Get details of a specific cron run\n\
+                 - cron_trigger: Trigger a cron job for immediate execution\n\n\
                  ## MCP Management\n\
                  - mcp_add: Add an external HTTP MCP server\n\
                  - mcp_remove: Remove an MCP server (cannot remove 'right')\n\

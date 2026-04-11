@@ -187,13 +187,15 @@ pub fn delete_spec(
         return Err(format!("job '{job_name}' not found"));
     }
 
-    // Best-effort lock file removal.
+    // Remove lock file if present.
     let lock_path = agent_dir
         .join("crons")
         .join(".locks")
         .join(format!("{job_name}.json"));
     if lock_path.exists() {
-        let _ = std::fs::remove_file(&lock_path);
+        if let Err(e) = std::fs::remove_file(&lock_path) {
+            tracing::warn!(job = %job_name, "failed to remove lock file: {e:#}");
+        }
     }
 
     Ok(format!("Deleted cron job '{job_name}'."))
@@ -220,8 +222,8 @@ pub fn list_specs(conn: &rusqlite::Connection) -> Result<String, String> {
             }))
         })
         .map_err(|e| format!("query failed: {e:#}"))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("row read failed: {e:#}"))?;
     serde_json::to_string_pretty(&rows)
         .map_err(|e| format!("serialization error: {e:#}"))
 }
@@ -391,8 +393,8 @@ pub fn get_recent_runs(
             })
         })
         .map_err(|e| format!("query failed: {e:#}"))?
-        .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("row read failed: {e:#}"))?;
     Ok(rows)
 }
 

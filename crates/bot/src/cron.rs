@@ -432,16 +432,17 @@ pub async fn run_cron_task(
     };
 
     let mut handles: HashMap<String, (CronSpec, JoinHandle<()>)> = HashMap::new();
+    let mut triggered_handles: Vec<JoinHandle<()>> = Vec::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     interval.tick().await; // consume immediate first tick
 
     // Run immediately on startup too
-    reconcile_jobs(&mut handles, &conn, &agent_dir, &agent_name, &model, &ssh_config_path);
+    reconcile_jobs(&mut handles, &mut triggered_handles, &conn, &agent_dir, &agent_name, &model, &ssh_config_path);
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                reconcile_jobs(&mut handles, &conn, &agent_dir, &agent_name, &model, &ssh_config_path);
+                reconcile_jobs(&mut handles, &mut triggered_handles, &conn, &agent_dir, &agent_name, &model, &ssh_config_path);
             }
             _ = shutdown.cancelled() => {
                 tracing::info!(agent = %agent_name, "cron shutdown: stopping reconciler, waiting for running jobs");
@@ -455,17 +456,24 @@ pub async fn run_cron_task(
         tracing::info!(job = %name, "cron shutdown: waiting for job to finish");
         let _ = handle.await;
     }
+    for handle in triggered_handles {
+        tracing::info!("cron shutdown: waiting for triggered job to finish");
+        let _ = handle.await;
+    }
     tracing::info!(agent = %agent_name, "cron shutdown complete — all jobs finished");
 }
 
 fn reconcile_jobs(
     handles: &mut HashMap<String, (CronSpec, JoinHandle<()>)>,
+    triggered_handles: &mut Vec<JoinHandle<()>>,
     conn: &rusqlite::Connection,
     agent_dir: &std::path::Path,
     agent_name: &str,
     model: &Option<String>,
     ssh_config_path: &Option<std::path::PathBuf>,
 ) {
+    // Clean up finished triggered handles
+    triggered_handles.retain(|h| !h.is_finished());
     let new_specs = match rightclaw::cron_spec::load_specs_from_db(conn) {
         Ok(s) => s,
         Err(e) => {
@@ -506,6 +514,36 @@ fn reconcile_jobs(
         });
         handles.insert(name.clone(), (spec.clone(), handle));
         tracing::info!(job = %name, schedule = %spec.schedule, "cron job scheduled");
+    }
+
+    // Check for triggered jobs (manual trigger via cron_trigger MCP tool)
+    for (name, spec) in &new_specs {
+        if spec.triggered_at.is_some() {
+            // Clear trigger immediately to prevent re-firing on next tick
+            if let Err(e) = rightclaw::cron_spec::clear_triggered_at(conn, name) {
+                tracing::error!(job = %name, "failed to clear triggered_at: {e}");
+                continue;
+            }
+
+            // Check lock — if locked, skip (trigger lost, same as schedule miss while locked)
+            let lock_ttl = spec.lock_ttl.as_deref().unwrap_or("30m");
+            if is_lock_fresh(agent_dir, name, lock_ttl) {
+                tracing::info!(job = %name, "triggered but locked — skipping");
+                continue;
+            }
+
+            let jn = name.clone();
+            let sp = spec.clone();
+            let ad = agent_dir.to_path_buf();
+            let an = agent_name.to_string();
+            let md = model.clone();
+            let sc = ssh_config_path.clone();
+            tracing::info!(job = %name, "executing triggered job");
+            let handle = tokio::spawn(async move {
+                execute_job(&jn, &sp, &ad, &an, md.as_deref(), sc.as_deref()).await;
+            });
+            triggered_handles.push(handle);
+        }
     }
 }
 
@@ -670,4 +708,50 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn test_triggered_at_loaded_from_db() {
+        let dir = tempdir().unwrap();
+        let conn = rightclaw::memory::open_connection(dir.path()).unwrap();
+
+        rightclaw::cron_spec::create_spec(
+            &conn,
+            "trig-test",
+            "*/5 * * * *",
+            "test prompt",
+            None,
+            None,
+        )
+        .unwrap();
+        rightclaw::cron_spec::trigger_spec(&conn, "trig-test").unwrap();
+
+        let specs = rightclaw::cron_spec::load_specs_from_db(&conn).unwrap();
+        assert!(
+            specs["trig-test"].triggered_at.is_some(),
+            "triggered_at should be loaded"
+        );
+    }
+
+    #[test]
+    fn test_clear_triggered_at_works() {
+        let dir = tempdir().unwrap();
+        let conn = rightclaw::memory::open_connection(dir.path()).unwrap();
+
+        rightclaw::cron_spec::create_spec(
+            &conn,
+            "clr-test",
+            "*/5 * * * *",
+            "test",
+            None,
+            None,
+        )
+        .unwrap();
+        rightclaw::cron_spec::trigger_spec(&conn, "clr-test").unwrap();
+        rightclaw::cron_spec::clear_triggered_at(&conn, "clr-test").unwrap();
+
+        let specs = rightclaw::cron_spec::load_specs_from_db(&conn).unwrap();
+        assert!(
+            specs["clr-test"].triggered_at.is_none(),
+            "triggered_at should be cleared"
+        );
+    }
 }
