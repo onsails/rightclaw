@@ -82,6 +82,8 @@ pub struct WorkerContext {
     pub stop_tokens: super::StopTokens,
     /// Shared idle timestamp — worker updates after each reply sent.
     pub idle_timestamp: Arc<std::sync::atomic::AtomicI64>,
+    /// Internal API client for aggregator IPC (Unix socket).
+    pub internal_client: std::sync::Arc<rightclaw::mcp::internal_client::InternalClient>,
 }
 
 /// Parsed output from CC structured JSON response (`result` field per D-03).
@@ -548,6 +550,7 @@ fn build_sandbox_prompt_assembly_script(
     base_prompt: &str,
     bootstrap_mode: bool,
     claude_args: &[String],
+    mcp_instructions: Option<&str>,
 ) -> String {
     let escaped_base = base_prompt.replace('\'', "'\\''");
     let escaped_args: Vec<String> = claude_args.iter().map(|a| shell_escape(a)).collect();
@@ -589,8 +592,16 @@ if [ -f /sandbox/.claude/agents/TOOLS.md ]; then
 fi"#
     };
 
+    let mcp_section = match mcp_instructions {
+        Some(instr) => {
+            let escaped = instr.replace('\'', "'\\''");
+            format!("\nprintf '\\n{escaped}\\n'")
+        }
+        None => String::new(),
+    };
+
     format!(
-        "{{ printf '{escaped_base}'\n{file_sections}\n}} > /tmp/rightclaw-system-prompt.md\ncd /sandbox && {claude_cmd} --system-prompt-file /tmp/rightclaw-system-prompt.md"
+        "{{ printf '{escaped_base}'\n{file_sections}\n{mcp_section}\n}} > /tmp/rightclaw-system-prompt.md\ncd /sandbox && {claude_cmd} --system-prompt-file /tmp/rightclaw-system-prompt.md"
     )
 }
 
@@ -601,6 +612,7 @@ fn assemble_host_system_prompt(
     base_prompt: &str,
     bootstrap_mode: bool,
     agent_dir: &Path,
+    mcp_instructions: Option<&str>,
 ) -> String {
     let mut prompt = base_prompt.to_string();
 
@@ -636,6 +648,12 @@ fn assemble_host_system_prompt(
                 prompt.push('\n');
             }
         }
+    }
+
+    if let Some(instr) = mcp_instructions {
+        prompt.push('\n');
+        prompt.push_str(instr);
+        prompt.push('\n');
     }
 
     prompt
@@ -869,6 +887,22 @@ async fn invoke_cc(
     claude_args.push("--json-schema".into());
     claude_args.push(reply_schema);
 
+    // Fetch MCP server instructions from aggregator (non-fatal on error).
+    let mcp_instructions: Option<String> = match ctx.internal_client.mcp_instructions(&ctx.agent_name).await {
+        Ok(resp) => {
+            // Only include if there's actual content beyond the header
+            if resp.instructions.trim().len() > "# MCP Server Instructions".len() {
+                Some(resp.instructions)
+            } else {
+                None
+            }
+        }
+        Err(e) => {
+            tracing::warn!("failed to fetch MCP instructions from aggregator: {e:#}");
+            None
+        }
+    };
+
     // Generate base system prompt (identity-neutral — no agent name to avoid
     // contradicting IDENTITY.md which the agent may have customized).
     let base_prompt = rightclaw::codegen::generate_system_prompt(
@@ -885,7 +919,7 @@ async fn invoke_cc(
         // from fresh files — single SSH command, no extra roundtrips.
         let ssh_host = rightclaw::openshell::ssh_host(&ctx.agent_name);
         let assembly_script =
-            build_sandbox_prompt_assembly_script(&base_prompt, bootstrap_mode, &claude_args);
+            build_sandbox_prompt_assembly_script(&base_prompt, bootstrap_mode, &claude_args, mcp_instructions.as_deref());
         let mut c = tokio::process::Command::new("ssh");
         c.arg("-F").arg(ssh_config);
         c.arg(&ssh_host);
@@ -898,6 +932,7 @@ async fn invoke_cc(
             &base_prompt,
             bootstrap_mode,
             &ctx.agent_dir,
+            mcp_instructions.as_deref(),
         );
         // Write composite prompt to temp file in agent dir.
         let prompt_path = ctx.agent_dir.join(".claude").join("composite-system-prompt.md");
@@ -1602,6 +1637,7 @@ mod tests {
             "Base prompt",
             true,
             &["claude".into(), "-p".into()],
+            None,
         );
         assert!(script.contains("BOOTSTRAP.md"), "must reference BOOTSTRAP.md");
         assert!(!script.contains("IDENTITY.md"), "bootstrap must not include IDENTITY.md");
@@ -1616,6 +1652,7 @@ mod tests {
             "Base prompt",
             false,
             &["claude".into(), "-p".into()],
+            None,
         );
         assert!(script.contains("IDENTITY.md"));
         assert!(script.contains("SOUL.md"));
@@ -1631,6 +1668,7 @@ mod tests {
             "It's a test",
             true,
             &["claude".into()],
+            None,
         );
         // Single quote must be escaped for shell: ' → '\''
         assert!(!script.contains("It's"), "raw single quote must be escaped");
@@ -1643,6 +1681,7 @@ mod tests {
             "Base",
             false,
             &["claude".into(), "-p".into(), "--json-schema".into(), r#"{"type":"object"}"#.into()],
+            None,
         );
         // JSON with braces and quotes must be shell-escaped
         assert!(script.contains("--json-schema"));
@@ -1651,7 +1690,7 @@ mod tests {
 
     #[test]
     fn sandbox_script_writes_to_tmp_and_uses_system_prompt_file() {
-        let script = build_sandbox_prompt_assembly_script("X", false, &["claude".into()]);
+        let script = build_sandbox_prompt_assembly_script("X", false, &["claude".into()], None);
         assert!(script.contains("/tmp/rightclaw-system-prompt.md"));
         assert!(script.contains("--system-prompt-file /tmp/rightclaw-system-prompt.md"));
     }
@@ -1661,7 +1700,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("BOOTSTRAP.md"), "# Onboarding").unwrap();
 
-        let result = assemble_host_system_prompt("Base\n", true, dir.path());
+        let result = assemble_host_system_prompt("Base\n", true, dir.path(), None);
         assert!(result.contains("Base"));
         assert!(result.contains("## Bootstrap Instructions"));
         assert!(result.contains("# Onboarding"));
@@ -1678,7 +1717,7 @@ mod tests {
         std::fs::write(agents_dir.join("AGENTS.md"), "Procedures").unwrap();
         std::fs::write(agents_dir.join("TOOLS.md"), "outbox: /sandbox/outbox/").unwrap();
 
-        let result = assemble_host_system_prompt("Base\n", false, dir.path());
+        let result = assemble_host_system_prompt("Base\n", false, dir.path(), None);
         assert!(result.contains("## Your Identity"));
         assert!(result.contains("I am Spark"));
         assert!(result.contains("## Your Personality and Values"));
@@ -1699,7 +1738,7 @@ mod tests {
         std::fs::create_dir_all(&agents_dir).unwrap();
         std::fs::write(agents_dir.join("AGENTS.md"), "Procedures").unwrap();
 
-        let result = assemble_host_system_prompt("Base\n", false, dir.path());
+        let result = assemble_host_system_prompt("Base\n", false, dir.path(), None);
         assert!(result.contains("Base"));
         assert!(result.contains("Procedures"));
         assert!(!result.contains("## Your Identity"), "missing file must be skipped");
@@ -1710,8 +1749,56 @@ mod tests {
     fn host_prompt_bootstrap_skips_missing_bootstrap() {
         let dir = tempfile::tempdir().unwrap();
         // No BOOTSTRAP.md
-        let result = assemble_host_system_prompt("Base\n", true, dir.path());
+        let result = assemble_host_system_prompt("Base\n", true, dir.path(), None);
         assert_eq!(result, "Base\n");
+    }
+
+    #[test]
+    fn sandbox_script_includes_mcp_instructions() {
+        let script = build_sandbox_prompt_assembly_script(
+            "Base",
+            false,
+            &["claude".into()],
+            Some("# MCP Server Instructions\n\n## composio\n\nConnect with 250+ apps.\n"),
+        );
+        assert!(script.contains("MCP Server Instructions"));
+        assert!(script.contains("composio"));
+    }
+
+    #[test]
+    fn sandbox_script_none_mcp_instructions_omitted() {
+        let script = build_sandbox_prompt_assembly_script(
+            "Base",
+            false,
+            &["claude".into()],
+            None,
+        );
+        assert!(!script.contains("MCP Server Instructions"));
+    }
+
+    #[test]
+    fn host_prompt_includes_mcp_instructions() {
+        let dir = tempfile::tempdir().unwrap();
+        let agents_dir = dir.path().join(".claude").join("agents");
+        std::fs::create_dir_all(&agents_dir).unwrap();
+        std::fs::write(agents_dir.join("AGENTS.md"), "Procedures").unwrap();
+
+        let result = assemble_host_system_prompt(
+            "Base\n",
+            false,
+            dir.path(),
+            Some("# MCP Server Instructions\n\n## notion\n\nNotion tools.\n"),
+        );
+        assert!(result.contains("MCP Server Instructions"));
+        assert!(result.contains("notion"));
+        assert!(result.contains("Notion tools."));
+    }
+
+    #[test]
+    fn host_prompt_none_mcp_instructions_omitted() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = assemble_host_system_prompt("Base\n", false, dir.path(), None);
+        assert!(!result.contains("MCP Server Instructions"));
     }
 
     #[test]
