@@ -11,6 +11,7 @@ pub const CONTENT_MD_FILES: &[&str] = &[
     "SOUL.md",
     "USER.md",
     "MEMORY.md",
+    "MCP_INSTRUCTIONS.md",
 ];
 
 /// JSON schema for the structured reply format used by teloxide agents (D-02).
@@ -63,6 +64,10 @@ description: \"RightClaw agent: {name}\"
 ---
 
 @./TOOLS.md
+
+---
+
+@./MCP_INSTRUCTIONS.md
 "
     )
 }

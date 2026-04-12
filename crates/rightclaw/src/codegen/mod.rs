@@ -11,8 +11,6 @@ pub mod process_compose;
 pub mod settings;
 pub mod skills;
 pub mod telegram;
-pub mod tools;
-
 pub use agent_def::{
     generate_agent_definition, generate_bootstrap_definition, generate_system_prompt,
     BOOTSTRAP_SCHEMA_JSON, CONTENT_MD_FILES, CRON_SCHEMA_JSON, REPLY_SCHEMA_JSON,
@@ -26,4 +24,3 @@ pub use pipeline::run_single_agent_codegen;
 pub use process_compose::{ProcessComposeConfig, generate_process_compose};
 pub use settings::generate_settings;
 pub use skills::install_builtin_skills;
-pub use tools::generate_tools_md;
