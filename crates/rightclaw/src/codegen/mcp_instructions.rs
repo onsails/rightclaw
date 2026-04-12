@@ -1,0 +1,74 @@
+use crate::mcp::credentials::McpServerEntry;
+
+/// Generate `MCP_INSTRUCTIONS.md` content from registered MCP servers.
+///
+/// Only includes servers that have cached instructions (non-None).
+/// Returns just the heading if no servers have instructions.
+pub fn generate_mcp_instructions_md(servers: &[McpServerEntry]) -> String {
+    let mut out = String::from("# MCP Server Instructions\n");
+    for server in servers {
+        if let Some(ref instructions) = server.instructions {
+            out.push_str(&format!("\n## {}\n\n{}\n", server.name, instructions));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_servers_returns_header_only() {
+        let result = generate_mcp_instructions_md(&[]);
+        assert_eq!(result, "# MCP Server Instructions\n");
+    }
+
+    #[test]
+    fn servers_without_instructions_skipped() {
+        let servers = vec![McpServerEntry {
+            name: "notion".into(),
+            url: "https://mcp.notion.com/mcp".into(),
+            instructions: None,
+        }];
+        let result = generate_mcp_instructions_md(&servers);
+        assert_eq!(result, "# MCP Server Instructions\n");
+    }
+
+    #[test]
+    fn servers_with_instructions_included() {
+        let servers = vec![McpServerEntry {
+            name: "notion".into(),
+            url: "https://mcp.notion.com/mcp".into(),
+            instructions: Some("Search and update Notion pages.".into()),
+        }];
+        let result = generate_mcp_instructions_md(&servers);
+        assert!(result.contains("## notion"));
+        assert!(result.contains("Search and update Notion pages."));
+    }
+
+    #[test]
+    fn mixed_servers_only_with_instructions() {
+        let servers = vec![
+            McpServerEntry {
+                name: "composio".into(),
+                url: "https://connect.composio.dev/mcp".into(),
+                instructions: Some("Connect with 250+ apps.".into()),
+            },
+            McpServerEntry {
+                name: "linear".into(),
+                url: "https://mcp.linear.app/mcp".into(),
+                instructions: None,
+            },
+            McpServerEntry {
+                name: "notion".into(),
+                url: "https://mcp.notion.com/mcp".into(),
+                instructions: Some("Notion tools.".into()),
+            },
+        ];
+        let result = generate_mcp_instructions_md(&servers);
+        assert!(result.contains("## composio"));
+        assert!(result.contains("## notion"));
+        assert!(!result.contains("## linear"));
+    }
+}
