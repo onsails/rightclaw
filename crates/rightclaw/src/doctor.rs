@@ -718,47 +718,33 @@ fn check_mcp_tokens_impl(home: &Path) -> DoctorCheck {
         }
     };
 
-    let mut problems: Vec<String> = vec![];
-
+    // Count registered servers across agents for diagnostic output.
+    let mut total_servers = 0usize;
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
 
-        let agent_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
+        let conn = match crate::memory::open_connection(&path) {
+            Ok(c) => c,
+            Err(_) => continue, // skip agents with unreadable DB
         };
 
-        let statuses = match crate::mcp::detect::mcp_auth_status(&path) {
+        let servers = match crate::mcp::credentials::db_list_servers(&conn) {
             Ok(s) => s,
-            Err(_) => continue, // skip agents with unreadable files
+            Err(_) => continue,
         };
-
-        for s in statuses {
-            if matches!(s.state, crate::mcp::detect::AuthState::Missing) {
-                problems.push(format!("{agent_name}/{}", s.name));
-            }
-        }
+        total_servers += servers.len();
     }
 
-    if problems.is_empty() {
-        DoctorCheck {
-            name: "mcp-tokens".to_string(),
-            status: CheckStatus::Pass,
-            detail: "all present".to_string(),
-            fix: None,
-        }
-    } else {
-        DoctorCheck {
-            name: "mcp-tokens".to_string(),
-            status: CheckStatus::Warn,
-            detail: format!("{}{}", MCP_ISSUES_PREFIX, problems.join(", ")),
-            fix: Some(
-                "Run /mcp auth <server> in Telegram to authenticate".to_string(),
-            ),
-        }
+    // Auth state is no longer tracked here (tokens live in the Aggregator's
+    // oauth-state.json), so we always pass -- just report the count.
+    DoctorCheck {
+        name: "mcp-tokens".to_string(),
+        status: CheckStatus::Pass,
+        detail: format!("{total_servers} server(s) registered"),
+        fix: None,
     }
 }
 

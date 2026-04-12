@@ -149,21 +149,23 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
         }
     }
 
-    // Warn about unauthenticated MCP servers at startup (UAT gap -- test 8).
-    match rightclaw::mcp::detect::mcp_auth_status(&agent_dir) {
-        Ok(statuses) => {
-            for s in &statuses {
-                if s.state != rightclaw::mcp::detect::AuthState::Present {
-                    tracing::warn!(
+    // Log registered MCP servers at startup.
+    {
+        let conn = rightclaw::memory::open_connection(&agent_dir)
+            .map_err(|e| miette::miette!("failed to open memory.db for MCP check: {e:#}"))?;
+        match rightclaw::mcp::credentials::db_list_servers(&conn) {
+            Ok(servers) => {
+                for s in &servers {
+                    tracing::info!(
                         agent = %args.agent,
                         server = %s.name,
-                        state = %s.state,
-                        "MCP server needs auth"
+                        url = %s.url,
+                        "registered MCP server"
                     );
                 }
             }
+            Err(e) => tracing::warn!(agent = %args.agent, "db_list_servers check failed: {e:#}"),
         }
-        Err(e) => tracing::warn!(agent = %args.agent, "mcp_auth_status check failed: {e:#}"),
     }
 
     // Warn if allowed_chat_ids is empty (D-05)

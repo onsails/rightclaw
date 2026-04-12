@@ -112,7 +112,7 @@ impl RightBackend {
             ),
             Tool::new(
                 "mcp_list",
-                "List all configured MCP servers for this agent. Shows name, URL, auth state (present/auth required), source (.claude.json or mcp.json), and kind (http/stdio). Never exposes token values.",
+                "List all registered MCP servers for this agent. Shows name, URL, and optional instructions.",
                 schema_for_type::<McpListParams>(),
             ),
             Tool::new(
@@ -155,7 +155,7 @@ impl RightBackend {
             "cron_trigger" => self.call_cron_trigger(agent_name, &args),
             "mcp_add" => self.call_mcp_add(agent_dir, &args),
             "mcp_remove" => self.call_mcp_remove(agent_dir, &args),
-            "mcp_list" => self.call_mcp_list(agent_dir),
+            "mcp_list" => self.call_mcp_list(agent_name),
             "mcp_auth" => self.call_mcp_auth(agent_dir, &args).await,
             "bootstrap_done" => self.call_bootstrap_done(agent_name),
             other => bail!("unknown tool: {other}"),
@@ -483,17 +483,17 @@ impl RightBackend {
         }
     }
 
-    fn call_mcp_list(&self, agent_dir: &Path) -> Result<CallToolResult, anyhow::Error> {
-        let statuses = rightclaw::mcp::detect::mcp_auth_status(agent_dir)?;
-        let items: Vec<serde_json::Value> = statuses
+    fn call_mcp_list(&self, agent_name: &str) -> Result<CallToolResult, anyhow::Error> {
+        let conn_arc = self.get_conn(agent_name)?;
+        let conn = Self::lock_conn(&conn_arc)?;
+        let servers = rightclaw::mcp::credentials::db_list_servers(&conn)?;
+        let items: Vec<serde_json::Value> = servers
             .iter()
             .map(|s| {
                 serde_json::json!({
                     "name": s.name,
                     "url": s.url,
-                    "auth": s.state.to_string(),
-                    "source": s.source.to_string(),
-                    "kind": s.kind.to_string(),
+                    "instructions": s.instructions,
                 })
             })
             .collect();
