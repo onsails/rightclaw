@@ -279,9 +279,7 @@ async fn test_mcp_list_shows_server_metadata() {
     let entry = &parsed[0];
     assert_eq!(entry["name"], "notion");
     assert_eq!(entry["url"], "https://mcp.notion.com/mcp");
-    assert!(entry.get("auth").is_some(), "auth field must be present");
-    assert!(entry.get("source").is_some(), "source field must be present");
-    assert!(entry.get("kind").is_some(), "kind field must be present");
+    assert!(entry.get("instructions").is_some(), "instructions field must be present");
     // MCP-NF-01: no token/secret fields
     assert!(entry.get("token").is_none(), "token field must NOT be present");
     assert!(entry.get("secret").is_none(), "secret field must NOT be present");

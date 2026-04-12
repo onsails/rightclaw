@@ -2133,8 +2133,6 @@ fn cmd_pair(home: &Path, agent_name: Option<&str>) -> miette::Result<()> {
 }
 
 fn cmd_mcp_status(home: &Path, agent_filter: Option<&str>) -> miette::Result<()> {
-    use rightclaw::mcp::detect::mcp_auth_status;
-
     let agents_dir = rightclaw::config::agents_dir(home);
     // Collect agent dirs -- either all or filtered to one
     let entries: Vec<std::path::PathBuf> = if let Some(name) = agent_filter {
@@ -2161,21 +2159,12 @@ fn cmd_mcp_status(home: &Path, agent_filter: Option<&str>) -> miette::Result<()>
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("?");
-        let statuses = mcp_auth_status(agent_dir)
-            .map_err(|e| miette::miette!("mcp_auth_status for {agent_name}: {e:#}"))?;
-        for s in &statuses {
-            match s.kind {
-                rightclaw::mcp::detect::ServerKind::Http => {
-                    let icon = match s.state {
-                        rightclaw::mcp::detect::AuthState::Present => "ok",
-                        rightclaw::mcp::detect::AuthState::Missing => "needs auth",
-                    };
-                    println!("{agent_name}  {icon} {} [{}]  {}", s.name, s.source, s.state);
-                }
-                rightclaw::mcp::detect::ServerKind::Stdio => {
-                    println!("{agent_name}  stdio {} [{}]", s.name, s.source);
-                }
-            }
+        let conn = rightclaw::memory::open_connection(agent_dir)
+            .map_err(|e| miette::miette!("open memory.db for {agent_name}: {e:#}"))?;
+        let servers = rightclaw::mcp::credentials::db_list_servers(&conn)
+            .map_err(|e| miette::miette!("db_list_servers for {agent_name}: {e:#}"))?;
+        for s in &servers {
+            println!("{agent_name}  {} [{}]", s.name, s.url);
             any = true;
         }
     }

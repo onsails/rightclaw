@@ -447,22 +447,23 @@ impl MemoryServer {
         }
     }
 
-    #[tool(description = "List all configured MCP servers for this agent. Shows name, URL, auth state (present/auth required), source (.claude.json or mcp.json), and kind (http/stdio). Never exposes token values.")]
+    #[tool(description = "List all registered MCP servers for this agent. Shows name, URL, and optional instructions.")]
     async fn mcp_list(
         &self,
         Parameters(_params): Parameters<McpListParams>,
     ) -> Result<CallToolResult, McpError> {
-        let statuses = rightclaw::mcp::detect::mcp_auth_status(&self.agent_dir)
+        let conn = self.conn.lock().map_err(|e| {
+            McpError::internal_error(format!("mutex poisoned: {e}"), None)
+        })?;
+        let servers = rightclaw::mcp::credentials::db_list_servers(&conn)
             .map_err(|e| McpError::internal_error(format!("{e:#}"), None))?;
-        let items: Vec<serde_json::Value> = statuses
+        let items: Vec<serde_json::Value> = servers
             .iter()
             .map(|s| {
                 serde_json::json!({
                     "name": s.name,
                     "url": s.url,
-                    "auth": s.state.to_string(),
-                    "source": s.source.to_string(),
-                    "kind": s.kind.to_string(),
+                    "instructions": s.instructions,
                 })
             })
             .collect();
@@ -571,7 +572,7 @@ impl rmcp::ServerHandler for MemoryServer {
                  ## MCP Management\n\
                  - mcp_add: Add an external HTTP MCP server\n\
                  - mcp_remove: Remove an MCP server (cannot remove 'right')\n\
-                 - mcp_list: List all configured MCP servers\n\
+                 - mcp_list: List all registered MCP servers\n\
                  - mcp_auth: Initiate OAuth for an HTTP MCP server\n\n\
                  ## Bootstrap\n\
                  - bootstrap_done: Signal onboarding completion. Verifies IDENTITY.md, SOUL.md, USER.md exist. Call AFTER creating all three files.",
