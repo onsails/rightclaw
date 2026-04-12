@@ -117,6 +117,7 @@ pub async fn handle_message(
     settings: Arc<AgentSettings>,
     stop_tokens: super::StopTokens,
     idle_ts: Arc<IdleTimestamp>,
+    internal_api: Arc<InternalApi>,
 ) -> ResponseResult<()> {
     idle_ts.0.store(chrono::Utc::now().timestamp(), std::sync::atomic::Ordering::Relaxed);
 
@@ -194,6 +195,7 @@ pub async fn handle_message(
                     model: settings.model.clone(),
                     stop_tokens: Arc::clone(&stop_tokens),
                     idle_timestamp: Arc::clone(&idle_ts.0),
+                    internal_client: Arc::clone(&internal_api.0),
                 };
                 let tx = spawn_worker(key, ctx, Arc::clone(&worker_map));
                 worker_map.insert(key, tx.clone());
