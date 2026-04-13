@@ -1,33 +1,51 @@
 use std::path::Path;
 
-const SKILL_RIGHTSKILLS: &str = include_str!("../../../../skills/rightskills/SKILL.md");
-const SKILL_RIGHTCRON: &str = include_str!("../../../../skills/rightcron/SKILL.md");
-const SKILL_RIGHTMCP: &str = include_str!("../../../../skills/rightmcp/SKILL.md");
+use include_dir::{Dir, include_dir};
+
+const SKILL_RIGHTSKILLS: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../skills/rightskills");
+const SKILL_RIGHTCRON: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../skills/rightcron");
+const SKILL_RIGHTMCP: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../skills/rightmcp");
 
 /// Install RightClaw built-in skills into an agent's `.claude/skills/` directory.
 ///
-/// Writes `rightskills/SKILL.md`, `rightcron/SKILL.md`, `rightmcp/SKILL.md`, and `installed.json`.
+/// Writes all files from each embedded skill directory (SKILL.md, YAML configs, etc.).
 /// Always overwrites — ensures agents get the latest built-in skill content after upgrades.
 /// Only writes to named built-in paths; other directories under `.claude/skills/` are untouched.
 pub fn install_builtin_skills(agent_path: &Path) -> miette::Result<()> {
-    let built_in_skills: &[(&str, &str)] = &[
-        ("rightskills/SKILL.md", SKILL_RIGHTSKILLS),
-        ("rightcron/SKILL.md", SKILL_RIGHTCRON),
-        ("rightmcp/SKILL.md", SKILL_RIGHTMCP),
+    let skills: &[(&str, &Dir)] = &[
+        ("rightskills", &SKILL_RIGHTSKILLS),
+        ("rightcron", &SKILL_RIGHTCRON),
+        ("rightmcp", &SKILL_RIGHTMCP),
     ];
     let claude_skills_dir = agent_path.join(".claude").join("skills");
-    for (skill_path, content) in built_in_skills {
-        let path = claude_skills_dir.join(skill_path);
-        std::fs::create_dir_all(path.parent().unwrap())
-            .map_err(|e| miette::miette!("failed to create skill directory: {e:#}"))?;
-        std::fs::write(&path, content)
-            .map_err(|e| miette::miette!("failed to write {}: {e:#}", path.display()))?;
+
+    for (name, dir) in skills {
+        let target = claude_skills_dir.join(name);
+        install_embedded_dir(dir, &target)?;
     }
+
     // Create-if-absent: preserve user-installed skill registry across restarts
     let installed_json_path = claude_skills_dir.join("installed.json");
     if !installed_json_path.exists() {
         std::fs::write(&installed_json_path, "{}")
             .map_err(|e| miette::miette!("failed to write installed.json: {e:#}"))?;
+    }
+    Ok(())
+}
+
+/// Recursively write all files from an embedded directory to `target`.
+fn install_embedded_dir(dir: &Dir, target: &Path) -> miette::Result<()> {
+    for file in dir.files() {
+        let dest = target.join(file.path());
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| miette::miette!("create dir {}: {e:#}", parent.display()))?;
+        }
+        std::fs::write(&dest, file.contents())
+            .map_err(|e| miette::miette!("write {}: {e:#}", dest.display()))?;
+    }
+    for subdir in dir.dirs() {
+        install_embedded_dir(subdir, target)?;
     }
     Ok(())
 }
@@ -64,6 +82,19 @@ mod tests {
         assert!(
             dir.path().join(".claude/skills/rightmcp/SKILL.md").exists(),
             "rightmcp/SKILL.md should exist"
+        );
+    }
+
+    #[test]
+    fn rightmcp_includes_known_endpoints_yaml() {
+        let dir = tempdir().unwrap();
+        install_builtin_skills(dir.path()).unwrap();
+        let yaml_path = dir.path().join(".claude/skills/rightmcp/known-endpoints.yaml");
+        assert!(yaml_path.exists(), "known-endpoints.yaml should exist");
+        let content = std::fs::read_to_string(&yaml_path).unwrap();
+        assert!(
+            content.contains("composio"),
+            "known-endpoints.yaml should contain composio entry"
         );
     }
 
@@ -132,5 +163,34 @@ mod tests {
                 .exists(),
             "user skills should be preserved"
         );
+    }
+
+    /// Verify every file in the source skills/ directories is embedded and installed.
+    /// Catches cases where a new file is added to a skill but not picked up by include_dir.
+    #[test]
+    fn all_source_skill_files_are_installed() {
+        let dir = tempdir().unwrap();
+        install_builtin_skills(dir.path()).unwrap();
+
+        for skill_name in &["rightskills", "rightcron", "rightmcp"] {
+            let source_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../skills")
+                .join(skill_name);
+            let target_dir = dir.path().join(".claude/skills").join(skill_name);
+
+            for entry in walkdir::WalkDir::new(&source_dir) {
+                let entry = entry.unwrap();
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+                let rel = entry.path().strip_prefix(&source_dir).unwrap();
+                let installed = target_dir.join(rel);
+                assert!(
+                    installed.exists(),
+                    "skill file {skill_name}/{} not installed",
+                    rel.display()
+                );
+            }
+        }
     }
 }

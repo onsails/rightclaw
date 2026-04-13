@@ -10,6 +10,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 miette = { workspace = true }
 minijinja = { workspace = true }
+include_dir = { workspace = true }
 walkdir = { workspace = true }
 dirs = { workspace = true }
 tracing = { workspace = true }
