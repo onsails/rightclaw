@@ -1,4 +1,8 @@
 //! Content-addressed platform store for atomic sandbox file deployment.
+//!
+//! Platform-managed files are uploaded to `/platform/` with content-hash suffixes,
+//! then symlinked from their expected locations in `/sandbox/.claude/`.
+//! Agent-owned files live directly in `/sandbox/` and are never overwritten.
 
 use futures::stream::{self, StreamExt};
 use sha2::{Digest, Sha256};
@@ -43,28 +47,21 @@ pub fn platform_path(name: &str, hash: &str) -> String {
     format!("{name}.{hash}")
 }
 
-/// A single file to deploy to /platform/.
-pub struct FileEntry {
+/// A platform-managed entry to deploy to /platform/.
+pub struct ManifestEntry {
     pub name: String,
     pub host_path: std::path::PathBuf,
     pub hash: String,
     pub link_path: String,
     pub platform_prefix: String,
+    /// Cached file content (avoids double-read during deploy). None for directories.
+    pub content: Option<Vec<u8>>,
+    pub is_dir: bool,
 }
 
-/// A directory to deploy to /platform/.
-pub struct DirEntry {
-    pub name: String,
-    pub host_path: std::path::PathBuf,
-    pub hash: String,
-    pub link_path: String,
-    pub platform_prefix: String,
-}
-
-/// Complete manifest of platform-managed files and directories.
+/// Complete manifest of platform-managed entries.
 pub struct Manifest {
-    pub files: Vec<FileEntry>,
-    pub dirs: Vec<DirEntry>,
+    pub entries: Vec<ManifestEntry>,
 }
 
 /// Base path for platform store inside sandbox.
@@ -72,10 +69,10 @@ pub const PLATFORM_DIR: &str = "/platform";
 
 /// Scan agent directory, build manifest of platform-managed files.
 /// Excludes agent-owned files (IDENTITY.md, SOUL.md, USER.md, AGENTS.md, TOOLS.md).
+/// File content is cached in the manifest to avoid double-reads during deploy.
 pub fn build_manifest(agent_dir: &Path) -> miette::Result<Manifest> {
     let claude_dir = agent_dir.join(".claude");
-    let mut files = Vec::new();
-    let mut dirs = Vec::new();
+    let mut entries = Vec::new();
 
     // Files in .claude/
     let claude_files: &[(&str, &str)] = &[
@@ -91,12 +88,15 @@ pub fn build_manifest(agent_dir: &Path) -> miette::Result<Manifest> {
         if path.exists() {
             let content = std::fs::read(&path)
                 .map_err(|e| miette::miette!("read {name}: {e:#}"))?;
-            files.push(FileEntry {
+            let hash = content_hash(&content);
+            entries.push(ManifestEntry {
                 name: name.to_owned(),
                 host_path: path,
-                hash: content_hash(&content),
+                hash,
                 link_path: link.to_owned(),
                 platform_prefix: String::new(),
+                content: Some(content),
+                is_dir: false,
             });
         }
     }
@@ -117,12 +117,15 @@ pub fn build_manifest(agent_dir: &Path) -> miette::Result<Manifest> {
             if path.is_file() {
                 let content = std::fs::read(&path)
                     .map_err(|e| miette::miette!("read agent def {name}: {e:#}"))?;
-                files.push(FileEntry {
+                let hash = content_hash(&content);
+                entries.push(ManifestEntry {
                     name: name.to_string(),
                     host_path: path,
-                    hash: content_hash(&content),
+                    hash,
                     link_path: format!("/sandbox/.claude/agents/{name}"),
                     platform_prefix: "agents/".to_owned(),
+                    content: Some(content),
+                    is_dir: false,
                 });
             }
         }
@@ -133,12 +136,15 @@ pub fn build_manifest(agent_dir: &Path) -> miette::Result<Manifest> {
     if mcp_json.exists() {
         let content = std::fs::read(&mcp_json)
             .map_err(|e| miette::miette!("read mcp.json: {e:#}"))?;
-        files.push(FileEntry {
+        let hash = content_hash(&content);
+        entries.push(ManifestEntry {
             name: "mcp.json".to_owned(),
             host_path: mcp_json,
-            hash: content_hash(&content),
+            hash,
             link_path: "/sandbox/mcp.json".to_owned(),
             platform_prefix: String::new(),
+            content: Some(content),
+            is_dir: false,
         });
     }
 
@@ -148,20 +154,60 @@ pub fn build_manifest(agent_dir: &Path) -> miette::Result<Manifest> {
         let skill_path = skills_dir.join(skill_name);
         if skill_path.exists() && skill_path.is_dir() {
             let hash = directory_hash(&skill_path)?;
-            dirs.push(DirEntry {
+            entries.push(ManifestEntry {
                 name: skill_name.to_string(),
                 host_path: skill_path,
                 hash,
                 link_path: format!("/sandbox/.claude/skills/{skill_name}"),
                 platform_prefix: "skills/".to_owned(),
+                content: None,
+                is_dir: true,
             });
         }
     }
 
-    Ok(Manifest { files, dirs })
+    Ok(Manifest { entries })
+}
+
+/// Create an atomic symlink: tmp link → rm old → mv into place.
+///
+/// Uses `ln -sfn` (works for both files and directories).
+async fn atomic_symlink(sandbox: &str, target: &str, link_path: &str) -> miette::Result<()> {
+    use crate::openshell::exec_command;
+
+    // Ensure parent directory exists.
+    if let Some(parent) = Path::new(link_path).parent() {
+        let parent_str = parent.to_string_lossy();
+        let (_, code) = exec_command(sandbox, &["mkdir", "-p", &parent_str]).await?;
+        if code != 0 {
+            miette::bail!("mkdir -p {parent_str} failed with exit code {code}");
+        }
+    }
+
+    let link_name = Path::new(link_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "link".to_owned());
+    let tmp_link = format!("/tmp/rightclaw-link-{link_name}");
+
+    let (_, code) = exec_command(sandbox, &["ln", "-sfn", target, &tmp_link]).await?;
+    if code != 0 {
+        miette::bail!("ln -sfn {target} {tmp_link} failed with exit code {code}");
+    }
+
+    // Remove old target (handles migration from direct files/dirs).
+    exec_command(sandbox, &["rm", "-rf", link_path]).await?;
+
+    let (_, code) = exec_command(sandbox, &["mv", "-fT", &tmp_link, link_path]).await?;
+    if code != 0 {
+        miette::bail!("mv -fT {tmp_link} {link_path} failed with exit code {code}");
+    }
+
+    Ok(())
 }
 
 /// Upload a content-addressed file to /platform/, create atomic symlink at `link_path`.
+/// Uses cached content from manifest to avoid re-reading from disk.
 ///
 /// Returns the full platform path (for GC tracking).
 pub async fn deploy_file(
@@ -180,7 +226,6 @@ pub async fn deploy_file(
     // Check if content-addressed file already exists (dedup).
     let (_, exit_code) = exec_command(sandbox, &["test", "-e", &full_platform_path]).await?;
     if exit_code != 0 {
-        // File does not exist — upload it.
         let platform_dir = format!(
             "{PLATFORM_DIR}/{}",
             platform_prefix.trim_end_matches('/')
@@ -190,68 +235,24 @@ pub async fn deploy_file(
             miette::bail!("mkdir -p {platform_dir} failed with exit code {code}");
         }
 
-        // Write content to a temp file on host, upload, then rename.
+        // Write content to temp file, upload, rename to content-addressed name.
         let tmp_dir = tempfile::tempdir()
             .map_err(|e| miette::miette!("create tempdir: {e:#}"))?;
         let tmp_file = tmp_dir.path().join(name);
         std::fs::write(&tmp_file, content)
             .map_err(|e| miette::miette!("write temp file {}: {e:#}", tmp_file.display()))?;
 
-        // upload_file destination must end with '/'.
         let upload_dest = format!("{platform_dir}/");
         upload_file(sandbox, &tmp_file, &upload_dest).await?;
 
-        // Rename from uploaded name to content-addressed name.
         let uploaded_path = format!("{platform_dir}/{name}");
-        let (_, code) = exec_command(
-            sandbox,
-            &["mv", &uploaded_path, &full_platform_path],
-        )
-        .await?;
+        let (_, code) = exec_command(sandbox, &["mv", &uploaded_path, &full_platform_path]).await?;
         if code != 0 {
-            miette::bail!(
-                "mv {uploaded_path} -> {full_platform_path} failed with exit code {code}"
-            );
+            miette::bail!("mv {uploaded_path} -> {full_platform_path} failed with exit code {code}");
         }
     }
 
-    // Ensure parent directory of link_path exists.
-    if let Some(parent) = Path::new(link_path).parent() {
-        let parent_str = parent.to_string_lossy();
-        let (_, code) = exec_command(sandbox, &["mkdir", "-p", &parent_str]).await?;
-        if code != 0 {
-            miette::bail!("mkdir -p {parent_str} failed with exit code {code}");
-        }
-    }
-
-    // Atomic symlink: create at temp location, remove old target, move into place.
-    let link_name = Path::new(link_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| name.to_owned());
-    let tmp_link = format!("/tmp/rightclaw-link-{link_name}");
-
-    let (_, code) = exec_command(
-        sandbox,
-        &["ln", "-sf", &full_platform_path, &tmp_link],
-    )
-    .await?;
-    if code != 0 {
-        miette::bail!("ln -sf {full_platform_path} {tmp_link} failed with exit code {code}");
-    }
-
-    // Remove old target (handles migration from direct files/dirs).
-    let (_, _) = exec_command(sandbox, &["rm", "-rf", link_path]).await?;
-
-    let (_, code) = exec_command(
-        sandbox,
-        &["mv", "-fT", &tmp_link, link_path],
-    )
-    .await?;
-    if code != 0 {
-        miette::bail!("mv -fT {tmp_link} {link_path} failed with exit code {code}");
-    }
-
+    atomic_symlink(sandbox, &full_platform_path, link_path).await?;
     Ok(full_platform_path)
 }
 
@@ -274,13 +275,12 @@ pub async fn deploy_directory(
     // Check if content-addressed directory already exists (dedup).
     let (_, exit_code) = exec_command(sandbox, &["test", "-d", &full_platform_path]).await?;
     if exit_code != 0 {
-        // Directory does not exist — upload all files individually in parallel.
         let (_, code) = exec_command(sandbox, &["mkdir", "-p", &full_platform_path]).await?;
         if code != 0 {
             miette::bail!("mkdir -p {full_platform_path} failed with exit code {code}");
         }
 
-        // Collect all files with their relative paths.
+        // Collect files with relative paths.
         let mut file_entries: Vec<(std::path::PathBuf, String)> = Vec::new();
         for entry in walkdir::WalkDir::new(host_dir) {
             let entry = entry.map_err(|e| miette::miette!("walkdir: {e:#}"))?;
@@ -294,13 +294,13 @@ pub async fn deploy_directory(
             file_entries.push((entry.path().to_path_buf(), rel.to_string_lossy().to_string()));
         }
 
-        // Create all subdirectories first.
+        // Create subdirectories.
         let mut subdirs: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (_, rel) in &file_entries {
             if let Some(parent) = Path::new(rel).parent() {
-                let parent_str = parent.to_string_lossy().to_string();
-                if !parent_str.is_empty() {
-                    subdirs.insert(parent_str);
+                let p = parent.to_string_lossy().to_string();
+                if !p.is_empty() {
+                    subdirs.insert(p);
                 }
             }
         }
@@ -312,24 +312,20 @@ pub async fn deploy_directory(
             }
         }
 
-        // Upload files in parallel (buffer_unordered(10)).
+        // Upload files in parallel.
         let sandbox_owned = sandbox.to_owned();
-        let platform_path_owned = full_platform_path.clone();
+        let platform_base = full_platform_path.clone();
 
         let results: Vec<miette::Result<()>> = stream::iter(file_entries)
             .map(|(host_path, rel_path)| {
                 let sandbox = sandbox_owned.clone();
-                let platform_base = platform_path_owned.clone();
+                let base = platform_base.clone();
                 async move {
-                    let dest_dir = if let Some(parent) = Path::new(&rel_path).parent() {
-                        let p = parent.to_string_lossy();
-                        if p.is_empty() {
-                            format!("{platform_base}/")
-                        } else {
-                            format!("{platform_base}/{p}/")
+                    let dest_dir = match Path::new(&rel_path).parent() {
+                        Some(p) if !p.as_os_str().is_empty() => {
+                            format!("{base}/{}/", p.display())
                         }
-                    } else {
-                        format!("{platform_base}/")
+                        _ => format!("{base}/"),
                     };
                     upload_file(&sandbox, &host_path, &dest_dir).await?;
                     Ok(())
@@ -344,49 +340,12 @@ pub async fn deploy_directory(
         }
     }
 
-    // Ensure parent directory of link_path exists.
-    if let Some(parent) = Path::new(link_path).parent() {
-        let parent_str = parent.to_string_lossy();
-        let (_, code) = exec_command(sandbox, &["mkdir", "-p", &parent_str]).await?;
-        if code != 0 {
-            miette::bail!("mkdir -p {parent_str} failed with exit code {code}");
-        }
-    }
-
-    // Atomic symlink for directory: ln -sfn (not ln -sf).
-    let link_name = Path::new(link_path)
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| name.to_owned());
-    let tmp_link = format!("/tmp/rightclaw-link-{link_name}");
-
-    let (_, code) = exec_command(
-        sandbox,
-        &["ln", "-sfn", &full_platform_path, &tmp_link],
-    )
-    .await?;
-    if code != 0 {
-        miette::bail!("ln -sfn {full_platform_path} {tmp_link} failed with exit code {code}");
-    }
-
-    // Remove old target (handles migration from direct dirs).
-    let (_, _) = exec_command(sandbox, &["rm", "-rf", link_path]).await?;
-
-    let (_, code) = exec_command(
-        sandbox,
-        &["mv", "-fT", &tmp_link, link_path],
-    )
-    .await?;
-    if code != 0 {
-        miette::bail!("mv -fT {tmp_link} {link_path} failed with exit code {code}");
-    }
-
+    atomic_symlink(sandbox, &full_platform_path, link_path).await?;
     Ok(full_platform_path)
 }
 
 /// Garbage-collect stale entries from /platform/.
 ///
-/// Lists all files/dirs in /platform/, removes anything not in `active_targets`.
 /// Best-effort: logs warnings but does not fail.
 pub async fn gc_platform(sandbox: &str, active_targets: &[String]) -> miette::Result<()> {
     use crate::openshell::exec_command;
@@ -394,7 +353,6 @@ pub async fn gc_platform(sandbox: &str, active_targets: &[String]) -> miette::Re
     let active_set: std::collections::HashSet<&str> =
         active_targets.iter().map(|s| s.as_str()).collect();
 
-    // List all entries under /platform/ (depth 2 to catch prefix/name.hash).
     let (stdout, exit_code) = exec_command(
         sandbox,
         &["find", PLATFORM_DIR, "-mindepth", "1", "-maxdepth", "2"],
@@ -406,38 +364,40 @@ pub async fn gc_platform(sandbox: &str, active_targets: &[String]) -> miette::Re
         return Ok(());
     }
 
-    // Collect paths that are NOT prefixes of any active target.
-    // We need to keep both the direct entries and their parent prefix dirs.
+    let mut stale: Vec<&str> = Vec::new();
     for line in stdout.lines() {
         let path = line.trim();
         if path.is_empty() {
             continue;
         }
-
-        // Keep if this path IS an active target.
         if active_set.contains(path) {
             continue;
         }
-
-        // Keep if any active target starts with this path (it's a prefix directory).
+        // Keep if any active target starts with this path (prefix directory).
         let is_prefix = active_targets
             .iter()
             .any(|t| t.starts_with(path) && t.len() > path.len());
         if is_prefix {
             continue;
         }
+        stale.push(path);
+    }
 
-        tracing::info!("gc_platform: removing stale {path}");
-        let (_, code) = exec_command(sandbox, &["rm", "-rf", path]).await?;
+    if !stale.is_empty() {
+        let mut rm_args: Vec<&str> = vec!["rm", "-rf"];
+        rm_args.extend(&stale);
+        let (_, code) = exec_command(sandbox, &rm_args).await?;
         if code != 0 {
-            tracing::warn!("gc_platform: rm -rf {path} exited with code {code}");
+            tracing::warn!("gc_platform: rm -rf failed with exit code {code}");
+        } else {
+            tracing::debug!(count = stale.len(), "gc_platform: removed stale entries");
         }
     }
 
     Ok(())
 }
 
-/// Deploy all files and directories from a manifest, then GC stale entries.
+/// Deploy all entries from a manifest, then GC stale entries.
 pub async fn deploy_manifest(sandbox: &str, manifest: &Manifest) -> miette::Result<()> {
     use crate::openshell::exec_command;
 
@@ -447,36 +407,35 @@ pub async fn deploy_manifest(sandbox: &str, manifest: &Manifest) -> miette::Resu
         miette::bail!("mkdir -p {PLATFORM_DIR} failed with exit code {code}");
     }
 
-    // Make writable (previous run made it a-w). Best-effort — may not exist on first run.
-    let (_, _) = exec_command(sandbox, &["chmod", "-R", "u+w", PLATFORM_DIR]).await?;
+    // Make writable (previous run made it a-w). Best-effort on first run.
+    let _ = exec_command(sandbox, &["chmod", "-R", "u+w", PLATFORM_DIR]).await;
 
     let mut active_targets: Vec<String> = Vec::new();
 
-    // Deploy all files.
-    for file_entry in &manifest.files {
-        let content = std::fs::read(&file_entry.host_path)
-            .map_err(|e| miette::miette!("read {}: {e:#}", file_entry.host_path.display()))?;
-        let target = deploy_file(
-            sandbox,
-            &file_entry.name,
-            &content,
-            &file_entry.link_path,
-            &file_entry.platform_prefix,
-        )
-        .await?;
-        active_targets.push(target);
-    }
-
-    // Deploy all directories.
-    for dir_entry in &manifest.dirs {
-        let target = deploy_directory(
-            sandbox,
-            &dir_entry.name,
-            &dir_entry.host_path,
-            &dir_entry.link_path,
-            &dir_entry.platform_prefix,
-        )
-        .await?;
+    // Deploy all entries (files use cached content, directories walk host_path).
+    for entry in &manifest.entries {
+        let target = if entry.is_dir {
+            deploy_directory(
+                sandbox,
+                &entry.name,
+                &entry.host_path,
+                &entry.link_path,
+                &entry.platform_prefix,
+            )
+            .await?
+        } else {
+            let content = entry.content.as_ref().ok_or_else(|| {
+                miette::miette!("file entry {} has no cached content", entry.name)
+            })?;
+            deploy_file(
+                sandbox,
+                &entry.name,
+                content,
+                &entry.link_path,
+                &entry.platform_prefix,
+            )
+            .await?
+        };
         active_targets.push(target);
     }
 
