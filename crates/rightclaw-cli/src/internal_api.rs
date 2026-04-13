@@ -21,6 +21,12 @@ pub(crate) struct McpAddRequest {
     pub agent: String,
     pub name: String,
     pub url: String,
+    #[serde(default)]
+    pub auth_type: Option<String>,
+    #[serde(default)]
+    pub auth_header: Option<String>,
+    #[serde(default)]
+    pub auth_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -163,6 +169,15 @@ async fn handle_mcp_add(
         return validation_error(format!("{e}")).into_response();
     }
 
+    // Determine AuthMethod from request fields
+    let auth_method = match req.auth_type.as_deref() {
+        Some("header") => {
+            AuthMethod::Header(req.auth_header.clone().unwrap_or_else(|| "Authorization".into()))
+        }
+        Some("query_string") => AuthMethod::QueryString,
+        _ => AuthMethod::Bearer,
+    };
+
     // Get DB connection and agent_dir, add to SQLite (scope DashMap ref guard before await)
     let (conn_arc, agent_dir) = {
         let Some(registry) = dispatcher.agents.get(&req.agent) else {
@@ -183,44 +198,97 @@ async fn handle_mcp_add(
         if let Err(e) = credentials::db_add_server(&conn, &req.name, &req.url) {
             return internal_error(format!("db_add_server: {e:#}")).into_response();
         }
+        // Persist auth fields if provided
+        if req.auth_type.is_some() {
+            let auth_type_str = req.auth_type.as_deref().unwrap_or("bearer");
+            if let Err(e) = credentials::db_set_auth(
+                &conn,
+                &req.name,
+                auth_type_str,
+                req.auth_header.as_deref(),
+                req.auth_token.as_deref(),
+            ) {
+                return internal_error(format!("db_set_auth: {e:#}")).into_response();
+            }
+        }
     }
 
-    // Create ProxyBackend with Unreachable status
-    let token = Arc::new(tokio::sync::RwLock::new(None));
-    let backend =
-        ProxyBackend::new(req.name.clone(), agent_dir, req.url.clone(), token, AuthMethod::Bearer);
+    // Create ProxyBackend with the resolved auth method and optional token
+    let token = Arc::new(tokio::sync::RwLock::new(req.auth_token.clone()));
+    let backend = ProxyBackend::new(
+        req.name.clone(),
+        agent_dir,
+        req.url.clone(),
+        token,
+        auth_method,
+    );
     let handle = Arc::new(backend);
 
-    // Insert into proxies map (clone Arc<RwLock> to avoid holding DashMap guard across await)
-    let proxies_lock = {
-        let Some(registry) = dispatcher.agents.get(&req.agent) else {
-            return not_found("agent_not_found").into_response();
-        };
-        Arc::clone(&registry.proxies)
-    };
-    {
-        let mut proxies = proxies_lock.write().await;
-        proxies.insert(req.name.clone(), Arc::clone(&handle));
+    // Attempt connection
+    match handle.connect(reqwest::Client::new()).await {
+        Ok(_instructions) => {
+            let tools_count = handle.try_tools().map(|t| t.len()).unwrap_or(0);
+
+            // Insert into proxies map
+            let proxies_lock = {
+                let Some(registry) = dispatcher.agents.get(&req.agent) else {
+                    return not_found("agent_not_found").into_response();
+                };
+                Arc::clone(&registry.proxies)
+            };
+            {
+                let mut proxies = proxies_lock.write().await;
+                proxies.insert(req.name.clone(), Arc::clone(&handle));
+            }
+
+            (
+                StatusCode::OK,
+                Json(McpAddResponse {
+                    tools_count,
+                    excluded: Vec::new(),
+                    warning: None,
+                }),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            // Remove from SQLite on connection failure
+            let conn_arc = {
+                let Some(registry) = dispatcher.agents.get(&req.agent) else {
+                    return not_found("agent_not_found").into_response();
+                };
+                match registry.right.get_conn(&req.agent) {
+                    Ok(c) => c,
+                    Err(db_err) => {
+                        return internal_error(format!("db open for rollback: {db_err:#}"))
+                            .into_response()
+                    }
+                }
+            };
+            {
+                let conn = match conn_arc.lock() {
+                    Ok(c) => c,
+                    Err(poison) => {
+                        return internal_error(format!("mutex poisoned: {poison}")).into_response()
+                    }
+                };
+                // Best-effort rollback — ignore ServerNotFound
+                match credentials::db_remove_server(&conn, &req.name) {
+                    Ok(()) | Err(CredentialError::ServerNotFound(_)) => {}
+                    Err(db_err) => {
+                        tracing::warn!("rollback db_remove_server failed: {db_err:#}");
+                    }
+                }
+            }
+
+            error_response(
+                StatusCode::BAD_GATEWAY,
+                format!("connection failed: {e:#}"),
+                None,
+            )
+            .into_response()
+        }
     }
-
-    // Connection is deferred — ProxyBackend starts as Unreachable.
-    // The aggregator's background reconnect loop will connect it, or
-    // the bot can trigger a reconnect via set-token.
-    let tools_count = 0usize;
-    let warning: Option<String> = Some(
-        "Server registered in Unreachable state. Connection will be attempted on next tool call or when a token is set."
-            .to_owned(),
-    );
-
-    (
-        StatusCode::OK,
-        Json(McpAddResponse {
-            tools_count,
-            excluded: Vec::new(),
-            warning,
-        }),
-    )
-        .into_response()
 }
 
 async fn handle_mcp_remove(

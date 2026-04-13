@@ -718,7 +718,7 @@ async fn handle_mcp_add(
 
     let eff_thread_id = effective_thread_id(msg);
 
-    match internal.mcp_add(agent_name, name, url).await {
+    match internal.mcp_add(agent_name, name, url, None, None, None).await {
         Ok(resp) => {
             let escaped_name = super::markdown::html_escape(name);
             let mut reply = format!("Added MCP server <b>{escaped_name}</b>.");
