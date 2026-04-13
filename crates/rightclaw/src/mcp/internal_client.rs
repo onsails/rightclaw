@@ -109,11 +109,19 @@ impl InternalClient {
         agent: &str,
         name: &str,
         url: &str,
+        auth_type: Option<&str>,
+        auth_header: Option<&str>,
+        auth_token: Option<&str>,
     ) -> Result<McpAddResponse, InternalClientError> {
         self.post(
             "/mcp-add",
             &serde_json::json!({
-                "agent": agent, "name": name, "url": url
+                "agent": agent,
+                "name": name,
+                "url": url,
+                "auth_type": auth_type,
+                "auth_header": auth_header,
+                "auth_token": auth_token,
             }),
         )
         .await
