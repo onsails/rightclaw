@@ -282,11 +282,11 @@ async fn handle_set_token(
     Json(req): Json<SetTokenRequest>,
 ) -> axum::response::Response {
     // Extract what we need from DashMap guard (scope guard before await)
-    let (proxies_lock, agent_dir) = {
+    let proxies_lock = {
         let Some(registry) = dispatcher.agents.get(&req.agent) else {
             return not_found(format!("agent '{}' not found", req.agent)).into_response();
         };
-        (Arc::clone(&registry.proxies), registry.agent_dir.clone())
+        Arc::clone(&registry.proxies)
     };
 
     // Find proxy handle
@@ -309,32 +309,35 @@ async fn handle_set_token(
         *token_guard = Some(req.access_token.clone());
     }
 
-    // Save OAuth state to oauth-state.json
-    let oauth_state_path = agent_dir.join("oauth-state.json");
-    let mut oauth_state =
-        match rightclaw::mcp::refresh::load_oauth_state(&oauth_state_path) {
-            Ok(s) => s,
-            Err(e) => {
-                return internal_error(format!("load oauth state: {e:#}")).into_response();
+    // Persist OAuth state to SQLite
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(req.expires_in as i64);
+    let expires_at_str = expires_at.to_rfc3339();
+    {
+        let conn_arc = {
+            let Some(registry) = dispatcher.agents.get(&req.agent) else {
+                return not_found("agent_not_found").into_response();
+            };
+            match registry.right.get_conn(&req.agent) {
+                Ok(c) => c,
+                Err(e) => return internal_error(format!("db open: {e:#}")).into_response(),
             }
         };
-
-    let expires_at =
-        chrono::Utc::now() + chrono::Duration::seconds(req.expires_in as i64);
-    oauth_state.servers.insert(
-        req.server.clone(),
-        rightclaw::mcp::refresh::OAuthServerState {
-            refresh_token: Some(req.refresh_token),
-            token_endpoint: req.token_endpoint,
-            client_id: req.client_id,
-            client_secret: req.client_secret,
-            expires_at,
-            server_url: handle.url().to_owned(),
-        },
-    );
-
-    if let Err(e) = rightclaw::mcp::refresh::save_oauth_state(&oauth_state_path, &oauth_state) {
-        return internal_error(format!("save oauth state: {e:#}")).into_response();
+        let conn = match conn_arc.lock() {
+            Ok(c) => c,
+            Err(e) => return internal_error(format!("mutex poisoned: {e}")).into_response(),
+        };
+        if let Err(e) = rightclaw::mcp::credentials::db_set_oauth_state(
+            &conn,
+            &req.server,
+            &req.access_token,
+            Some(&req.refresh_token),
+            &req.token_endpoint,
+            &req.client_id,
+            req.client_secret.as_deref(),
+            &expires_at_str,
+        ) {
+            return internal_error(format!("db_set_oauth_state: {e:#}")).into_response();
+        }
     }
 
     // Reconnection is deferred — ProxyBackend::connect contains !Send types
