@@ -39,17 +39,18 @@ Telegram commands. Here's what happens behind the scenes:
 
 ### Step 1: Check current servers
 
-Call `mcp__right__mcp_list()` to see what's already registered. If the requested service is
-already connected, tell the user and stop.
+Call `mcp__right__mcp_list()` DIRECTLY — do NOT delegate to a subagent (subagents
+have no MCP access). If the requested service is already connected, tell the user
+and stop. If the tool call fails, skip this step and continue.
 
 ### Step 2: Check known endpoints
 
 Check `known-endpoints.yaml` for the requested service. If a match exists,
-skip web search entirely and go straight to Step 3 with the URL from the file.
+go straight to Step 4 with the URL from the file — skip web search entirely.
 
 ### Step 3: Search for OAuth endpoint FIRST
 
-If the service is NOT in known endpoints, search the web.
+Only if the service is NOT in known endpoints, search the web.
 Your first search query MUST target Claude Code or Codex integration docs.
 These describe OAuth-capable MCP endpoints that work with `/mcp auth`.
 
