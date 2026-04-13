@@ -29,6 +29,10 @@ pub async fn initial_sync(agent_dir: &Path, sandbox_name: &str) -> miette::Resul
         }
     }
 
+    // Ensure /sandbox/.local/bin is in PATH for agent-installed CLI tools.
+    // Idempotent: only patches .bashrc if the path isn't already present.
+    ensure_local_bin_in_path(sandbox_name).await?;
+
     // Upload agent-owned files (AGENTS.md, TOOLS.md) to sandbox root only if missing.
     // Preserves agent edits on subsequent boots.
     for &filename in &["AGENTS.md", "TOOLS.md"] {
@@ -303,6 +307,42 @@ async fn verify_claude_json(agent_dir: &Path, sandbox: &str) -> miette::Result<(
             .map_err(|e| miette::miette!("sync: re-upload fixed .claude.json: {e:#}"))?;
         tracing::info!("sync: fixed and re-uploaded .claude.json (rightclaw keys were modified)");
     }
+
+    Ok(())
+}
+
+/// Ensure `/sandbox/.local/bin` is in PATH via `.bashrc`.
+///
+/// Agents install CLI tools (gh extensions, etc.) to `$HOME/.local/bin` which maps
+/// to `/sandbox/.local/bin`. This is already writable, but not in PATH by default.
+async fn ensure_local_bin_in_path(sandbox: &str) -> miette::Result<()> {
+    let (bashrc, code) = rightclaw::openshell::exec_command(
+        sandbox,
+        &["cat", "/sandbox/.bashrc"],
+    )
+    .await?;
+
+    if code != 0 || !bashrc.contains("/sandbox/.local/bin") {
+        // Prepend to PATH in .bashrc
+        rightclaw::openshell::exec_command(
+            sandbox,
+            &[
+                "sed",
+                "-i",
+                r#"s|export PATH="/sandbox/.venv/bin:|export PATH="/sandbox/.local/bin:/sandbox/.venv/bin:|"#,
+                "/sandbox/.bashrc",
+            ],
+        )
+        .await?;
+        tracing::info!("sync: added /sandbox/.local/bin to PATH in .bashrc");
+    }
+
+    // Ensure the directory exists
+    rightclaw::openshell::exec_command(
+        sandbox,
+        &["mkdir", "-p", "/sandbox/.local/bin"],
+    )
+    .await?;
 
     Ok(())
 }
