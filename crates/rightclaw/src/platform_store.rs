@@ -401,13 +401,22 @@ pub async fn gc_platform(sandbox: &str, active_targets: &[String]) -> miette::Re
 }
 
 /// Deploy all entries from a manifest, then GC stale entries.
+///
+/// If `/platform/` is not writable (sandbox created with old policy), falls back
+/// to direct file upload without content-addressing. Logs a warning so the
+/// operator knows sandbox recreation is needed.
 pub async fn deploy_manifest(sandbox: &str, manifest: &Manifest) -> miette::Result<()> {
-    use crate::openshell::exec_command;
+    use crate::openshell::{exec_command, upload_file};
 
-    // Ensure /platform/ exists.
+    // Check if /platform/ is available.
     let (_, code) = exec_command(sandbox, &["mkdir", "-p", PLATFORM_DIR]).await?;
     if code != 0 {
-        miette::bail!("mkdir -p {PLATFORM_DIR} failed with exit code {code}");
+        tracing::warn!(
+            "sandbox filesystem policy outdated: /platform not writable. \
+             Falling back to direct upload. \
+             Run `rightclaw agent recreate <name>` to update."
+        );
+        return deploy_manifest_fallback(sandbox, manifest).await;
     }
 
     // Make writable (previous run made it a-w). Best-effort on first run.
@@ -455,5 +464,43 @@ pub async fn deploy_manifest(sandbox: &str, manifest: &Manifest) -> miette::Resu
         miette::bail!("chmod -R a-w {PLATFORM_DIR} failed with exit code {code}");
     }
 
+    Ok(())
+}
+
+/// Fallback: upload files directly to their expected locations (no content-addressing).
+/// Used when sandbox was created with an old policy that doesn't include /platform/.
+async fn deploy_manifest_fallback(sandbox: &str, manifest: &Manifest) -> miette::Result<()> {
+    use crate::openshell::{exec_command, upload_file};
+
+    for entry in &manifest.entries {
+        let link_parent = std::path::Path::new(&entry.link_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if !link_parent.is_empty() {
+            exec_command(sandbox, &["mkdir", "-p", &link_parent]).await?;
+        }
+
+        if entry.is_dir {
+            // Upload directory files individually
+            let dest = format!("{link_parent}/");
+            upload_file(sandbox, &entry.host_path, &dest).await
+                .map_err(|e| miette::miette!("fallback upload dir {}: {e:#}", entry.name))?;
+        } else {
+            let content = entry.content.as_ref().ok_or_else(|| {
+                miette::miette!("file entry {} has no cached content", entry.name)
+            })?;
+            let tmp_dir = tempfile::tempdir()
+                .map_err(|e| miette::miette!("create tempdir: {e:#}"))?;
+            let tmp_file = tmp_dir.path().join(&entry.name);
+            std::fs::write(&tmp_file, content)
+                .map_err(|e| miette::miette!("write temp: {e:#}"))?;
+            let dest = format!("{link_parent}/");
+            upload_file(sandbox, &tmp_file, &dest).await
+                .map_err(|e| miette::miette!("fallback upload {}: {e:#}", entry.name))?;
+        }
+    }
+
+    tracing::info!("sync: fallback deploy complete (no content-addressing)");
     Ok(())
 }
