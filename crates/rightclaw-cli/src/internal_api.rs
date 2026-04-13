@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse, routing::post};
 use rightclaw::mcp::credentials::{self, CredentialError};
-use rightclaw::mcp::proxy::ProxyBackend;
+use rightclaw::mcp::proxy::{AuthMethod, ProxyBackend};
 use serde::{Deserialize, Serialize};
 
 use crate::aggregator::ToolDispatcher;
@@ -185,7 +185,8 @@ async fn handle_mcp_add(
 
     // Create ProxyBackend with Unreachable status
     let token = Arc::new(tokio::sync::RwLock::new(None));
-    let backend = ProxyBackend::new(req.name.clone(), agent_dir, req.url.clone(), token);
+    let backend =
+        ProxyBackend::new(req.name.clone(), agent_dir, req.url.clone(), token, AuthMethod::Bearer);
     let handle = Arc::new(backend);
 
     // Insert into proxies map (clone Arc<RwLock> to avoid holding DashMap guard across await)
