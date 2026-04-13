@@ -403,6 +403,30 @@ git commit -m "feat: add platform_store module with content hashing and manifest
 **Files:**
 - Modify: `crates/rightclaw/src/platform_store.rs`
 - Modify: `crates/rightclaw/src/platform_store_tests.rs`
+- Modify: `crates/rightclaw/src/openshell_tests.rs` (make TestSandbox pub(crate))
+
+- [ ] **Step 0: Make TestSandbox accessible from other test modules**
+
+In `crates/rightclaw/src/openshell_tests.rs`, change:
+
+```rust
+struct TestSandbox {
+```
+
+To:
+
+```rust
+pub(crate) struct TestSandbox {
+```
+
+Also make its methods and fields pub(crate):
+
+```rust
+pub(crate) async fn create(test_name: &str) -> Self {
+pub(crate) fn name(&self) -> &str {
+pub(crate) async fn exec(&self, cmd: &[&str]) -> (String, i32) {
+pub(crate) async fn destroy(self) {
+```
 
 - [ ] **Step 1: Write integration test for deploy cycle**
 
@@ -653,12 +677,16 @@ pub async fn deploy_file(
         crate::openshell::exec_command(sandbox, &["mkdir", "-p", &link_parent]).await?;
     }
 
+    // Atomic symlink swap: create tmp link, rm old target (handles migration from
+    // direct files/directories), mv tmp link into place.
     let tmp_link = format!("/tmp/rightclaw-link-{}", name.replace('/', "-"));
     crate::openshell::exec_command(
         sandbox,
         &["ln", "-sf", &full_platform_path, &tmp_link],
     )
     .await?;
+    // Remove existing entry (may be a regular file or directory from old sync layout)
+    crate::openshell::exec_command(sandbox, &["rm", "-rf", link_path]).await?;
     crate::openshell::exec_command(
         sandbox,
         &["mv", "-fT", &tmp_link, link_path],
@@ -744,12 +772,14 @@ pub async fn deploy_directory(
         crate::openshell::exec_command(sandbox, &["mkdir", "-p", &link_parent]).await?;
     }
 
+    // Atomic symlink swap (same pattern as deploy_file)
     let tmp_link = format!("/tmp/rightclaw-link-{}", name);
     crate::openshell::exec_command(
         sandbox,
         &["ln", "-sfn", &full_platform_path, &tmp_link],
     )
     .await?;
+    crate::openshell::exec_command(sandbox, &["rm", "-rf", link_path]).await?;
     crate::openshell::exec_command(
         sandbox,
         &["mv", "-fT", &tmp_link, link_path],
@@ -819,8 +849,10 @@ pub async fn gc_platform(sandbox: &str, active_targets: &[String]) -> miette::Re
 
 /// Run a complete deploy cycle: upload manifest to /platform/, create symlinks, GC.
 pub async fn deploy_manifest(sandbox: &str, manifest: &Manifest) -> miette::Result<()> {
-    // Ensure /platform/ exists
+    // Ensure /platform/ exists and is writable (previous cycle may have chmod a-w'd it)
     crate::openshell::exec_command(sandbox, &["mkdir", "-p", PLATFORM_DIR]).await?;
+    // Restore write permission for this deploy cycle (best-effort: first run has no /platform/)
+    let _ = crate::openshell::exec_command(sandbox, &["chmod", "-R", "u+w", PLATFORM_DIR]).await;
 
     let mut active_targets: Vec<String> = Vec::new();
 
