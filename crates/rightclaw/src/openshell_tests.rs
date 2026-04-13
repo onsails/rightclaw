@@ -601,28 +601,40 @@ async fn upload_file_rejects_non_directory_dest() {
 /// Regression test: upload_file with a directory (not a single file) as source.
 /// This is how sync.rs uploads builtin skills (e.g. rightcron/, rightmcp/).
 /// OpenShell has a known bug where directory uploads silently drop small files.
+/// Also tests overwrite: sync runs every 5 min, so repeated uploads must work.
 #[tokio::test]
 #[serial]
-async fn upload_directory_preserves_files() {
+async fn upload_directory_preserves_files_and_overwrites() {
     let sbox = TestSandbox::create("upload-dir-tree").await;
 
     // Create a directory tree mimicking a skill: rightmcp/SKILL.md
     let tmp = tempfile::tempdir().unwrap();
     let skill_dir = tmp.path().join("rightmcp");
     std::fs::create_dir_all(&skill_dir).unwrap();
-    std::fs::write(skill_dir.join("SKILL.md"), "# test skill\n").unwrap();
+    std::fs::write(skill_dir.join("SKILL.md"), "# version 1\n").unwrap();
 
-    // Upload directory — same call pattern as sync.rs uses for builtin skills
+    // First upload
     super::upload_file(sbox.name(), &skill_dir, "/sandbox/.claude/skills/")
         .await
-        .expect("directory upload should succeed");
+        .expect("first directory upload should succeed");
 
-    // Verify the file actually landed (not silently dropped)
     let (content, code) = sbox
         .exec(&["cat", "/sandbox/.claude/skills/rightmcp/SKILL.md"])
         .await;
-    assert_eq!(code, 0, "SKILL.md must exist after directory upload");
-    assert_eq!(content, "# test skill\n", "file content must match");
+    assert_eq!(code, 0, "SKILL.md must exist after first upload");
+    assert_eq!(content, "# version 1\n");
+
+    // Second upload with updated content (simulates sync overwrite)
+    std::fs::write(skill_dir.join("SKILL.md"), "# version 2\n").unwrap();
+    super::upload_file(sbox.name(), &skill_dir, "/sandbox/.claude/skills/")
+        .await
+        .expect("second directory upload (overwrite) should succeed");
+
+    let (content, code) = sbox
+        .exec(&["cat", "/sandbox/.claude/skills/rightmcp/SKILL.md"])
+        .await;
+    assert_eq!(code, 0, "SKILL.md must exist after overwrite");
+    assert_eq!(content, "# version 2\n", "overwrite must update content");
 
     sbox.destroy().await;
 }
