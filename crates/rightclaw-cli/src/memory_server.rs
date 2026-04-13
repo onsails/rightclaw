@@ -87,6 +87,7 @@ pub struct McpListParams {}
 // --- Server struct ---
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct MemoryServer {
     tool_router: ToolRouter<Self>,
     conn: Arc<Mutex<rusqlite::Connection>>,

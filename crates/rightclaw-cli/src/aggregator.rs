@@ -22,7 +22,7 @@ use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager,
 };
 use rmcp::ErrorData as McpError;
-use rightclaw::mcp::proxy::{BackendStatus, ProxyBackend};
+use rightclaw::mcp::proxy::ProxyBackend;
 use tokio_util::sync::CancellationToken;
 
 use crate::right_backend::RightBackend;
@@ -36,6 +36,7 @@ pub(crate) type AgentTokenMap = Arc<tokio::sync::RwLock<HashMap<String, AgentInf
 
 /// Agent identity resolved from a Bearer token.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(crate) struct AgentInfo {
     pub name: String,
     pub dir: PathBuf,
