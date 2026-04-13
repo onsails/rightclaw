@@ -75,9 +75,9 @@ fn build_manifest_from_files() {
     std::fs::write(claude_dir.join("skills/rightmcp/SKILL.md"), "# skill").unwrap();
     std::fs::write(dir.path().join("mcp.json"), "{}").unwrap();
     let manifest = build_manifest(dir.path()).unwrap();
-    assert!(manifest.files.iter().any(|e| e.name == "settings.json"));
-    assert!(manifest.files.iter().any(|e| e.name == "mcp.json"));
-    assert!(manifest.dirs.iter().any(|e| e.name == "rightmcp"));
+    assert!(manifest.entries.iter().any(|e| e.name == "settings.json" && !e.is_dir));
+    assert!(manifest.entries.iter().any(|e| e.name == "mcp.json" && !e.is_dir));
+    assert!(manifest.entries.iter().any(|e| e.name == "rightmcp" && e.is_dir));
 }
 
 #[test]
@@ -89,8 +89,31 @@ fn build_manifest_skips_agent_owned_files() {
     std::fs::write(agents_dir.join("TOOLS.md"), "# tools").unwrap();
     std::fs::write(agents_dir.join("right.md"), "---\nname: right\n---").unwrap();
     let manifest = build_manifest(dir.path()).unwrap();
-    // right.md should be included, AGENTS.md and TOOLS.md should not
-    assert!(manifest.files.iter().any(|e| e.name == "right.md"));
-    assert!(!manifest.files.iter().any(|e| e.name == "AGENTS.md"));
-    assert!(!manifest.files.iter().any(|e| e.name == "TOOLS.md"));
+    assert!(manifest.entries.iter().any(|e| e.name == "right.md"));
+    assert!(!manifest.entries.iter().any(|e| e.name == "AGENTS.md"));
+    assert!(!manifest.entries.iter().any(|e| e.name == "TOOLS.md"));
+}
+
+#[test]
+fn build_manifest_caches_file_content() {
+    let dir = tempdir().unwrap();
+    let claude_dir = dir.path().join(".claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(claude_dir.join("settings.json"), r#"{"cached": true}"#).unwrap();
+    let manifest = build_manifest(dir.path()).unwrap();
+    let entry = manifest.entries.iter().find(|e| e.name == "settings.json").unwrap();
+    assert!(entry.content.is_some(), "file entries must cache content");
+    assert_eq!(entry.content.as_ref().unwrap(), br#"{"cached": true}"#);
+}
+
+#[test]
+fn build_manifest_dirs_have_no_cached_content() {
+    let dir = tempdir().unwrap();
+    let skills_dir = dir.path().join(".claude/skills/rightcron");
+    std::fs::create_dir_all(&skills_dir).unwrap();
+    std::fs::write(skills_dir.join("SKILL.md"), "# cron").unwrap();
+    let manifest = build_manifest(dir.path()).unwrap();
+    let entry = manifest.entries.iter().find(|e| e.name == "rightcron").unwrap();
+    assert!(entry.is_dir);
+    assert!(entry.content.is_none(), "directory entries must not cache content");
 }
