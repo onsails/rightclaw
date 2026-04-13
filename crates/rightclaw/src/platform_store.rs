@@ -411,7 +411,9 @@ pub async fn deploy_manifest(sandbox: &str, manifest: &Manifest) -> miette::Resu
     }
 
     // Make writable (previous run made it a-w). Best-effort on first run.
-    let _ = exec_command(sandbox, &["chmod", "-R", "u+w", PLATFORM_DIR]).await;
+    if let Err(e) = exec_command(sandbox, &["chmod", "-R", "u+w", PLATFORM_DIR]).await {
+        tracing::warn!("chmod u+w /platform failed (may be first run): {e:#}");
+    }
 
     let mut active_targets: Vec<String> = Vec::new();
 
