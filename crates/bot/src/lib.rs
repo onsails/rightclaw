@@ -229,9 +229,8 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
     let _ = axum_ready_rx.await;
 
     // Spawn OAuth refresh scheduler
-    let oauth_state_path = agent_dir.join("oauth-state.json");
     tokio::spawn(rightclaw::mcp::refresh::run_refresh_scheduler(
-        oauth_state_path,
+        agent_dir.clone(),
         refresh_rx,
         notify_refresh_tx,
     ));

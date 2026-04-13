@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn user_version_is_9() {
+    fn user_version_is_10() {
         let dir = tempdir().unwrap();
         open_db(dir.path()).unwrap();
         let conn =
@@ -133,7 +133,7 @@ mod tests {
         let version: u32 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 9, "user_version should be 9 after V9 migration");
+        assert_eq!(version, 10, "user_version should be 10 after V10 migration");
     }
 
     #[test]

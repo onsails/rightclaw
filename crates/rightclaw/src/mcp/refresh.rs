@@ -1,13 +1,11 @@
 //! OAuth token refresh: state persistence and refresh timing.
 
 use std::collections::HashMap;
-use std::io::Write;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use tempfile::NamedTempFile;
 
 /// Refresh margin: refresh token 10 minutes before expiry.
 const REFRESH_MARGIN: Duration = Duration::from_secs(600);
@@ -21,12 +19,6 @@ pub struct OAuthServerState {
     pub client_secret: Option<String>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub server_url: String,
-}
-
-/// All OAuth state for an agent.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct OAuthState {
-    pub servers: HashMap<String, OAuthServerState>,
 }
 
 /// Message sent to refresh scheduler (new token or removal).
@@ -43,32 +35,36 @@ pub enum RefreshMessage {
     RemoveServer { server_name: String },
 }
 
-/// Load OAuth state from file. Returns empty state if file doesn't exist.
-pub fn load_oauth_state(path: &Path) -> miette::Result<OAuthState> {
-    if !path.exists() {
-        return Ok(OAuthState::default());
-    }
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| miette::miette!("failed to read oauth state: {e:#}"))?;
-    let state: OAuthState = serde_json::from_str(&content)
-        .map_err(|e| miette::miette!("failed to parse oauth state: {e:#}"))?;
-    Ok(state)
-}
+/// Load OAuth server entries from SQLite for refresh scheduling.
+pub fn load_oauth_entries_from_db(
+    conn: &Connection,
+) -> miette::Result<Vec<(String, OAuthServerState)>> {
+    let servers = crate::mcp::credentials::db_list_oauth_servers(conn)
+        .map_err(|e| miette::miette!("failed to list OAuth servers: {e:#}"))?;
 
-/// Save OAuth state to file atomically (temp file + rename).
-pub fn save_oauth_state(path: &Path, state: &OAuthState) -> miette::Result<()> {
-    let content = serde_json::to_string_pretty(state)
-        .map_err(|e| miette::miette!("failed to serialize oauth state: {e:#}"))?;
-    let dir = path
-        .parent()
-        .ok_or_else(|| miette::miette!("oauth state path has no parent directory"))?;
-    let mut tmp = NamedTempFile::new_in(dir)
-        .map_err(|e| miette::miette!("failed to create temp file for oauth state: {e:#}"))?;
-    tmp.write_all(content.as_bytes())
-        .map_err(|e| miette::miette!("failed to write oauth state to temp file: {e:#}"))?;
-    tmp.persist(path)
-        .map_err(|e| miette::miette!("failed to persist oauth state: {e:#}"))?;
-    Ok(())
+    let mut entries = Vec::new();
+    for s in servers {
+        let Some(ref token_endpoint) = s.token_endpoint else { continue };
+        let Some(ref client_id) = s.client_id else { continue };
+        let Some(ref expires_at_str) = s.expires_at else { continue };
+
+        let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at_str)
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
+
+        entries.push((
+            s.name.clone(),
+            OAuthServerState {
+                refresh_token: s.refresh_token.clone(),
+                token_endpoint: token_endpoint.clone(),
+                client_id: client_id.clone(),
+                client_secret: s.client_secret.clone(),
+                expires_at,
+                server_url: s.url.clone(),
+            },
+        ));
+    }
+    Ok(entries)
 }
 
 /// Maximum retry attempts for token refresh.
@@ -91,37 +87,44 @@ pub fn refresh_due_in(entry: &OAuthServerState) -> Duration {
 ///
 /// Listens for `RefreshMessage` messages (new tokens or removals) and maintains
 /// timers for each server. On successful refresh: writes new token to ProxyBackend's
-/// shared `Arc<RwLock>` in-memory, and persists state to `oauth_state_path`.
+/// shared `Arc<RwLock>` in-memory, and persists state to SQLite.
 pub async fn run_refresh_scheduler(
-    oauth_state_path: std::path::PathBuf,
+    agent_dir: std::path::PathBuf,
     mut rx: tokio::sync::mpsc::Receiver<RefreshMessage>,
     notify_tx: tokio::sync::mpsc::Sender<String>,
 ) {
     let http_client = reqwest::Client::new();
 
-    // Load existing state
-    let mut state = match load_oauth_state(&oauth_state_path) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("failed to load oauth state: {e:#}");
-            OAuthState::default()
-        }
-    };
+    // Load existing OAuth state from SQLite
+    let initial_entries: Vec<(String, OAuthServerState)> =
+        match crate::memory::open_connection(&agent_dir) {
+            Ok(conn) => match load_oauth_entries_from_db(&conn) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    tracing::error!("failed to load OAuth entries from DB: {e:#}");
+                    Vec::new()
+                }
+            },
+            Err(e) => {
+                tracing::error!("failed to open DB for refresh scheduler: {e:#}");
+                Vec::new()
+            }
+        };
 
-    // Shared token handles per server — written on refresh success
+    let mut entries: HashMap<String, OAuthServerState> = HashMap::new();
     let mut token_handles: HashMap<String, Arc<tokio::sync::RwLock<Option<String>>>> =
         HashMap::new();
-
-    // Build initial timer set
     let mut timers: HashMap<String, tokio::time::Instant> = HashMap::new();
-    for (name, entry) in &state.servers {
+
+    for (name, entry) in initial_entries {
         if entry.refresh_token.is_none() {
             tracing::warn!(server = %name, "no refresh_token — skipping auto-refresh");
             continue;
         }
-        let due = refresh_due_in(entry);
+        let due = refresh_due_in(&entry);
         timers.insert(name.clone(), tokio::time::Instant::now() + due);
         tracing::info!(server = %name, due_secs = due.as_secs(), "scheduled refresh");
+        entries.insert(name, entry);
     }
 
     loop {
@@ -135,20 +138,35 @@ pub async fn run_refresh_scheduler(
                     RefreshMessage::NewEntry { server_name, state: entry_state, token } => {
                         let due = refresh_due_in(&entry_state);
                         timers.insert(server_name.clone(), tokio::time::Instant::now() + due);
-                        state.servers.insert(server_name.clone(), entry_state);
-                        token_handles.insert(server_name.clone(), token);
-                        if let Err(e) = save_oauth_state(&oauth_state_path, &state) {
-                            tracing::error!("failed to save oauth state: {e:#}");
+
+                        // Read token before opening DB connection (Connection is !Send across await)
+                        let current_token = token.read().await.clone().unwrap_or_default();
+
+                        // Persist to SQLite
+                        if let Ok(conn) = crate::memory::open_connection(&agent_dir) {
+                            let expires_at = entry_state.expires_at.to_rfc3339();
+                            if let Err(e) = crate::mcp::credentials::db_set_oauth_state(
+                                &conn,
+                                &server_name,
+                                &current_token,
+                                entry_state.refresh_token.as_deref(),
+                                &entry_state.token_endpoint,
+                                &entry_state.client_id,
+                                entry_state.client_secret.as_deref(),
+                                &expires_at,
+                            ) {
+                                tracing::error!("failed to persist OAuth state: {e:#}");
+                            }
                         }
+
+                        entries.insert(server_name.clone(), entry_state);
+                        token_handles.insert(server_name.clone(), token);
                         tracing::info!(server = %server_name, due_secs = due.as_secs(), "new refresh scheduled");
                     }
                     RefreshMessage::RemoveServer { server_name } => {
                         timers.remove(&server_name);
-                        state.servers.remove(&server_name);
+                        entries.remove(&server_name);
                         token_handles.remove(&server_name);
-                        if let Err(e) = save_oauth_state(&oauth_state_path, &state) {
-                            tracing::error!("failed to save oauth state: {e:#}");
-                        }
                         tracing::info!(server = %server_name, "refresh cancelled — server removed");
                     }
                 }
@@ -162,7 +180,7 @@ pub async fn run_refresh_scheduler(
                 }
             } => {
                 let name = next.unwrap().0.clone();
-                let entry = match state.servers.get(&name) {
+                let entry = match entries.get(&name) {
                     Some(e) => e.clone(),
                     None => continue,
                 };
@@ -180,10 +198,20 @@ pub async fn run_refresh_scheduler(
                         // Schedule next refresh
                         let due = refresh_due_in(&new_entry);
                         timers.insert(name.clone(), tokio::time::Instant::now() + due);
-                        state.servers.insert(name.clone(), new_entry);
-                        if let Err(e) = save_oauth_state(&oauth_state_path, &state) {
-                            tracing::error!("failed to save oauth state: {e:#}");
+
+                        // Persist refreshed token to SQLite
+                        if let Ok(conn) = crate::memory::open_connection(&agent_dir) {
+                            let expires_at = new_entry.expires_at.to_rfc3339();
+                            if let Err(e) = crate::mcp::credentials::db_update_oauth_token(
+                                &conn,
+                                &name,
+                                &access_token,
+                                &expires_at,
+                            ) {
+                                tracing::error!("failed to persist refreshed token: {e:#}");
+                            }
                         }
+                        entries.insert(name.clone(), new_entry);
                     }
                     Err(e) => {
                         tracing::error!(server = %name, "token refresh failed after retries: {e:#}");
@@ -264,41 +292,25 @@ async fn do_refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
     #[test]
-    fn roundtrip_oauth_state() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("oauth-state.json");
-
-        let entry = OAuthServerState {
-            refresh_token: Some("rt-abc".into()),
-            token_endpoint: "https://accounts.notion.com/oauth/token".into(),
-            client_id: "client123".into(),
-            client_secret: None,
-            expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
-            server_url: "https://mcp.notion.com/mcp".into(),
-        };
-
-        let mut state = OAuthState::default();
-        state.servers.insert("notion".into(), entry);
-        save_oauth_state(&path, &state).unwrap();
-
-        let loaded = load_oauth_state(&path).unwrap();
-        assert_eq!(loaded.servers.len(), 1);
-        assert_eq!(loaded.servers["notion"].client_id, "client123");
-        assert_eq!(
-            loaded.servers["notion"].refresh_token.as_deref(),
-            Some("rt-abc")
-        );
-    }
-
-    #[test]
-    fn load_returns_empty_when_absent() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("missing.json");
-        let state = load_oauth_state(&path).unwrap();
-        assert!(state.servers.is_empty());
+    fn load_oauth_entries_from_db_test() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::memory::migrations::MIGRATIONS
+            .to_latest(&mut conn)
+            .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_servers (name, url, auth_type, auth_token, refresh_token, \
+             token_endpoint, client_id, expires_at) \
+             VALUES ('notion', 'https://mcp.notion.com/mcp', 'oauth', 'tok', 'rt', \
+             'https://ex.com/token', 'cid', '2026-04-13T12:00:00+00:00')",
+            [],
+        )
+        .unwrap();
+        let entries = load_oauth_entries_from_db(&conn).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "notion");
+        assert_eq!(entries[0].1.client_id, "cid");
     }
 
     #[test]
