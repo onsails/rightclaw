@@ -1,18 +1,3 @@
-/// Content `.md` files synced to `.claude/agents/` in sandbox.
-///
-/// These live at the agent root and are copied into `.claude/agents/` by codegen
-/// so CC can resolve `@` references (which are relative to the agent def file).
-/// Also used by the bot's sync module for forward/reverse sync with the sandbox.
-///
-/// BOOTSTRAP.md is excluded — its content comes from the compiled-in
-/// `BOOTSTRAP_INSTRUCTIONS` constant; the on-disk file is only an existence flag.
-pub const CONTENT_MD_FILES: &[&str] = &[
-    "IDENTITY.md",
-    "SOUL.md",
-    "USER.md",
-    "MEMORY.md",
-];
-
 /// Platform operating instructions, compiled into the binary.
 ///
 /// Injected directly into the system prompt at assembly time.
@@ -46,62 +31,6 @@ pub const BOOTSTRAP_SCHEMA_JSON: &str = r#"{"type":"object","properties":{"conte
 /// `summary` is always required. `notify` is null when the cron ran silently
 /// (no user notification needed). When `notify` is present, `content` is required.
 pub const CRON_SCHEMA_JSON: &str = r#"{"type":"object","properties":{"notify":{"type":["object","null"],"properties":{"content":{"type":"string"},"attachments":{"type":["array","null"],"items":{"type":"object","properties":{"type":{"enum":["photo","document","video","audio","voice","video_note","sticker","animation"]},"path":{"type":"string"},"filename":{"type":["string","null"]},"caption":{"type":["string","null"]}},"required":["type","path"]}}},"required":["content"]},"summary":{"type":"string"}},"required":["summary"]}"#;
-
-/// Generate a normal-mode agent definition with `@` file references.
-///
-/// Order is cache-optimized: static files first (AGENTS, SOUL), dynamic last (USER, TOOLS).
-/// CC resolves `@` references relative to the agent def file location (`.claude/agents/`).
-/// Content files are copied there by codegen, so `@./FILE.md` resolves correctly.
-pub fn generate_agent_definition(name: &str, model: Option<&str>) -> String {
-    let model = model.unwrap_or("inherit");
-    format!(
-        "\
----
-name: {name}
-model: {model}
-description: \"RightClaw agent: {name}\"
----
-
-@./AGENTS.md
-
----
-
-@./SOUL.md
-
----
-
-@./IDENTITY.md
-
----
-
-@./USER.md
-
----
-
-@./TOOLS.md
-"
-    )
-}
-
-/// Generate a bootstrap-mode agent definition with only the bootstrap prompt.
-///
-/// Used when BOOTSTRAP.md exists in the agent directory (first-run onboarding).
-/// No identity files — bootstrap is the sole context.
-/// Content files are copied into `.claude/agents/` by codegen.
-pub fn generate_bootstrap_definition(name: &str, model: Option<&str>) -> String {
-    let model = model.unwrap_or("inherit");
-    format!(
-        "\
----
-name: {name}-bootstrap
-model: {model}
-description: \"RightClaw agent bootstrap: {name}\"
----
-
-@./BOOTSTRAP.md
-"
-    )
-}
 
 /// Generate the base system prompt for all agent modes.
 ///
