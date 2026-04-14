@@ -20,18 +20,15 @@ identity files — this breaks CC's prompt caching and adds latency.
 
 ## Prompt Assembly
 
-### Sandbox mode (OpenShell)
+A single function `build_prompt_assembly_script()` in `worker.rs` generates a
+parameterized shell script that assembles the composite prompt. The script is
+identical for both modes — only the `root_path` parameter differs:
 
-The composite prompt is assembled **inside the sandbox** as part of the same SSH command
-that runs `claude -p`. No extra roundtrips — `cat` assembles the file in microseconds,
-then `claude -p` reads it. Files are always fresh (no sync delay).
+- **Sandbox mode (OpenShell):** `root_path=/sandbox`, executed via SSH
+- **No-sandbox mode:** `root_path=agent_dir`, executed via `bash -c`
 
-Built by `build_sandbox_prompt_assembly_script()` in `worker.rs`.
-
-### No-sandbox mode
-
-The composite prompt is assembled **on the host** from files in `agent_dir`.
-Built by `assemble_host_system_prompt()` in `worker.rs`.
+The script `cat`s compiled-in content and agent-owned files at `root_path`,
+producing the composite prompt in microseconds. Files are always fresh (no sync delay).
 
 ## Prompt Structure
 
@@ -182,6 +179,8 @@ markdown via `generate_mcp_instructions_md()`.
 3. `should_accept_bootstrap()` checks IDENTITY.md + SOUL.md + USER.md on host
 4. If all present → delete session, delete BOOTSTRAP.md → normal mode
 5. If missing → ignore bootstrap_complete, continue bootstrap mode
+
+Bootstrap instructions explicitly tell the agent to write files in CWD (not `.claude/agents/`).
 
 Additionally, `mcp__right__bootstrap_done` MCP tool provides in-session feedback: agent calls it
 after creating files, gets immediate success/error response with missing file list.
