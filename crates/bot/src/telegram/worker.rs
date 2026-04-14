@@ -649,11 +649,16 @@ fn spawn_token_request(
     let auth_code_tx_slot = Arc::clone(&ctx.auth_code_tx);
 
     tokio::spawn(async move {
-        // Send instruction to user
-        if let Err(e) = send_tg(
-            &bot, tg_chat_id, eff_thread_id,
-            crate::login::auth_instruction_message(),
-        ).await {
+        // Send instruction to user (with HTML parse mode for <pre> formatting)
+        let send_result = {
+            let mut msg = bot.send_message(tg_chat_id, crate::login::auth_instruction_message());
+            msg = msg.parse_mode(teloxide::types::ParseMode::Html);
+            if eff_thread_id != 0 {
+                msg = msg.message_thread_id(ThreadId(MessageId(eff_thread_id as i32)));
+            }
+            msg.await
+        };
+        if let Err(e) = send_result {
             tracing::warn!(agent = %agent_name, "token request: Telegram send failed: {e:#}");
             active_flag.store(false, Ordering::SeqCst);
             return;
