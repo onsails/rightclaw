@@ -413,16 +413,26 @@ async fn handle_set_token(
         }
     }
 
-    // Reconnection is deferred — ProxyBackend::connect contains !Send types
-    // (tracing spans). The aggregator's background loop or next tool call
-    // will trigger a reconnect attempt with the new token.
-    let warning: Option<String> = None;
+    // Reconnect in background with the new token.
+    let server_name = req.server.clone();
+    let handle_clone = Arc::clone(&handle);
+    tokio::spawn(async move {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        match handle_clone.connect(client).await {
+            Ok(_) => tracing::info!(server = %server_name, "reconnected after OAuth token update"),
+            Err(e) => tracing::warn!(server = %server_name, err = %format!("{e:#}"), "reconnect after OAuth failed"),
+        }
+    });
 
     (
         StatusCode::OK,
         Json(SetTokenResponse {
             ok: true,
-            warning,
+            warning: None,
         }),
     )
         .into_response()
@@ -447,17 +457,37 @@ async fn handle_mcp_list(
         auth_type: None,
     });
 
+    // Read auth_type from SQLite (preserves "oauth" — AuthMethod enum has no OAuth variant)
+    let db_auth_types: std::collections::HashMap<String, Option<String>> = {
+        match registry.right.get_conn(&req.agent) {
+            Ok(conn_arc) => {
+                let conn = conn_arc.lock().unwrap_or_else(|e| e.into_inner());
+                credentials::db_list_servers(&conn)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|s| (s.name, s.auth_type))
+                    .collect()
+            }
+            Err(_) => std::collections::HashMap::new(),
+        }
+    };
+
     // External proxy backends
     let proxies = registry.proxies.read().await;
     for (name, proxy) in proxies.iter() {
         let status = proxy.status().await;
         let tool_count = proxy.try_tools().map(|t| t.len()).unwrap_or(0);
+        let auth_type = db_auth_types
+            .get(name)
+            .cloned()
+            .flatten()
+            .or_else(|| Some(proxy.auth_method().to_string()));
         servers.push(McpServerStatus {
             name: name.clone(),
             url: Some(proxy.url().to_string()),
             status: status.to_string(),
             tool_count,
-            auth_type: Some(proxy.auth_method().to_string()),
+            auth_type,
         });
     }
 
