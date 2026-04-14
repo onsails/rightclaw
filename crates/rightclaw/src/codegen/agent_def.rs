@@ -37,7 +37,7 @@ pub const CRON_SCHEMA_JSON: &str = r#"{"type":"object","properties":{"notify":{"
 /// This replaces CC's default system prompt via `--system-prompt-file`.
 /// Content: agent identity, RightClaw description, sandbox info, MCP reference.
 /// Behavior-specific instructions come from the agent definition (`--agent`).
-pub fn generate_system_prompt(agent_name: &str, sandbox_mode: &crate::agent::types::SandboxMode) -> String {
+pub fn generate_system_prompt(agent_name: &str, sandbox_mode: &crate::agent::types::SandboxMode, home_dir: &str) -> String {
     let sandbox_desc = match sandbox_mode {
         crate::agent::types::SandboxMode::Openshell => "OpenShell sandbox (k3s container with network and filesystem policies)",
         crate::agent::types::SandboxMode::None => "no sandbox (direct host access)",
@@ -57,6 +57,7 @@ Source: https://github.com/onsails/rightclaw
 
 - Agent name: {agent_name}
 - Sandbox: {sandbox_desc}
+- Home / working directory: {home_dir}
 
 ## MCP
 
