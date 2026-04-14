@@ -632,48 +632,47 @@ pub(crate) async fn send_tg(
     Ok(())
 }
 
-/// Spawn a background task that drives the Claude login flow via PTY.
+/// Spawn a background task that requests a setup-token from the user.
 ///
-/// 1. Spawns `claude --dangerously-skip-permissions -- /login` via SSH with PTY.
-/// 2. Drives through login method menu (sends Enter).
-/// 3. Extracts OAuth URL and sends to Telegram.
-/// 4. Waits for auth code from Telegram user.
-/// 5. Sends code to CC PTY, waits for success.
-fn spawn_auth_watcher(
+/// 1. Sends instruction to user via Telegram.
+/// 2. Waits for token from Telegram message intercept.
+/// 3. Saves token to memory.db.
+fn spawn_token_request(
     ctx: &WorkerContext,
     tg_chat_id: teloxide::types::ChatId,
     eff_thread_id: i64,
 ) {
     let agent_name = ctx.agent_name.clone();
     let bot = ctx.bot.clone();
-    let ssh_config_path = ctx.ssh_config_path.clone();
+    let db_path = ctx.db_path.clone();
     let active_flag = Arc::clone(&ctx.auth_watcher_active);
     let auth_code_tx_slot = Arc::clone(&ctx.auth_code_tx);
 
     tokio::spawn(async move {
-        let ssh_config = match ssh_config_path {
-            Some(ref p) => p.clone(),
-            None => {
-                tracing::error!(agent = %agent_name, "auth watcher: no SSH config");
-                active_flag.store(false, Ordering::SeqCst);
-                return;
-            }
-        };
+        // Send instruction to user
+        if let Err(e) = send_tg(
+            &bot, tg_chat_id, eff_thread_id,
+            crate::login::auth_instruction_message(),
+        ).await {
+            tracing::warn!(agent = %agent_name, "token request: Telegram send failed: {e:#}");
+            active_flag.store(false, Ordering::SeqCst);
+            return;
+        }
 
-        // Create channels for PTY ↔ async communication
-        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<crate::login::LoginEvent>(8);
-        let (code_tx, code_rx) = tokio::sync::oneshot::channel::<String>();
+        // Create channel for token from Telegram
+        let (token_tx, token_rx) = tokio::sync::oneshot::channel::<String>();
+        auth_code_tx_slot.lock().await.replace(token_tx);
 
-        // Store the code sender so Telegram handler can forward the auth code
-        auth_code_tx_slot.lock().await.replace(code_tx);
+        // Create event channel
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<crate::login::LoginEvent>(4);
 
-        // Spawn async login task
+        // Spawn token request task
         let agent_for_login = agent_name.clone();
         tokio::spawn(async move {
-            crate::login::run_login(&ssh_config, &agent_for_login, event_tx, code_rx).await;
+            crate::login::request_token(&db_path, &agent_for_login, event_tx, token_rx).await;
         });
 
-        // Process events from the PTY task
+        // Process events with timeout
         let timeout = tokio::time::sleep(Duration::from_secs(300));
         tokio::pin!(timeout);
 
@@ -681,52 +680,38 @@ fn spawn_auth_watcher(
             tokio::select! {
                 event = event_rx.recv() => {
                     match event {
-                        Some(crate::login::LoginEvent::Url(url)) => {
-                            let msg = format!("Open this link to authenticate:\n{url}");
-                            if let Err(e) = send_tg(&bot, tg_chat_id, eff_thread_id, &msg).await {
-                                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
-                            }
-                        }
-                        Some(crate::login::LoginEvent::WaitingForCode) => {
-                            if let Err(e) = send_tg(
-                                &bot, tg_chat_id, eff_thread_id,
-                                "After authenticating in the browser, send me the code shown on the page.",
-                            ).await {
-                                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
-                            }
-                        }
                         Some(crate::login::LoginEvent::Done) => {
                             if let Err(e) = send_tg(
                                 &bot, tg_chat_id, eff_thread_id,
-                                "Logged in successfully. You can continue chatting.",
+                                "Token saved. You can continue chatting.",
                             ).await {
-                                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                                tracing::warn!(agent = %agent_name, "token request: Telegram send failed: {e:#}");
                             }
                             break;
                         }
                         Some(crate::login::LoginEvent::Error(msg)) => {
-                            tracing::error!(agent = %agent_name, "auth watcher: login error: {msg}");
+                            tracing::error!(agent = %agent_name, "token request: {msg}");
                             if let Err(e) = send_tg(
                                 &bot, tg_chat_id, eff_thread_id,
-                                &format!("Login failed: {msg}"),
+                                &format!("Token setup failed: {msg}"),
                             ).await {
-                                tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                                tracing::warn!(agent = %agent_name, "token request: Telegram send failed: {e:#}");
                             }
                             break;
                         }
                         None => {
-                            tracing::info!(agent = %agent_name, "auth watcher: PTY task exited");
+                            tracing::info!(agent = %agent_name, "token request: task exited");
                             break;
                         }
                     }
                 }
                 _ = &mut timeout => {
-                    tracing::warn!(agent = %agent_name, "auth watcher: login timed out after 5 min");
+                    tracing::warn!(agent = %agent_name, "token request: timed out after 5 min");
                     if let Err(e) = send_tg(
                         &bot, tg_chat_id, eff_thread_id,
-                        "Login timed out after 5 minutes. Send another message to retry.",
+                        "Token request timed out after 5 minutes. Send another message to retry.",
                     ).await {
-                        tracing::warn!(agent = %agent_name, "auth watcher: Telegram send failed: {e:#}");
+                        tracing::warn!(agent = %agent_name, "token request: Telegram send failed: {e:#}");
                     }
                     break;
                 }
@@ -876,7 +861,7 @@ async fn invoke_cc(
         // OpenShell sandbox: composite system prompt assembled IN the sandbox
         // from fresh files — single SSH command, no extra roundtrips.
         let ssh_host = rightclaw::openshell::ssh_host(&ctx.agent_name);
-        let assembly_script = build_prompt_assembly_script(
+        let mut assembly_script = build_prompt_assembly_script(
             &base_prompt,
             bootstrap_mode,
             "/sandbox",
@@ -885,6 +870,11 @@ async fn invoke_cc(
             &claude_args,
             mcp_instructions.as_deref(),
         );
+        // Inject auth token as env var in the remote shell
+        if let Some(token) = crate::login::load_auth_token(&ctx.db_path) {
+            let escaped_token = token.replace('\'', "'\\''");
+            assembly_script = format!("export CLAUDE_CODE_OAUTH_TOKEN='{escaped_token}'\n{assembly_script}");
+        }
         let mut c = tokio::process::Command::new("ssh");
         c.arg("-F").arg(ssh_config);
         c.arg(&ssh_host);
@@ -911,6 +901,9 @@ async fn invoke_cc(
         c.arg(&assembly_script);
         c.env("HOME", &ctx.agent_dir);
         c.env("USE_BUILTIN_RIPGREP", "0");
+        if let Some(token) = crate::login::load_auth_token(&ctx.db_path) {
+            c.env("CLAUDE_CODE_OAUTH_TOKEN", &token);
+        }
         c.current_dir(&ctx.agent_dir);
         c
     };
@@ -1203,32 +1196,46 @@ async fn invoke_cc(
                 .map_err(|e| tracing::error!(?chat_id, "deactivate_current on auth error: {:#}", e))
                 .ok();
             if ctx.ssh_config_path.is_some() {
-                // Sandbox mode: spawn auth watcher if not already active.
+                // Sandbox mode: spawn token request if not already active.
                 if !ctx.auth_watcher_active.swap(true, Ordering::SeqCst) {
                     let tg_chat_id = ctx.chat_id;
                     if let Err(e) = send_tg(
                         &ctx.bot,
                         tg_chat_id,
                         ctx.effective_thread_id,
-                        "Claude needs to log in. A login link will be sent shortly...",
+                        "Claude needs authentication. Setup instructions incoming...",
                     )
                     .await
                     {
                         tracing::warn!(?chat_id, "failed to send auth error notification: {e:#}");
                     }
-                    spawn_auth_watcher(ctx, tg_chat_id, ctx.effective_thread_id);
+                    spawn_token_request(ctx, tg_chat_id, ctx.effective_thread_id);
                     // Return Ok(None) — the initial message above is sufficient,
-                    // don't send a second error message before the URL arrives.
+                    // don't send a second error message before instructions arrive.
                     return Ok(None);
                 } else {
-                    // Watcher already running — silent, don't spam.
+                    // Token request already running — silent, don't spam.
                     return Ok(None);
                 }
             } else {
-                return Err(
-                    "Claude needs to log in. Run `claude` in your terminal to authenticate."
-                        .to_string(),
-                );
+                // No-sandbox: also use token request flow.
+                if !ctx.auth_watcher_active.swap(true, Ordering::SeqCst) {
+                    let tg_chat_id = ctx.chat_id;
+                    if let Err(e) = send_tg(
+                        &ctx.bot,
+                        tg_chat_id,
+                        ctx.effective_thread_id,
+                        "Claude needs authentication. Setup instructions incoming...",
+                    )
+                    .await
+                    {
+                        tracing::warn!(?chat_id, "failed to send auth error notification: {e:#}");
+                    }
+                    spawn_token_request(ctx, tg_chat_id, ctx.effective_thread_id);
+                    return Ok(None);
+                } else {
+                    return Ok(None);
+                }
             }
         }
 
