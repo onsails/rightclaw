@@ -141,7 +141,7 @@ impl RightBackend {
             "cron_show_run" => self.call_cron_show_run(agent_name, &args),
             "cron_trigger" => self.call_cron_trigger(agent_name, &args),
             "mcp_list" => self.call_mcp_list(agent_name),
-            "bootstrap_done" => self.call_bootstrap_done(agent_name),
+            "bootstrap_done" => self.call_bootstrap_done(agent_name).await,
             other => bail!("unknown tool: {other}"),
         }
     }
@@ -439,14 +439,42 @@ impl RightBackend {
     // Bootstrap
     // ------------------------------------------------------------------
 
-    fn call_bootstrap_done(&self, agent_name: &str) -> Result<CallToolResult, anyhow::Error> {
+    async fn call_bootstrap_done(&self, agent_name: &str) -> Result<CallToolResult, anyhow::Error> {
         let agent_dir = self.agents_dir.join(agent_name);
         let required = ["IDENTITY.md", "SOUL.md", "USER.md"];
-        let missing: Vec<&str> = required
-            .iter()
-            .filter(|f| !agent_dir.join(f).exists())
-            .copied()
-            .collect();
+
+        let missing: Vec<&str> = if let Some(mtls_dir) = &self.mtls_dir {
+            let sandbox_name = rightclaw::openshell::sandbox_name(agent_name);
+            let mut client = rightclaw::openshell::connect_grpc(mtls_dir)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:#}"))
+                .context("bootstrap_done: failed to connect to OpenShell gRPC")?;
+            let sandbox_id =
+                rightclaw::openshell::resolve_sandbox_id(&mut client, &sandbox_name)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e:#}"))
+                    .context("bootstrap_done: failed to resolve sandbox ID")?;
+
+            let mut missing = Vec::new();
+            for &file in &required {
+                let path = format!("/sandbox/{file}");
+                let (_, exit_code) =
+                    rightclaw::openshell::exec_in_sandbox(&mut client, &sandbox_id, &["test", "-f", &path])
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e:#}"))
+                        .with_context(|| format!("bootstrap_done: exec test -f {path} failed"))?;
+                if exit_code != 0 {
+                    missing.push(file);
+                }
+            }
+            missing
+        } else {
+            required
+                .iter()
+                .filter(|f| !agent_dir.join(f).exists())
+                .copied()
+                .collect()
+        };
 
         if missing.is_empty() {
             let bootstrap_path = agent_dir.join("BOOTSTRAP.md");
