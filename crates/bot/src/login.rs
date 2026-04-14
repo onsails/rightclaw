@@ -1,21 +1,20 @@
-//! PTY-driven Claude login flow.
+//! SSH exec-based Claude login flow.
 //!
-//! Spawns `claude --dangerously-skip-permissions -- /login` via SSH into the sandbox,
-//! drives through the login method menu, extracts the OAuth URL, waits for the auth
-//! code from Telegram, and pipes it into the PTY session.
+//! Spawns `claude auth login` via SSH into the sandbox, parses the OAuth URL
+//! and state from stdout, discovers the callback port via `ss -tlnp`, then
+//! submits the auth code via `curl` to the local callback server.
 
 use std::path::Path;
-use std::time::Duration;
 
-use expectrl::Expect as _;
+use tokio::io::AsyncBufReadExt as _;
 use tokio::sync::{mpsc, oneshot};
 
 /// Messages sent from the login task to the auth watcher.
 #[derive(Debug)]
 pub enum LoginEvent {
-    /// OAuth URL extracted — send to user.
+    /// OAuth URL extracted -- send to user.
     Url(String),
-    /// CC is asking for the auth code — prompt user.
+    /// CC is asking for the auth code -- prompt user.
     WaitingForCode,
     /// Login completed successfully.
     Done,
@@ -23,180 +22,277 @@ pub enum LoginEvent {
     Error(String),
 }
 
-/// Drive the interactive claude login flow via PTY over SSH.
+/// Holds the running `claude auth login` SSH process and extracted OAuth state.
+struct AuthSession {
+    url: String,
+    state: String,
+    child: tokio::process::Child,
+}
+
+/// Orchestrate the Claude login flow via SSH exec and local HTTP callback.
 ///
-/// Runs in a blocking thread (expectrl is sync). Communicates via channels:
-/// - `event_tx`: sends LoginEvents to the async orchestrator
+/// Communicates via channels:
+/// - `event_tx`: sends `LoginEvent`s to the async orchestrator
 /// - `code_rx`: receives the auth code from the Telegram handler
-pub fn run_login_pty(
+pub async fn run_login(
     ssh_config_path: &Path,
     agent_name: &str,
     event_tx: mpsc::Sender<LoginEvent>,
     code_rx: oneshot::Receiver<String>,
 ) {
-    let ssh_config = ssh_config_path.to_path_buf();
     let ssh_host = rightclaw::openshell::ssh_host(agent_name);
 
-    // Build SSH command to launch claude inside sandbox
-    let mut cmd = std::process::Command::new("ssh");
-    cmd.arg("-t");
-    cmd.arg("-F").arg(&ssh_config);
-    cmd.arg(&ssh_host);
-    cmd.arg("--");
-    cmd.args(["claude", "--dangerously-skip-permissions", "--", "/login"]);
-
-    tracing::info!(agent = agent_name, "login: spawning PTY session via SSH");
-
-    let mut session = match expectrl::Session::spawn(cmd) {
+    // Step 1: Start auth session, extract URL and state
+    let mut auth_session = match start_auth_session(ssh_config_path, &ssh_host, agent_name).await {
         Ok(s) => s,
         Err(e) => {
-            let _ = event_tx.blocking_send(LoginEvent::Error(format!("failed to spawn PTY: {e:#}")));
+            let _ = event_tx
+                .send(LoginEvent::Error(format!(
+                    "failed to start auth session: {e:#}"
+                )))
+                .await;
             return;
         }
     };
-    // Set wide terminal so URLs don't wrap across lines.
-    if let Err(e) = session.get_process_mut().set_window_size(500, 50) {
-        tracing::warn!(agent = agent_name, "login: failed to set PTY window size: {e}");
-    }
 
-    // Step 1: Wait for login method menu
-    tracing::info!(agent = agent_name, "login: step 1 — waiting for login method menu (30s timeout)");
-    session.set_expect_timeout(Some(Duration::from_secs(30)));
-    match session.expect(expectrl::Regex("(Select login method|Claude account|subscription)")) {
-        Ok(found) => {
-            let text = strip_ansi(&String::from_utf8_lossy(found.as_bytes()));
-            tracing::info!(agent = agent_name, matched = %text.chars().take(100).collect::<String>(), "login: step 1 — menu appeared");
-        }
+    // Step 2: Send URL to caller
+    let _ = event_tx.send(LoginEvent::Url(auth_session.url.clone())).await;
+
+    // Step 3: Discover callback port
+    let port = match discover_callback_port(ssh_config_path, &ssh_host, agent_name).await {
+        Ok(p) => p,
         Err(e) => {
-            let _ = event_tx.blocking_send(LoginEvent::Error(format!("login menu did not appear: {e:#}")));
+            let _ = event_tx
+                .send(LoginEvent::Error(format!(
+                    "failed to discover callback port: {e:#}"
+                )))
+                .await;
             return;
         }
-    }
+    };
 
-    // Step 2: Press Enter to select option 1 (Claude subscription)
-    tracing::info!(agent = agent_name, "login: step 2 — sending \\r to select Claude subscription");
-    if let Err(e) = session.send("\r") {
-        let _ = event_tx.blocking_send(LoginEvent::Error(format!("failed to send Enter: {e:#}")));
-        return;
-    }
-
-    // Step 3: Wait for "Browser didn't open" text which precedes the URL
-    tracing::info!(agent = agent_name, "login: step 3 — waiting for browser prompt (30s timeout)");
-    session.set_expect_timeout(Some(Duration::from_secs(30)));
-    match session.expect(expectrl::Regex("Browser didn't open")) {
-        Ok(_) => {
-            tracing::info!(agent = agent_name, "login: step 3 — browser prompt appeared, extracting URL");
-            session.set_expect_timeout(Some(Duration::from_secs(5)));
-            match session.expect(expectrl::Regex("https://[^\\s\\x1b]+")) {
-                Ok(found) => {
-                    let raw = String::from_utf8_lossy(found.as_bytes());
-                    let cleaned = strip_ansi(&raw);
-                    let url = extract_url_from_text(&cleaned);
-                    tracing::info!(agent = agent_name, url_len = url.len(), "login: step 3 — OAuth URL extracted");
-                    let _ = event_tx.blocking_send(LoginEvent::Url(url));
-                }
-                Err(e) => {
-                    let _ = event_tx.blocking_send(LoginEvent::Error(format!("URL not found after browser prompt: {e:#}")));
-                    return;
-                }
-            }
-        }
-        Err(e) => {
-            let _ = event_tx.blocking_send(LoginEvent::Error(format!("browser prompt did not appear: {e:#}")));
-            return;
-        }
-    }
-
-    // Step 4: Wait for code paste prompt
-    // CC shows something like "Paste the code" or just an input field.
-    // Use "paste" specifically to avoid matching "code" from URL params.
-    tracing::info!(agent = agent_name, "login: step 4 — waiting for paste prompt (10s timeout)");
-    session.set_expect_timeout(Some(Duration::from_secs(10)));
-    match session.expect(expectrl::Regex("(?i)(paste|enter the code|enter code|authorization)")) {
-        Ok(found) => {
-            let text = strip_ansi(&String::from_utf8_lossy(found.as_bytes()));
-            tracing::info!(agent = agent_name, prompt = %text.chars().take(100).collect::<String>(), "login: step 4 — paste prompt detected");
-        }
-        Err(_) => {
-            tracing::info!(agent = agent_name, "login: step 4 — no explicit paste prompt (timeout). Proceeding anyway.");
-        }
-    }
-    let _ = event_tx.blocking_send(LoginEvent::WaitingForCode);
+    // Step 4: Signal waiting for code
+    let _ = event_tx.send(LoginEvent::WaitingForCode).await;
 
     // Step 5: Wait for auth code from Telegram
-    tracing::info!(agent = agent_name, "login: step 5 — waiting for auth code from Telegram");
-    let code = match code_rx.blocking_recv() {
-        Ok(c) => {
-            tracing::info!(agent = agent_name, code_len = c.len(), "login: step 5 — received auth code from Telegram");
-            c
-        }
+    let code = match code_rx.await {
+        Ok(c) => c,
         Err(_) => {
-            let _ = event_tx.blocking_send(LoginEvent::Error("auth code channel closed (timeout?)".into()));
+            let _ = event_tx
+                .send(LoginEvent::Error(
+                    "auth code channel closed (timeout?)".into(),
+                ))
+                .await;
             return;
         }
     };
 
-    // Step 6: Send auth code to CC
-    std::thread::sleep(Duration::from_millis(500));
-    let code_with_cr = format!("{code}\r");
-    tracing::info!(agent = agent_name, code_len = code.len(), "login: step 6 — sending auth code to PTY (with \\r)");
-    if let Err(e) = session.send(&code_with_cr) {
-        let _ = event_tx.blocking_send(LoginEvent::Error(format!("failed to send auth code: {e:#}")));
-        return;
-    }
-
-    // Step 7: Wait for success or failure indication (10s)
-    tracing::info!(agent = agent_name, "login: step 7 — waiting for login result (10s timeout), looking for: logged in|success|authenticated|welcome|API key|signed in|error|failed|invalid");
-    session.set_expect_timeout(Some(Duration::from_secs(10)));
-    match session.expect(expectrl::Regex("(?i)(logged in|success|authenticated|welcome|API key|signed in|error|failed|invalid)")) {
-        Ok(found) => {
-            let raw = String::from_utf8_lossy(found.as_bytes());
-            let text = strip_ansi(&raw);
-            let summary = text.chars().take(300).collect::<String>();
-            tracing::info!(agent = agent_name, response = %summary, "login: step 7 — got response from CC");
-
-            // Check if it's an error
-            let lower = summary.to_lowercase();
-            if lower.contains("error") || lower.contains("failed") || lower.contains("invalid") {
-                let _ = event_tx.blocking_send(LoginEvent::Error(format!("CC reported error: {summary}")));
-            } else {
-                let _ = event_tx.blocking_send(LoginEvent::Done);
-            }
+    // Step 6: Submit auth code and wait for process exit
+    match submit_auth_code(
+        ssh_config_path,
+        &ssh_host,
+        agent_name,
+        port,
+        &code,
+        &auth_session.state,
+        &mut auth_session.child,
+    )
+    .await
+    {
+        Ok(()) => {
+            let _ = event_tx.send(LoginEvent::Done).await;
         }
-        Err(_) => {
-            // Timeout — dump raw buffer for debugging
-            tracing::warn!(agent = agent_name, "login: step 7 — no response within 10s. Reading remaining PTY buffer for diagnostics...");
-
-            // Try to read whatever is in the buffer
-            session.set_expect_timeout(Some(Duration::from_millis(500)));
-            match session.expect(expectrl::Regex(".+")) {
-                Ok(found) => {
-                    let raw = String::from_utf8_lossy(found.as_bytes());
-                    let cleaned = strip_ansi(&raw);
-                    tracing::info!(agent = agent_name, buffer = %cleaned.chars().take(500).collect::<String>(), "login: PTY buffer after timeout");
-                }
-                Err(_) => {
-                    tracing::info!(agent = agent_name, "login: PTY buffer empty after timeout");
-                }
-            }
-
-            let _ = event_tx.blocking_send(LoginEvent::Error(
-                "No response from Claude after sending code. Check logs for PTY buffer dump.".into()
-            ));
+        Err(e) => {
+            let _ = event_tx
+                .send(LoginEvent::Error(format!("auth code submission failed: {e:#}")))
+                .await;
         }
     }
+}
 
-    // Cleanup
-    tracing::info!(agent = agent_name, "login: cleaning up PTY session");
-    let _ = session.send("/exit\r");
-    std::thread::sleep(Duration::from_secs(1));
+/// Start `claude auth login` via SSH, read stdout until the OAuth URL appears.
+///
+/// Returns the extracted URL, OAuth state parameter, and the running child process.
+async fn start_auth_session(
+    ssh_config_path: &Path,
+    ssh_host: &str,
+    agent_name: &str,
+) -> Result<AuthSession, miette::Report> {
+    tracing::info!(agent = agent_name, "login: spawning claude auth login via SSH");
+
+    let mut child = tokio::process::Command::new("ssh")
+        .arg("-F")
+        .arg(ssh_config_path)
+        .arg(ssh_host)
+        .arg("--")
+        .arg("claude auth login")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| miette::miette!("failed to spawn SSH for auth: {e}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| miette::miette!("no stdout from SSH process"))?;
+
+    let mut reader = tokio::io::BufReader::new(stdout).lines();
+
+    let url = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while let Some(line) = reader
+            .next_line()
+            .await
+            .map_err(|e| miette::miette!("reading stdout: {e}"))?
+        {
+            let clean = strip_ansi(&line);
+            tracing::debug!(agent = agent_name, line = %clean, "login: auth session stdout");
+            if clean.contains("https://") && clean.contains("code_challenge") {
+                return Ok::<String, miette::Report>(extract_url_from_text(&clean));
+            }
+        }
+        Err(miette::miette!(
+            "SSH process exited without producing OAuth URL"
+        ))
+    })
+    .await
+    .map_err(|_| miette::miette!("timed out waiting for OAuth URL (30s)"))??;
+
+    let state = extract_state_param(&url)
+        .ok_or_else(|| miette::miette!("no state parameter in OAuth URL: {url}"))?;
+
+    tracing::info!(agent = agent_name, url_len = url.len(), state = %state, "login: OAuth URL extracted");
+
+    Ok(AuthSession { url, state, child })
+}
+
+/// Discover the callback port that `claude auth login` is listening on.
+///
+/// Runs `ss -tlnp` via SSH up to 5 times with 1s delays, looking for a
+/// listening socket owned by the `claude` process.
+async fn discover_callback_port(
+    ssh_config_path: &Path,
+    ssh_host: &str,
+    agent_name: &str,
+) -> Result<u16, miette::Report> {
+    for attempt in 1..=5 {
+        tracing::debug!(agent = agent_name, attempt, "login: probing for callback port");
+        match rightclaw::openshell::ssh_exec(ssh_config_path, ssh_host, &["ss", "-tlnp"], 10).await
+        {
+            Ok(output) => {
+                if let Some(port) = parse_callback_port(&output) {
+                    tracing::info!(agent = agent_name, port, "login: discovered callback port");
+                    return Ok(port);
+                }
+            }
+            Err(e) => {
+                tracing::debug!(agent = agent_name, attempt, error = %e, "login: ss -tlnp failed");
+            }
+        }
+        if attempt < 5 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+    }
+    Err(miette::miette!(
+        "failed to discover claude callback port after 5 attempts"
+    ))
+}
+
+/// Submit the auth code to the callback server and wait for the process to exit.
+async fn submit_auth_code(
+    ssh_config_path: &Path,
+    ssh_host: &str,
+    agent_name: &str,
+    port: u16,
+    code: &str,
+    state: &str,
+    child: &mut tokio::process::Child,
+) -> Result<(), miette::Report> {
+    let encoded_code = urlencoding::encode(code);
+    let encoded_state = urlencoding::encode(state);
+    let curl_cmd = format!(
+        "curl -s -o /dev/null -w '%{{http_code}}' 'http://[::1]:{port}/callback?code={encoded_code}&state={encoded_state}'"
+    );
+
+    tracing::info!(agent = agent_name, port, "login: submitting auth code via curl");
+
+    let output = rightclaw::openshell::ssh_exec(
+        ssh_config_path,
+        ssh_host,
+        &["bash", "-c", &curl_cmd],
+        30,
+    )
+    .await
+    .map_err(|e| miette::miette!("curl callback failed: {e}"))?;
+
+    let status_code = output.trim();
+    tracing::info!(agent = agent_name, status = %status_code, "login: callback HTTP status");
+
+    if status_code != "302" && status_code != "200" {
+        return Err(miette::miette!(
+            "callback returned unexpected HTTP status: {status_code}"
+        ));
+    }
+
+    // Wait for claude auth login process to exit (success confirmation)
+    let exit = tokio::time::timeout(std::time::Duration::from_secs(30), child.wait())
+        .await
+        .map_err(|_| miette::miette!("timed out waiting for claude auth login to exit (30s)"))?
+        .map_err(|e| miette::miette!("waiting for process exit: {e}"))?;
+
+    if exit.success() {
+        tracing::info!(agent = agent_name, "login: claude auth login exited successfully");
+        Ok(())
+    } else {
+        Err(miette::miette!(
+            "claude auth login exited with status: {exit}"
+        ))
+    }
+}
+
+/// Extract the `state` query parameter from an OAuth URL.
+pub fn extract_state_param(url: &str) -> Option<String> {
+    let query = url.split('?').nth(1)?;
+    for pair in query.split('&') {
+        if let Some(value) = pair.strip_prefix("state=") {
+            return Some(value.to_owned());
+        }
+    }
+    None
+}
+
+/// Parse the callback port from `ss -tlnp` output by finding a LISTEN socket
+/// owned by the `claude` process.
+pub fn parse_callback_port(ss_output: &str) -> Option<u16> {
+    for line in ss_output.lines() {
+        if !line.contains("claude") {
+            continue;
+        }
+        // Look for port in patterns like [::1]:36275 or 127.0.0.1:42000
+        // Tokens must contain ':' to be address:port pairs.
+        for token in line.split_whitespace() {
+            if !token.contains(':') {
+                continue;
+            }
+            if let Some(port_str) = token.rsplit(':').next() {
+                if let Ok(port) = port_str.parse::<u16>() {
+                    if port > 0 {
+                        return Some(port);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Extract the first `https://` URL from text that may contain surrounding content.
 pub fn extract_url_from_text(text: &str) -> String {
     if let Some(start) = text.find("https://") {
         let url_part = &text[start..];
-        let end = url_part.find(|c: char| c.is_whitespace() || c == '\x1b').unwrap_or(url_part.len());
+        let end = url_part
+            .find(|c: char| c.is_whitespace() || c == '\x1b')
+            .unwrap_or(url_part.len());
         url_part[..end].to_string()
     } else {
         text.trim().to_string()
@@ -215,7 +311,7 @@ pub fn strip_ansi(s: &str) -> String {
         }
         if in_escape {
             if c == '[' {
-                // CSI sequence — consume until letter
+                // CSI sequence -- consume until letter
                 while let Some(&next) = chars.peek() {
                     chars.next();
                     if next.is_ascii_alphabetic() {
@@ -260,5 +356,41 @@ mod tests {
     #[test]
     fn extract_url_returns_input_when_no_url() {
         assert_eq!(extract_url_from_text("no url here"), "no url here");
+    }
+
+    #[test]
+    fn extract_state_from_real_url() {
+        let url =
+            "https://claude.com/cai/oauth/authorize?code=true&client_id=XXX&state=abc123_def";
+        assert_eq!(extract_state_param(url), Some("abc123_def".to_owned()));
+    }
+
+    #[test]
+    fn extract_state_missing() {
+        assert_eq!(extract_state_param("https://example.com?foo=bar"), None);
+    }
+
+    #[test]
+    fn parse_callback_port_from_ss_output() {
+        let ss_output = "\
+State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process
+LISTEN 0      512            [::1]:36275         [::]:*    users:((\"claude\",pid=881,fd=15))
+LISTEN 0      512            [::1]:44901         [::]:*    users:((\"node\",pid=100,fd=3))
+";
+        assert_eq!(parse_callback_port(ss_output), Some(36275));
+    }
+
+    #[test]
+    fn parse_callback_port_no_claude() {
+        let ss_output =
+            "State  Recv-Q Send-Q Local Address:Port\nLISTEN 0 512 [::1]:8080 [::]:*\n";
+        assert_eq!(parse_callback_port(ss_output), None);
+    }
+
+    #[test]
+    fn parse_callback_port_ipv4_format() {
+        let ss_output =
+            "LISTEN 0 512 127.0.0.1:42000 0.0.0.0:* users:((\"claude\",pid=50,fd=10))\n";
+        assert_eq!(parse_callback_port(ss_output), Some(42000));
     }
 }
