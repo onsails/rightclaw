@@ -5,6 +5,7 @@ pub mod error;
 pub mod login;
 pub mod sync;
 pub mod telegram;
+mod upgrade;
 
 pub use error::BotError;
 
@@ -408,6 +409,15 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
             delivery_shutdown,
         ).await;
     });
+
+    // Spawn periodic claude upgrade task (sandbox-only).
+    if let Some(ref cfg_path) = ssh_config_path {
+        upgrade::spawn_upgrade_task(
+            cfg_path.clone(),
+            args.agent.clone(),
+            shutdown.clone(),
+        );
+    }
 
     let result = tokio::select! {
         result = telegram::run_telegram(
