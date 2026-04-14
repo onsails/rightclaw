@@ -73,17 +73,32 @@ pub async fn run_login(
         }
     };
 
+    // Check child is alive after port discovery
+    let alive_after_discover = auth_session.child.try_wait().map_or(true, |s| s.is_none());
+    tracing::info!(agent = agent_name, alive_after_discover, "login: child status after port discovery");
+
     // Step 4: Signal waiting for code
     let _ = event_tx.send(LoginEvent::WaitingForCode).await;
 
-    // Step 5: Wait for auth code from Telegram
-    let code = match code_rx.await {
-        Ok(c) => c,
-        Err(_) => {
+    // Step 5: Wait for auth code from Telegram, monitoring child liveness
+    tracing::info!(agent = agent_name, "login: waiting for auth code from Telegram");
+    let code = tokio::select! {
+        result = code_rx => {
+            match result {
+                Ok(c) => c,
+                Err(_) => {
+                    let _ = event_tx
+                        .send(LoginEvent::Error("auth code channel closed (timeout?)".into()))
+                        .await;
+                    return;
+                }
+            }
+        }
+        status = auth_session.child.wait() => {
+            let exit = status.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string());
+            tracing::error!(agent = agent_name, exit = %exit, "login: auth process died while waiting for code");
             let _ = event_tx
-                .send(LoginEvent::Error(
-                    "auth code channel closed (timeout?)".into(),
-                ))
+                .send(LoginEvent::Error(format!("auth process died while waiting for code: {exit}")))
                 .await;
             return;
         }
@@ -197,18 +212,19 @@ async fn discover_callback_port(
         let ports = parse_listen_ports(&ss_output);
         tracing::info!(agent = agent_name, attempt, ?ports, ss_output = %ss_output.trim(), "login: found LISTEN ports");
         for port in &ports {
-            let url = format!("http://localhost:{port}/callback");
+            let url = format!("http://localhost:{port}/");
             if let Ok(status) = rightclaw::openshell::ssh_exec(
                 ssh_config_path,
                 ssh_host,
-                &["curl", "-s", "-m", "2", "-o", "/dev/null", "-w", "%{http_code}", &url],
+                &["curl", "-s", "-m", "2", "-I", "-o", "/dev/null", "-w", "%{http_code}", &url],
                 5,
             )
             .await
             {
                 let code = status.trim();
                 tracing::info!(agent = agent_name, port, http_status = %code, "login: probe result");
-                if code == "400" || code == "404" || code == "200" || code == "302" {
+                // Any HTTP response means this is a live HTTP server
+                if code != "000" {
                     tracing::info!(agent = agent_name, port, "login: discovered callback port");
                     return Ok(*port);
                 }
