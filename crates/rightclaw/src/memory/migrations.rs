@@ -10,6 +10,7 @@ const V7_SCHEMA: &str = include_str!("sql/v7_cron_trigger.sql");
 const V8_SCHEMA: &str = include_str!("sql/v8_mcp_servers.sql");
 const V9_SCHEMA: &str = include_str!("sql/v9_mcp_instructions.sql");
 const V10_SCHEMA: &str = include_str!("sql/v10_mcp_auth.sql");
+const V11_SCHEMA: &str = include_str!("sql/v11_auth_tokens.sql");
 
 pub static MIGRATIONS: std::sync::LazyLock<Migrations<'static>> =
     std::sync::LazyLock::new(|| {
@@ -24,6 +25,7 @@ pub static MIGRATIONS: std::sync::LazyLock<Migrations<'static>> =
             M::up(V8_SCHEMA),
             M::up(V9_SCHEMA),
             M::up(V10_SCHEMA),
+            M::up(V11_SCHEMA),
         ])
     });
 
