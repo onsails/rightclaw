@@ -9,8 +9,6 @@ use tokio_util::sync::CancellationToken;
 /// Interval between sync cycles.
 const SYNC_INTERVAL: Duration = Duration::from_secs(300);
 
-use rightclaw::codegen::CONTENT_MD_FILES;
-
 /// Run one sync cycle. Called synchronously at startup before teloxide starts,
 /// ensuring sandbox has correct config before any `claude -p` invocations.
 pub async fn initial_sync(
@@ -20,44 +18,8 @@ pub async fn initial_sync(
     tracing::info!(sandbox = sbox.sandbox_name(), "sync: initial cycle (blocking)");
     sync_cycle(agent_dir, sbox).await?;
 
-    // Upload content .md files (IDENTITY.md, SOUL.md, USER.md, MEMORY.md) to sandbox root.
-    // These are overwritten every startup — sandbox is source of truth after this point.
-    for &filename in CONTENT_MD_FILES {
-        let host_path = agent_dir.join(filename);
-        if host_path.exists() {
-            rightclaw::openshell::upload_file(sbox.sandbox_name(), &host_path, "/sandbox/")
-                .await
-                .map_err(|e| miette::miette!("sync {filename}: {e:#}"))?;
-            tracing::debug!(file = filename, "sync: uploaded content file to sandbox root");
-        }
-    }
-
     // Ensure /sandbox/.local/bin is in PATH for agent-installed CLI tools.
-    // Idempotent: only patches .bashrc if the path isn't already present.
     ensure_local_bin_in_path(sbox).await?;
-
-    // Upload agent-owned files (AGENTS.md, TOOLS.md) to sandbox root only if missing.
-    // Preserves agent edits on subsequent boots.
-    for &filename in &["AGENTS.md", "TOOLS.md"] {
-        let host_path = agent_dir.join(filename);
-        if !host_path.exists() {
-            continue;
-        }
-        let sandbox_path = format!("/sandbox/{filename}");
-        let (_stdout, exit_code) = sbox
-            .exec(&["test", "-f", &sandbox_path])
-            .await
-            .map_err(|e| miette::miette!("sync: exec test -f {sandbox_path}: {e:#}"))?;
-        if exit_code != 0 {
-            // File missing in sandbox — upload from host
-            rightclaw::openshell::upload_file(sbox.sandbox_name(), &host_path, "/sandbox/")
-                .await
-                .map_err(|e| miette::miette!("sync {filename}: {e:#}"))?;
-            tracing::info!(file = filename, "sync: uploaded agent-owned file (was missing in sandbox)");
-        } else {
-            tracing::debug!(file = filename, "sync: agent-owned file exists in sandbox, preserving");
-        }
-    }
 
     Ok(())
 }
@@ -114,7 +76,6 @@ const REVERSE_SYNC_FILES: &[&str] = &[
     "IDENTITY.md",
     "SOUL.md",
     "USER.md",
-    "MEMORY.md",
 ];
 
 /// Sync .md files from sandbox back to host after a `claude -p` invocation.
@@ -352,14 +313,14 @@ async fn ensure_local_bin_in_path(
 mod tests {
     use super::*;
 
-    /// Verify that initial_sync uploads content .md files to a real OpenShell sandbox.
+    /// Verify that initial_sync does NOT upload agent-managed .md files to sandbox.
     ///
-    /// Creates an ephemeral sandbox, runs initial_sync, verifies uploaded files,
-    /// then destroys the sandbox — no shared state with other tests.
+    /// Creates an ephemeral sandbox, writes .md files on host, runs initial_sync,
+    /// then verifies those files are absent in sandbox.
     ///
     /// Requires: running OpenShell gateway.
     #[tokio::test]
-    async fn initial_sync_uploads_content_md_files() {
+    async fn initial_sync_does_not_upload_agent_md_files() {
         let sandbox_name = "rightclaw-test-sync-upload";
 
         let mtls_dir = match rightclaw::openshell::preflight_check() {
@@ -440,17 +401,15 @@ network_policies:
         let agent_dir = tempfile::tempdir().unwrap();
         let root = agent_dir.path();
 
-        let test_files: &[(&str, &str)] = &[
-            ("AGENTS.md", "# test agents content\n"),
-            ("TOOLS.md", "# test tools content\n"),
-        ];
-        for &(name, content) in test_files {
-            std::fs::write(root.join(name), content).unwrap();
+        // Write agent-managed .md files on host.
+        let test_files: &[&str] = &["IDENTITY.md", "AGENTS.md", "TOOLS.md"];
+        for &name in test_files {
+            std::fs::write(root.join(name), format!("# test {name}\n")).unwrap();
         }
 
         // Minimal .claude/ infrastructure so initial_sync doesn't fail on missing files.
         let claude_dir = root.join(".claude");
-        std::fs::create_dir_all(claude_dir.join("agents")).unwrap();
+        std::fs::create_dir_all(&claude_dir).unwrap();
         std::fs::write(claude_dir.join("settings.json"), "{}").unwrap();
         std::fs::write(claude_dir.join("reply-schema.json"), "{}").unwrap();
         std::fs::write(claude_dir.join("cron-schema.json"), "{}").unwrap();
@@ -460,11 +419,6 @@ network_policies:
             "# test system prompt\n",
         )
         .unwrap();
-        std::fs::write(
-            claude_dir.join("agents").join("test.md"),
-            "---\nname: test\n---\n",
-        )
-        .unwrap();
         std::fs::write(root.join("mcp.json"), "{}").unwrap();
 
         // Run initial_sync.
@@ -472,25 +426,16 @@ network_policies:
             .await
             .expect("initial_sync should succeed");
 
-        // Download each file back and verify content.
-        for &(name, expected_content) in test_files {
-            let download_dir = tempfile::tempdir().unwrap();
+        // Verify agent-managed .md files are NOT in sandbox.
+        for &name in test_files {
             let sandbox_path = format!("/sandbox/{name}");
-
-            rightclaw::openshell::download_file(sandbox_name, &sandbox_path, download_dir.path())
+            let (_stdout, exit_code) = sbox
+                .exec(&["test", "-f", &sandbox_path])
                 .await
-                .unwrap_or_else(|e| panic!("download {name} failed: {e:#}"));
-
-            let downloaded = download_dir.path().join(name);
-            assert!(
-                downloaded.exists(),
-                "{name} should have been downloaded from sandbox"
-            );
-
-            let actual = std::fs::read_to_string(&downloaded).unwrap();
-            assert_eq!(
-                actual, expected_content,
-                "{name} content mismatch: expected {expected_content:?}, got {actual:?}"
+                .unwrap_or_else(|e| panic!("exec test -f {sandbox_path} failed: {e:#}"));
+            assert_ne!(
+                exit_code, 0,
+                "{name} should NOT exist in sandbox after initial_sync"
             );
         }
 
