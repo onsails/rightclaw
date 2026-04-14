@@ -684,17 +684,8 @@ async fn invoke_cc(
         tracing::info!(?chat_id, "bootstrap mode: BOOTSTRAP.md present");
     }
 
-    // Build claude -p args for execution inside OpenShell sandbox
-    let mut claude_args: Vec<String> = vec![
-        "claude".into(),
-        "-p".into(),
-        "--dangerously-skip-permissions".into(),
-    ];
-
-    // Disable CC built-in tools that conflict with our MCP equivalents.
-    // --disallowedTools removes them from the model's context entirely.
-    claude_args.push("--disallowedTools".into());
-    for tool in [
+    // Disallow CC built-in tools that conflict with MCP equivalents.
+    let disallowed_tools: Vec<String> = [
         "CronCreate",
         "CronList",
         "CronDelete",
@@ -707,34 +698,11 @@ async fn invoke_cc(
         "EnterPlanMode",
         "ExitPlanMode",
         "RemoteTrigger",
-    ] {
-        claude_args.push(tool.into());
-    }
+    ]
+    .iter()
+    .map(|&s| s.into())
+    .collect();
 
-    // MCP isolation: only use servers from our mcp.json, block cloud MCPs.
-    // Path differs by execution mode: /sandbox/ inside container, agent_dir on host.
-    let mcp_config_path = if ctx.ssh_config_path.is_some() {
-        rightclaw::openshell::SANDBOX_MCP_JSON_PATH.to_string()
-    } else {
-        ctx.agent_dir.join("mcp.json").to_string_lossy().into_owned()
-    };
-    claude_args.push("--mcp-config".into());
-    claude_args.push(mcp_config_path);
-    claude_args.push("--strict-mcp-config".into());
-
-    for arg in &cmd_args {
-        claude_args.push(arg.clone());
-    }
-    claude_args.push("--verbose".into());
-    claude_args.push("--output-format".into());
-    claude_args.push("stream-json".into());
-    if let Some(ref model) = ctx.model {
-        claude_args.push("--model".into());
-        claude_args.push(model.clone());
-    }
-
-    // --json-schema on BOTH first and resume calls (D-01, Pitfall 4).
-    // Bootstrap mode uses bootstrap-schema (adds bootstrap_complete field).
     let schema_filename = if bootstrap_mode {
         "bootstrap-schema.json"
     } else {
@@ -743,8 +711,34 @@ async fn invoke_cc(
     let reply_schema_path = ctx.agent_dir.join(".claude").join(schema_filename);
     let reply_schema = std::fs::read_to_string(&reply_schema_path)
         .map_err(|e| format_error_reply(-1, &format!("{schema_filename} read failed: {:#}", e)))?;
-    claude_args.push("--json-schema".into());
-    claude_args.push(reply_schema);
+
+    let mcp_path = super::invocation::mcp_config_path(
+        ctx.ssh_config_path.as_deref(),
+        &ctx.agent_dir,
+    );
+
+    let mut invocation = super::invocation::ClaudeInvocation {
+        mcp_config_path: mcp_path,
+        json_schema: reply_schema,
+        output_format: super::invocation::OutputFormat::StreamJson,
+        model: ctx.model.clone(),
+        max_budget_usd: None,
+        max_turns: None,
+        resume_session_id: None,
+        new_session_id: None,
+        disallowed_tools,
+        extra_args: vec![],
+        prompt: None, // stdin-piped
+    };
+
+    // Session management (resume vs new).
+    match &cmd_args[..] {
+        [flag, sid] if flag == "--resume" => invocation.resume_session_id = Some(sid.clone()),
+        [flag, sid] if flag == "--session-id" => invocation.new_session_id = Some(sid.clone()),
+        _ => {}
+    }
+
+    let claude_args = invocation.into_args();
 
     // Fetch MCP server instructions from aggregator (non-fatal on error).
     let mcp_instructions: Option<String> = match ctx.internal_client.mcp_instructions(&ctx.agent_name).await {
