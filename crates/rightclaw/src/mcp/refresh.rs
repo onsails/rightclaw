@@ -94,37 +94,13 @@ pub async fn run_refresh_scheduler(
 ) {
     let http_client = reqwest::Client::new();
 
-    // Load existing OAuth state from SQLite
-    let initial_entries: Vec<(String, OAuthServerState)> =
-        match crate::memory::open_connection(&agent_dir) {
-            Ok(conn) => match load_oauth_entries_from_db(&conn) {
-                Ok(entries) => entries,
-                Err(e) => {
-                    tracing::error!("failed to load OAuth entries from DB: {e:#}");
-                    Vec::new()
-                }
-            },
-            Err(e) => {
-                tracing::error!("failed to open DB for refresh scheduler: {e:#}");
-                Vec::new()
-            }
-        };
-
+    // Start with empty state — callers send NewEntry messages for all OAuth servers.
+    // This avoids a race where a DB-loaded timer fires before the NewEntry arrives,
+    // refreshing the token in SQLite but never updating the in-memory ProxyBackend.
     let mut entries: HashMap<String, OAuthServerState> = HashMap::new();
     let mut token_handles: HashMap<String, Arc<tokio::sync::RwLock<Option<String>>>> =
         HashMap::new();
     let mut timers: HashMap<String, tokio::time::Instant> = HashMap::new();
-
-    for (name, entry) in initial_entries {
-        if entry.refresh_token.is_none() {
-            tracing::warn!(server = %name, "no refresh_token — skipping auto-refresh");
-            continue;
-        }
-        let due = refresh_due_in(&entry);
-        timers.insert(name.clone(), tokio::time::Instant::now() + due);
-        tracing::info!(server = %name, due_secs = due.as_secs(), "scheduled refresh");
-        entries.insert(name, entry);
-    }
 
     loop {
         // Find the next timer to fire
