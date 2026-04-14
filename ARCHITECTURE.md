@@ -22,7 +22,7 @@ src/
 ├── config/
 │   └── config.rs       # GlobalConfig (tunnel), RIGHTCLAW_HOME resolution
 ├── codegen/
-│   ├── agent_def.rs    # Two agent def .md files per agent using @ file references: <name>.md (main) and <name>-bootstrap.md
+│   ├── agent_def.rs    # System prompt generation, compiled-in constants (OPERATING_INSTRUCTIONS, BOOTSTRAP_INSTRUCTIONS), JSON schemas
 │   ├── claude_json.rs  # .claude.json — trust (/sandbox + agent dir), onboarding, credential symlinks
 │   ├── settings.rs     # .claude/settings.json — behavioral flags
 │   ├── mcp_config.rs   # .mcp.json — only right entry; externals managed by Aggregator
@@ -122,7 +122,7 @@ rightclaw up [--agents x,y] [--detach] [--no-sandbox]
 rightclaw bot --agent <name>  (spawned by process-compose)
   ├─ Resolve token, open memory.db
   ├─ Per-agent codegen:
-  │   ├─ settings.json, agent defs, system-prompt, schemas
+  │   ├─ settings.json, schemas
   │   ├─ .claude.json, credentials symlink, mcp.json
   │   ├─ TOOLS.md, skills install, policy.yaml
   │   └─ memory.db init, git init, secret generation
@@ -132,8 +132,6 @@ rightclaw bot --agent <name>  (spawned by process-compose)
   │   ├─ Or create new: prepare staging dir, spawn sandbox, wait for READY
   │   └─ Generate SSH config for sandbox exec
   ├─ Initial sync (blocking): deploy platform files to /platform/ (content-addressed + symlinks)
-  │   ├─ Upload agent-owned files (AGENTS.md, TOOLS.md) only if missing in sandbox
-  │   └─ Upload identity files (IDENTITY.md, SOUL.md, USER.md) to /sandbox/
   ├─ Start background sync task (every 5 min — re-deploys /platform/, GC stale entries)
   ├─ Start cron engine, OAuth callback server, refresh scheduler
   └─ Start teloxide long-polling dispatcher
@@ -173,8 +171,6 @@ Bot startup:
   ├─ generate_ssh_config (on every startup, host-side file)
   ├─ initial_sync (blocking — before teloxide starts)
   │   ├─ Deploy platform files to /platform/ (content-addressed + symlinks)
-  │   ├─ Upload agent-owned files (AGENTS.md, TOOLS.md) only if missing
-  │   ├─ Upload identity files (IDENTITY.md, SOUL.md, USER.md) to /sandbox/
   │   └─ Download .claude.json, verify trust keys, fix if CC overwrote them
   └─ Background sync (every 5 min, re-deploys /platform/, GC stale entries)
 
@@ -190,7 +186,7 @@ Staging dir (minimal bootstrap — platform files deployed via /platform/ during
   ├─ .claude/reply-schema.json — structured output schema
   ├─ .claude.json              — trust + onboarding
   └─ mcp.json                  — MCP server entries
-  EXCLUDED: agent defs, skills (deployed to /platform/), credentials, plugins
+  EXCLUDED: skills (deployed to /platform/), credentials, plugins
 
 Platform store (/platform/ inside sandbox):
   ├─ Content-addressed files: settings.json.<hash>, reply-schema.json.<hash>, ...
@@ -272,8 +268,9 @@ compiled-in constants (operating instructions, bootstrap) and agent-owned files
 (IDENTITY.md, SOUL.md, USER.md, AGENTS.md, TOOLS.md).
 No `--agent` flag — `--system-prompt-file` is the sole prompt mechanism.
 
-In sandbox mode, the composite is assembled **inside the sandbox** (single SSH command,
-`cat` + `claude -p`). In no-sandbox mode, assembled on host from local files.
+A single `build_prompt_assembly_script()` generates a parameterized shell script
+(root_path=/sandbox for OpenShell, root_path=agent_dir for no-sandbox) that assembles
+the composite. Sandbox: executed via SSH. No-sandbox: executed via `bash -c`.
 
 Prompt caching is critical — avoid per-message tool calls to read identity files.
 
@@ -399,8 +396,6 @@ LoginEvent      // PTY→async: Url, WaitingForCode, Done, Error
 │       ├── .credentials.json → ~/.claude/.credentials.json  (host-only, NOT uploaded to sandbox)
 │       ├── reply-schema.json
 │       ├── bootstrap-schema.json      # generated per agent by bot on startup
-│       ├── agents/<name>.md           # main agent def (@ file references)
-│       ├── agents/<name>-bootstrap.md # bootstrap agent def (@ file references)
 │       └── skills/{rightskills,rightcron}/
 ├── run/
 │   ├── process-compose.yaml
