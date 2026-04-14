@@ -94,8 +94,8 @@ async fn claude_auth_login_url_and_callback_port() {
         .await
         .expect("ss command failed");
     let ss_str = String::from_utf8_lossy(&ss_output.stdout);
-    let port = rightclaw_bot::login::parse_callback_port(&ss_str);
-    println!("Callback port: {port:?}");
+    let ports = rightclaw_bot::login::parse_listen_ports(&ss_str);
+    println!("Listen ports: {ports:?}");
     // Port may not be visible outside sandbox, so don't assert — just log.
 
     child.kill().await.ok();

@@ -168,8 +168,11 @@ async fn start_auth_session(
 
 /// Discover the callback port that `claude auth login` is listening on.
 ///
-/// Runs `ss -tlnp` via SSH up to 5 times with 1s delays, looking for a
-/// listening socket owned by the `claude` process.
+/// Process names are not visible across SSH sessions in the sandbox (PID
+/// namespace isolation), so we cannot use `ss -tlnp` to identify the owner.
+/// Instead, list all LISTEN ports via `ss -tln`, then probe each with
+/// `curl /callback` — claude's server responds HTTP 400, others give 000
+/// (connection refused or non-HTTP).
 async fn discover_callback_port(
     ssh_config_path: &Path,
     ssh_host: &str,
@@ -177,18 +180,40 @@ async fn discover_callback_port(
 ) -> Result<u16, miette::Report> {
     for attempt in 1..=5 {
         tracing::debug!(agent = agent_name, attempt, "login: probing for callback port");
-        match rightclaw::openshell::ssh_exec(ssh_config_path, ssh_host, &["ss", "-tlnp"], 10).await
-        {
-            Ok(output) => {
-                if let Some(port) = parse_callback_port(&output) {
+        let ss_output =
+            match rightclaw::openshell::ssh_exec(ssh_config_path, ssh_host, &["ss", "-tln"], 10)
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    tracing::debug!(agent = agent_name, attempt, error = %e, "login: ss failed");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+
+        let ports = parse_listen_ports(&ss_output);
+        for port in &ports {
+            let probe = format!(
+                "curl -s -m 2 -o /dev/null -w '%{{http_code}}' 'http://[::1]:{port}/callback'"
+            );
+            if let Ok(status) = rightclaw::openshell::ssh_exec(
+                ssh_config_path,
+                ssh_host,
+                &["bash", "-c", &probe],
+                5,
+            )
+            .await
+            {
+                let code = status.trim();
+                tracing::debug!(agent = agent_name, port, http_status = %code, "login: probe result");
+                if code == "400" || code == "404" || code == "200" || code == "302" {
                     tracing::info!(agent = agent_name, port, "login: discovered callback port");
-                    return Ok(port);
+                    return Ok(*port);
                 }
             }
-            Err(e) => {
-                tracing::debug!(agent = agent_name, attempt, error = %e, "login: ss -tlnp failed");
-            }
         }
+
         if attempt < 5 {
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
@@ -261,29 +286,31 @@ pub fn extract_state_param(url: &str) -> Option<String> {
     None
 }
 
-/// Parse the callback port from `ss -tlnp` output by finding a LISTEN socket
-/// owned by the `claude` process.
-pub fn parse_callback_port(ss_output: &str) -> Option<u16> {
+/// Extract all LISTEN ports from `ss -tln` output.
+///
+/// Parses lines like:
+/// ```text
+/// LISTEN 0  512  [::1]:36275  [::]:*
+/// LISTEN 0  512  127.0.0.1:42000  0.0.0.0:*
+/// ```
+pub fn parse_listen_ports(ss_output: &str) -> Vec<u16> {
+    let mut ports = Vec::new();
     for line in ss_output.lines() {
-        if !line.contains("claude") {
+        if !line.contains("LISTEN") {
             continue;
         }
-        // Look for port in patterns like [::1]:36275 or 127.0.0.1:42000
-        // Tokens must contain ':' to be address:port pairs.
-        for token in line.split_whitespace() {
-            if !token.contains(':') {
-                continue;
-            }
-            if let Some(port_str) = token.rsplit(':').next() {
+        // The 4th whitespace-separated field is Local Address:Port
+        if let Some(addr) = line.split_whitespace().nth(3) {
+            if let Some(port_str) = addr.rsplit(':').next() {
                 if let Ok(port) = port_str.parse::<u16>() {
                     if port > 0 {
-                        return Some(port);
+                        ports.push(port);
                     }
                 }
             }
         }
     }
-    None
+    ports
 }
 
 /// Extract the first `https://` URL from text that may contain surrounding content.
@@ -371,26 +398,24 @@ mod tests {
     }
 
     #[test]
-    fn parse_callback_port_from_ss_output() {
+    fn parse_listen_ports_extracts_all() {
         let ss_output = "\
 State  Recv-Q Send-Q Local Address:Port  Peer Address:Port Process
 LISTEN 0      512            [::1]:36275         [::]:*    users:((\"claude\",pid=881,fd=15))
 LISTEN 0      512            [::1]:44901         [::]:*    users:((\"node\",pid=100,fd=3))
 ";
-        assert_eq!(parse_callback_port(ss_output), Some(36275));
+        assert_eq!(parse_listen_ports(ss_output), vec![36275, 44901]);
     }
 
     #[test]
-    fn parse_callback_port_no_claude() {
-        let ss_output =
-            "State  Recv-Q Send-Q Local Address:Port\nLISTEN 0 512 [::1]:8080 [::]:*\n";
-        assert_eq!(parse_callback_port(ss_output), None);
+    fn parse_listen_ports_empty() {
+        let ss_output = "State  Recv-Q Send-Q Local Address:Port\n";
+        assert!(parse_listen_ports(ss_output).is_empty());
     }
 
     #[test]
-    fn parse_callback_port_ipv4_format() {
-        let ss_output =
-            "LISTEN 0 512 127.0.0.1:42000 0.0.0.0:* users:((\"claude\",pid=50,fd=10))\n";
-        assert_eq!(parse_callback_port(ss_output), Some(42000));
+    fn parse_listen_ports_ipv4() {
+        let ss_output = "LISTEN 0 512 127.0.0.1:42000 0.0.0.0:*\n";
+        assert_eq!(parse_listen_ports(ss_output), vec![42000]);
     }
 }
