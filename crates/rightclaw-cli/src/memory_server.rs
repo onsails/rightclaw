@@ -212,7 +212,7 @@ impl MemoryServer {
         let limit = params.limit.unwrap_or(20);
         let mut stmt = conn
             .prepare(
-                "SELECT id, job_name, started_at, finished_at, exit_code, status, summary, notify_json
+                "SELECT id, job_name, started_at, finished_at, exit_code, status, log_path, summary, notify_json
                  FROM cron_runs
                  WHERE (?1 IS NULL OR job_name = ?1)
                  ORDER BY started_at DESC
@@ -230,6 +230,7 @@ impl MemoryServer {
                     &row.get::<_, String>(5)?,
                     row.get::<_, Option<String>>(6)?.as_deref(),
                     row.get::<_, Option<String>>(7)?.as_deref(),
+                    row.get::<_, Option<String>>(8)?.as_deref(),
                 ))
             })
             .map_err(|e| McpError::internal_error(format!("query failed: {e:#}"), None))?
@@ -250,7 +251,7 @@ impl MemoryServer {
             .lock()
             .map_err(|e| McpError::internal_error(format!("mutex poisoned: {e}"), None))?;
         let result = conn.query_row(
-            "SELECT id, job_name, started_at, finished_at, exit_code, status, summary, notify_json
+            "SELECT id, job_name, started_at, finished_at, exit_code, status, log_path, summary, notify_json
              FROM cron_runs WHERE id = ?1",
             rusqlite::params![params.run_id],
             |row| {
@@ -263,6 +264,7 @@ impl MemoryServer {
                     &row.get::<_, String>(5)?,
                     row.get::<_, Option<String>>(6)?.as_deref(),
                     row.get::<_, Option<String>>(7)?.as_deref(),
+                    row.get::<_, Option<String>>(8)?.as_deref(),
                 ))
             },
         );
@@ -474,6 +476,7 @@ pub(crate) fn cron_run_to_json(
     finished_at: Option<&str>,
     exit_code: Option<i64>,
     status: &str,
+    log_path: Option<&str>,
     summary: Option<&str>,
     notify_json: Option<&str>,
 ) -> serde_json::Value {
@@ -484,6 +487,7 @@ pub(crate) fn cron_run_to_json(
         "finished_at": finished_at,
         "exit_code": exit_code,
         "status": status,
+        "log_path": log_path,
     });
     if let Some(s) = summary {
         val["summary"] = serde_json::Value::String(s.to_owned());
