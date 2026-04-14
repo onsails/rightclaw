@@ -9,9 +9,11 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 /// Default interval between upgrade checks (8 hours).
+#[allow(dead_code)]
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(8 * 3600);
 
 /// Timeout for `claude upgrade` SSH command (2 minutes).
+#[allow(dead_code)]
 const UPGRADE_TIMEOUT_SECS: u64 = 120;
 
 /// Spawn a background task that periodically runs `claude upgrade` in the sandbox.
@@ -28,23 +30,15 @@ pub fn spawn_upgrade_task(
     });
 }
 
-async fn run_upgrade_loop(ssh_config_path: &Path, agent_name: &str, shutdown: CancellationToken) {
-    let mut interval = tokio::time::interval(UPGRADE_INTERVAL);
-    let ssh_host = rightclaw::openshell::ssh_host(agent_name);
-
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                tracing::info!(agent = %agent_name, "upgrade task shutting down");
-                return;
-            }
-            _ = interval.tick() => {
-                run_upgrade(ssh_config_path, &ssh_host, agent_name).await;
-            }
-        }
-    }
+async fn run_upgrade_loop(_ssh_config_path: &Path, agent_name: &str, shutdown: CancellationToken) {
+    // TODO: Re-enable after implementing proper locking between upgrade and
+    // login/handlers/crons. Currently disabled because `claude install`/`claude
+    // upgrade` kills a running `claude auth login` (shared lockfiles/daemon).
+    tracing::info!(agent = %agent_name, "upgrade task disabled (pending locking implementation)");
+    shutdown.cancelled().await;
 }
 
+#[allow(dead_code)]
 async fn run_upgrade(ssh_config_path: &Path, ssh_host: &str, agent_name: &str) {
     tracing::info!(agent = %agent_name, "checking for claude upgrade");
 

@@ -129,7 +129,7 @@ async fn start_auth_session(
         .arg("--")
         .arg("claude auth login")
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null())
         .spawn()
         .map_err(|e| miette::miette!("failed to spawn SSH for auth: {e}"))?;
