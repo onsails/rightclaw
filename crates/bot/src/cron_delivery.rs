@@ -85,7 +85,7 @@ pub fn deduplicate_job(
 
     let now = chrono::Utc::now().to_rfc3339();
     let count = conn.execute(
-        "UPDATE cron_runs SET delivered_at = ?1 \
+        "UPDATE cron_runs SET delivered_at = ?1, delivery_status = 'superseded' \
          WHERE job_name = ?2 AND id != ?3 \
          AND status IN ('success', 'failed') AND notify_json IS NOT NULL AND delivered_at IS NULL",
         rusqlite::params![now, job_name, latest.id],
@@ -269,6 +269,12 @@ pub async fn run_delivery_loop(
         .await
         {
             Ok(()) => {
+                if let Err(e) = conn.execute(
+                    "UPDATE cron_runs SET delivery_status = 'delivered' WHERE id = ?1",
+                    rusqlite::params![to_deliver.id],
+                ) {
+                    tracing::error!(run_id = %to_deliver.id, "failed to set delivery_status=delivered: {e:#}");
+                }
                 if let Err(e) = mark_delivered(&conn, &to_deliver.id) {
                     tracing::error!(run_id = %to_deliver.id, "mark_delivered failed: {e:#}");
                     delivered_in_memory.insert(to_deliver.id.clone());
@@ -301,6 +307,12 @@ pub async fn run_delivery_loop(
                         run_id = %to_deliver.id,
                         "giving up after {MAX_DELIVERY_ATTEMPTS} attempts, marking as delivered"
                     );
+                    if let Err(e) = conn.execute(
+                        "UPDATE cron_runs SET delivery_status = 'failed' WHERE id = ?1",
+                        rusqlite::params![to_deliver.id],
+                    ) {
+                        tracing::error!(run_id = %to_deliver.id, "failed to set delivery_status=failed: {e:#}");
+                    }
                     if let Err(db_err) = mark_delivered(&conn, &to_deliver.id) {
                         tracing::error!(run_id = %to_deliver.id, "mark_delivered failed: {db_err:#}");
                         delivered_in_memory.insert(to_deliver.id.clone());
@@ -619,6 +631,33 @@ mod tests {
         let (latest, skipped) = deduplicate_job(&conn, "job1").unwrap().unwrap();
         assert_eq!(latest.id, "a");
         assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn deduplicate_sets_superseded_status() {
+        let (_dir, conn) = setup_db();
+        conn.execute(
+            "INSERT INTO cron_runs (id, job_name, started_at, finished_at, status, log_path, summary, notify_json, delivery_status) \
+             VALUES ('a', 'job1', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z', 'success', '/log', 'sum1', '{\"content\":\"old\"}', 'pending')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO cron_runs (id, job_name, started_at, finished_at, status, log_path, summary, notify_json, delivery_status) \
+             VALUES ('b', 'job1', '2026-01-01T00:05:00Z', '2026-01-01T00:06:00Z', 'success', '/log', 'sum2', '{\"content\":\"new\"}', 'pending')",
+            [],
+        ).unwrap();
+        let (latest, skipped) = deduplicate_job(&conn, "job1").unwrap().unwrap();
+        assert_eq!(latest.id, "b");
+        assert_eq!(skipped, 1);
+
+        let status: Option<String> = conn
+            .query_row(
+                "SELECT delivery_status FROM cron_runs WHERE id = 'a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status.as_deref(), Some("superseded"));
     }
 
     #[test]
