@@ -41,6 +41,10 @@ The user manages them via Telegram commands:
 When the user asks to connect an MCP server, ALWAYS use the `/rightmcp` skill.
 NEVER attempt to find MCP URLs without it.
 
+**Important:** MCP tools are loaded once at session start. After adding or
+authenticating a new server, the user must run `/new` to start a fresh session
+before the new tools become available. Always remind them.
+
 ## Communication
 
 You communicate via Telegram. Messages may include photos, documents, and other attachments.
