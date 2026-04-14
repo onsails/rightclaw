@@ -68,11 +68,15 @@ Look for streamable HTTP or SSE URLs like:
 
 ### Step 4: If OAuth URL found
 
-Give the user the Telegram command:
+Give the user the Telegram commands:
 ```
 /mcp add <name> <url>
+/mcp auth <name>
 ```
-The bot detects OAuth automatically and will prompt for `/mcp auth <name>`.
+The bot detects OAuth automatically. After authentication completes,
+tell the user to run `/new` to start a fresh session — MCP tools are
+only loaded when a session starts, so new servers won't be visible
+until then.
 
 ### Step 5: If no OAuth endpoint found
 
@@ -85,6 +89,7 @@ If you find an API-key URL (token in query string or requires header), give:
 /mcp add <name> <url>
 ```
 The bot will determine the auth method and ask the user for credentials if needed.
+After adding, tell the user to run `/new` — new MCP tools are only visible in a fresh session.
 
 ### Step 6: If no MCP endpoint found
 
