@@ -26,43 +26,43 @@ fn bootstrap_schema_has_bootstrap_complete_field() {
 
 #[test]
 fn system_prompt_contains_agent_name() {
-    let result = generate_system_prompt("mybot", &crate::agent::types::SandboxMode::Openshell);
+    let result = generate_system_prompt("mybot", &crate::agent::types::SandboxMode::Openshell, "/sandbox");
     assert!(result.contains("mybot"));
 }
 
 #[test]
 fn system_prompt_contains_rightclaw_description() {
-    let result = generate_system_prompt("test", &crate::agent::types::SandboxMode::Openshell);
+    let result = generate_system_prompt("test", &crate::agent::types::SandboxMode::Openshell, "/sandbox");
     assert!(result.contains("RightClaw"));
     assert!(result.contains("multi-agent runtime"));
 }
 
 #[test]
 fn system_prompt_contains_sandbox_mode() {
-    let openshell = generate_system_prompt("test", &crate::agent::types::SandboxMode::Openshell);
+    let openshell = generate_system_prompt("test", &crate::agent::types::SandboxMode::Openshell, "/sandbox");
     assert!(openshell.contains("OpenShell"));
 
-    let none = generate_system_prompt("test", &crate::agent::types::SandboxMode::None);
+    let none = generate_system_prompt("test", &crate::agent::types::SandboxMode::None, "/test/agent/home");
     assert!(none.contains("no sandbox"));
 }
 
 #[test]
 fn system_prompt_mentions_right_mcp() {
-    let result = generate_system_prompt("test", &crate::agent::types::SandboxMode::Openshell);
+    let result = generate_system_prompt("test", &crate::agent::types::SandboxMode::Openshell, "/sandbox");
     assert!(result.contains("right"));
     assert!(result.contains("MCP"));
 }
 
 #[test]
 fn system_prompt_contains_ssh_block_for_openshell() {
-    let result = generate_system_prompt("mybot", &crate::agent::types::SandboxMode::Openshell);
+    let result = generate_system_prompt("mybot", &crate::agent::types::SandboxMode::Openshell, "/sandbox");
     assert!(result.contains("rightclaw agent ssh mybot"), "openshell prompt must include SSH command");
     assert!(result.contains("interactive terminal"), "openshell prompt must explain when to use SSH");
 }
 
 #[test]
 fn system_prompt_no_ssh_block_for_no_sandbox() {
-    let result = generate_system_prompt("mybot", &crate::agent::types::SandboxMode::None);
+    let result = generate_system_prompt("mybot", &crate::agent::types::SandboxMode::None, "/test/agent/home");
     assert!(!result.contains("rightclaw agent ssh"), "no-sandbox prompt must NOT include SSH command");
 }
 
@@ -99,5 +99,18 @@ fn bootstrap_instructions_constant_is_non_empty() {
     assert!(
         crate::codegen::BOOTSTRAP_INSTRUCTIONS.contains("### SOUL.md"),
         "BOOTSTRAP_INSTRUCTIONS must contain SOUL.md structure"
+    );
+}
+
+#[test]
+fn system_prompt_contains_home_dir() {
+    let result = generate_system_prompt(
+        "test",
+        &crate::agent::types::SandboxMode::Openshell,
+        "/my/custom/home",
+    );
+    assert!(
+        result.contains("/my/custom/home"),
+        "system prompt must contain the passed home_dir"
     );
 }

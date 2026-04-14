@@ -90,10 +90,16 @@ pub fn run_single_agent_codegen(
         )
     })?;
 
+    // Determine home directory: /sandbox for OpenShell agents, agent path for no-sandbox.
+    let home_dir = match &agent_sandbox_mode {
+        SandboxMode::Openshell => "/sandbox".to_owned(),
+        SandboxMode::None => agent.path.to_string_lossy().into_owned(),
+    };
+
     // Write system-prompt.md (base identity for --system-prompt-file).
     std::fs::write(
         claude_dir.join("system-prompt.md"),
-        crate::codegen::generate_system_prompt(&agent.name, &agent_sandbox_mode),
+        crate::codegen::generate_system_prompt(&agent.name, &agent_sandbox_mode, &home_dir),
     )
     .map_err(|e| {
         miette::miette!(
