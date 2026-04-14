@@ -433,7 +433,11 @@ async fn main() -> miette::Result<()> {
             // Register agents in dispatcher, restoring proxy backends from SQLite.
             // Also create per-agent refresh schedulers and spawn reconnect tasks.
             let mut refresh_senders_map = std::collections::HashMap::new();
-            let http_client = reqwest::Client::new();
+            let http_client = reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new());
 
             for (agent_name, _token) in &token_entries {
                 let agent_dir = agents_dir.join(agent_name);
@@ -460,9 +464,9 @@ async fn main() -> miette::Result<()> {
                 )> = Vec::new();
                 let mut oauth_server_names = std::collections::HashSet::<String>::new();
 
-                if let Ok(conn) = rightclaw::memory::open_connection(&agent_dir) {
-                    if let Ok(servers) = rightclaw::mcp::credentials::db_list_servers(&conn) {
-                        for s in servers {
+                match rightclaw::memory::open_connection(&agent_dir) {
+                    Ok(conn) => match rightclaw::mcp::credentials::db_list_servers(&conn) {
+                        Ok(servers) => for s in servers {
                             let auth_method = rightclaw::mcp::proxy::AuthMethod::from_db(
                                 s.auth_type.as_deref(),
                                 s.auth_header.as_deref(),
@@ -504,8 +508,10 @@ async fn main() -> miette::Result<()> {
                                 auth_method,
                             );
                             proxies.insert(s.name, std::sync::Arc::new(backend));
-                        }
-                    }
+                        },
+                        Err(e) => tracing::error!(agent = agent_name.as_str(), "failed to list MCP servers: {e:#}"),
+                    },
+                    Err(e) => tracing::error!(agent = agent_name.as_str(), "failed to open DB for MCP restore: {e:#}"),
                 }
 
                 // Clone proxies for reconnect tasks before moving into registry.
