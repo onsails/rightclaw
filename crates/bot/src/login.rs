@@ -10,10 +10,8 @@ use std::path::Path;
 use tokio::sync::{mpsc, oneshot};
 
 const TOKEN_INSTRUCTION: &str = "\
-To authenticate this agent, run on your machine:
-```
-claude setup-token
-```
+To authenticate this agent, run on your machine:\n\n\
+<pre>claude setup-token</pre>\n\n\
 Then send me the token it prints.";
 
 /// Events emitted during the token request flow.
