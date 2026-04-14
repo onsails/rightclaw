@@ -1,5 +1,4 @@
 use super::*;
-use serial_test::serial;
 
 #[test]
 fn sandbox_name_prefixes_agent_name() {
@@ -360,7 +359,6 @@ async fn wait_for_deleted_succeeds_when_sandbox_disappears() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn exec_in_sandbox_runs_command() {
     let sbox = TestSandbox::create("exec-run").await;
     let (stdout, exit_code) = sbox.exec(&["echo", "hello-from-test"]).await;
@@ -375,7 +373,6 @@ async fn exec_in_sandbox_runs_command() {
 }
 
 #[tokio::test]
-#[serial]
 async fn exec_in_sandbox_returns_exit_code() {
     let sbox = TestSandbox::create("exec-exit").await;
     let (_, exit_code) = sbox.exec(&["sh", "-c", "exit 42"]).await;
@@ -386,7 +383,6 @@ async fn exec_in_sandbox_returns_exit_code() {
 }
 
 #[tokio::test]
-#[serial]
 async fn verify_sandbox_files_detects_missing_and_reuploads() {
     let sbox = TestSandbox::create("verify-missing").await;
 
@@ -415,7 +411,6 @@ async fn verify_sandbox_files_detects_missing_and_reuploads() {
 /// This is the scenario where gRPC reports READY but SSH transport
 /// may not be up yet, causing "Connection reset by peer".
 #[tokio::test]
-#[serial]
 async fn exec_immediately_after_sandbox_create_reproduces_init_flow() {
     // ensure_sandbox takes agent name and prepends "rightclaw-" via sandbox_name().
     const AGENT: &str = "test-lifecycle";
@@ -487,7 +482,6 @@ async fn exec_immediately_after_sandbox_create_reproduces_init_flow() {
 }
 
 #[tokio::test]
-#[serial]
 async fn verify_sandbox_files_passes_when_all_present() {
     let sbox = TestSandbox::create("verify-present").await;
 
@@ -511,7 +505,6 @@ async fn verify_sandbox_files_passes_when_all_present() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[serial]
 async fn upload_file_to_directory() {
     let sbox = TestSandbox::create("upload-dir").await;
 
@@ -530,7 +523,6 @@ async fn upload_file_to_directory() {
 }
 
 #[tokio::test]
-#[serial]
 async fn upload_file_overwrites_existing() {
     let sbox = TestSandbox::create("upload-overwrite").await;
 
@@ -556,7 +548,6 @@ async fn upload_file_overwrites_existing() {
 }
 
 #[tokio::test]
-#[serial]
 async fn upload_file_to_nested_dir() {
     let sbox = TestSandbox::create("upload-nested").await;
 
@@ -603,7 +594,6 @@ async fn upload_file_rejects_non_directory_dest() {
 /// OpenShell has a known bug where directory uploads silently drop small files.
 /// Also tests overwrite: sync runs every 5 min, so repeated uploads must work.
 #[tokio::test]
-#[serial]
 async fn upload_directory_preserves_files_and_overwrites() {
     let sbox = TestSandbox::create("upload-dir-tree").await;
 
