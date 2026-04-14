@@ -277,6 +277,29 @@ Prompt caching is critical — avoid per-message tool calls to read identity fil
 
 See PROMPT_SYSTEM.md for full documentation.
 
+### Claude Invocation Contract
+
+Every `claude -p` invocation MUST go through `ClaudeInvocation` (defined in
+`crates/bot/src/telegram/invocation.rs`). Direct construction of `claude_args`
+vectors is forbidden — the builder enforces invariant flags at compile time.
+
+**Invariants** (always present, cannot be omitted):
+- `claude -p --dangerously-skip-permissions`
+- `--mcp-config <path>` + `--strict-mcp-config` — agents MUST have MCP access
+- `--output-format <stream-json|json>` (`--verbose` auto-added for `stream-json` only)
+- `--json-schema <schema>` — structured output
+
+**Optional per-callsite:**
+- `--model` — override default model
+- `--max-budget-usd` — budget cap (cron jobs)
+- `--max-turns` — turn limit
+- `--resume` / `--session-id` — session management (worker, delivery)
+- `--disallowedTools` — disable CC built-ins that conflict with MCP equivalents
+
+**Adding a new `claude -p` callsite:** construct a `ClaudeInvocation`, set fields,
+call `.into_args()`, pass result to `build_prompt_assembly_script()`. Never build
+args manually.
+
 ### Stream Logging
 
 CC is invoked with `--verbose --output-format stream-json`. Worker reads stdout
