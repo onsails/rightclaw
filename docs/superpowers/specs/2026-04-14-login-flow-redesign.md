@@ -20,7 +20,7 @@ Claude Code CLI auto-updated its login TUI, breaking the PTY-driven login flow i
 
 ### Policy Prerequisite
 
-Sandbox filesystem policy must include `/dev/tty` and `/dev/pts` in `read_write` for `script` PTY allocation (used only as fallback, but needed for `claude auth login` to start its TUI components). **Filesystem policy changes require sandbox recreation** — hot-reload does not apply them.
+No policy changes needed. `claude auth login` runs without `script`/PTY — it outputs the URL to stdout and starts a local callback server without requiring `/dev/tty` or `/dev/pts`.
 
 ## Design
 

@@ -667,10 +667,10 @@ fn spawn_auth_watcher(
         // Store the code sender so Telegram handler can forward the auth code
         auth_code_tx_slot.lock().await.replace(code_tx);
 
-        // Spawn PTY login in blocking thread
-        let agent_for_pty = agent_name.clone();
-        tokio::task::spawn_blocking(move || {
-            crate::login::run_login_pty(&ssh_config, &agent_for_pty, event_tx, code_rx);
+        // Spawn async login task
+        let agent_for_login = agent_name.clone();
+        tokio::spawn(async move {
+            crate::login::run_login(&ssh_config, &agent_for_login, event_tx, code_rx).await;
         });
 
         // Process events from the PTY task

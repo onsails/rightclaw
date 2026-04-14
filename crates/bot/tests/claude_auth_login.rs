@@ -47,11 +47,9 @@ async fn claude_auth_login_url_and_callback_port() {
     let home = setup_temp_home();
     let claude_bin = find_claude();
 
-    // Spawn claude auth login with script for PTY
-    let mut child = tokio::process::Command::new("script")
-        .args(["-q", "-c"])
-        .arg(format!("{} auth login", claude_bin.display()))
-        .arg("/dev/null")
+    // Spawn claude auth login directly (no PTY needed)
+    let mut child = tokio::process::Command::new(&claude_bin)
+        .args(["auth", "login"])
         .env("HOME", home.path())
         .env("CLAUDE_CONFIG_DIR", home.path().join(".claude"))
         .stdout(std::process::Stdio::piped())
