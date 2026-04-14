@@ -196,3 +196,182 @@ async fn bootstrap_done_with_files() {
         "BOOTSTRAP.md should be removed"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Integration tests — sandbox-aware bootstrap_done
+// ---------------------------------------------------------------------------
+
+/// Helper: spin up an ephemeral sandbox for testing.
+/// Caller must delete sandbox after use.
+async fn create_test_sandbox(
+    mtls_dir: &std::path::Path,
+    sandbox_name: &str,
+) -> rightclaw::sandbox_exec::SandboxExec {
+    let mut grpc_client = rightclaw::openshell::connect_grpc(mtls_dir)
+        .await
+        .expect("gRPC connect");
+
+    // Clean up leftover from a previous failed run.
+    if rightclaw::openshell::sandbox_exists(&mut grpc_client, sandbox_name)
+        .await
+        .unwrap()
+    {
+        rightclaw::openshell::delete_sandbox(sandbox_name).await;
+        rightclaw::openshell::wait_for_deleted(&mut grpc_client, sandbox_name, 60, 2)
+            .await
+            .expect("cleanup of leftover sandbox failed");
+    }
+
+    // Create sandbox with minimal policy.
+    let policy_dir = tempfile::tempdir().unwrap();
+    let policy_path = policy_dir.path().join("policy.yaml");
+    std::fs::write(
+        &policy_path,
+        "\
+version: 1
+filesystem_policy:
+  include_workdir: true
+  read_write:
+    - /tmp
+    - /sandbox
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+network_policies:
+  outbound:
+    endpoints:
+      - host: \"**.*\"
+        port: 443
+        protocol: rest
+        access: full
+        tls: terminate
+    binaries:
+      - path: \"**\"
+",
+    )
+    .unwrap();
+
+    let _child = rightclaw::openshell::spawn_sandbox(sandbox_name, &policy_path, None)
+        .expect("failed to spawn sandbox");
+    rightclaw::openshell::wait_for_ready(&mut grpc_client, sandbox_name, 120, 2)
+        .await
+        .expect("sandbox did not become READY");
+
+    let sandbox_id =
+        rightclaw::openshell::resolve_sandbox_id(&mut grpc_client, sandbox_name)
+            .await
+            .expect("resolve sandbox_id");
+
+    let sbox = rightclaw::sandbox_exec::SandboxExec::new(
+        mtls_dir.to_path_buf(),
+        sandbox_name.to_owned(),
+        sandbox_id,
+    );
+
+    // Poll exec until ready — OpenShell reports READY before exec transport is available.
+    for attempt in 1..=20 {
+        match sbox.exec(&["echo", "ready"]).await {
+            Ok((out, 0)) if out.trim() == "ready" => break,
+            _ if attempt == 20 => panic!("exec not ready after 20 attempts"),
+            _ => tokio::time::sleep(std::time::Duration::from_secs(2)).await,
+        }
+    }
+
+    sbox
+}
+
+#[tokio::test]
+async fn bootstrap_done_sandbox_files_present() {
+    let sandbox_name = "rightclaw-test-bootstrap-present";
+
+    let mtls_dir = match rightclaw::openshell::preflight_check() {
+        rightclaw::openshell::OpenShellStatus::Ready(dir) => dir,
+        other => panic!("OpenShell not ready: {other:?}"),
+    };
+
+    let sbox = create_test_sandbox(&mtls_dir, sandbox_name).await;
+
+    // Create identity files inside sandbox.
+    for name in ["IDENTITY.md", "SOUL.md", "USER.md"] {
+        let (_, code) = sbox
+            .exec(&["sh", "-c", &format!("echo '# test' > /sandbox/{name}")])
+            .await
+            .unwrap();
+        assert_eq!(code, 0, "failed to create {name} in sandbox");
+    }
+
+    // Agent name must match: sandbox_name = "rightclaw-{agent_name}"
+    let agent_name = "test-bootstrap-present";
+    let tmp = TempDir::new().unwrap();
+    let agents_dir = tmp.path().join("agents");
+    let agent_dir = agents_dir.join(agent_name);
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(agent_dir.join("BOOTSTRAP.md"), "bootstrap").unwrap();
+    let _conn = rightclaw::memory::open_connection(&agent_dir).unwrap();
+
+    let backend = RightBackend::new(agents_dir, Some(mtls_dir.clone()));
+    let result = backend
+        .tools_call(agent_name, &agent_dir, "bootstrap_done", json!({}))
+        .await
+        .expect("bootstrap_done should succeed");
+
+    let text = format!("{:?}", result);
+    assert!(
+        text.contains("Bootstrap complete"),
+        "expected success, got: {text}"
+    );
+    assert!(
+        !agent_dir.join("BOOTSTRAP.md").exists(),
+        "BOOTSTRAP.md should be removed from host"
+    );
+
+    rightclaw::openshell::delete_sandbox(sandbox_name).await;
+}
+
+#[tokio::test]
+async fn bootstrap_done_sandbox_files_missing() {
+    let sandbox_name = "rightclaw-test-bootstrap-missing";
+
+    let mtls_dir = match rightclaw::openshell::preflight_check() {
+        rightclaw::openshell::OpenShellStatus::Ready(dir) => dir,
+        other => panic!("OpenShell not ready: {other:?}"),
+    };
+
+    let sbox = create_test_sandbox(&mtls_dir, sandbox_name).await;
+
+    // Create only IDENTITY.md — SOUL.md and USER.md are missing.
+    let (_, code) = sbox
+        .exec(&["sh", "-c", "echo '# test' > /sandbox/IDENTITY.md"])
+        .await
+        .unwrap();
+    assert_eq!(code, 0);
+
+    let agent_name = "test-bootstrap-missing";
+    let tmp = TempDir::new().unwrap();
+    let agents_dir = tmp.path().join("agents");
+    let agent_dir = agents_dir.join(agent_name);
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    let _conn = rightclaw::memory::open_connection(&agent_dir).unwrap();
+
+    let backend = RightBackend::new(agents_dir, Some(mtls_dir.clone()));
+    let result = backend
+        .tools_call(agent_name, &agent_dir, "bootstrap_done", json!({}))
+        .await
+        .expect("bootstrap_done should return Ok (tool-level error)");
+
+    let text = format!("{:?}", result);
+    assert!(
+        text.contains("missing files"),
+        "expected missing files error, got: {text}"
+    );
+    assert!(
+        text.contains("SOUL.md"),
+        "should mention SOUL.md as missing, got: {text}"
+    );
+    assert!(
+        text.contains("USER.md"),
+        "should mention USER.md as missing, got: {text}"
+    );
+
+    rightclaw::openshell::delete_sandbox(sandbox_name).await;
+}
