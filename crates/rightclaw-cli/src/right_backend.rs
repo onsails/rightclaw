@@ -16,9 +16,7 @@ use rmcp::model::{CallToolResult, Content, Tool};
 
 use crate::memory_server::{
     CronCreateParams, CronDeleteParams, CronListParams, CronListRunsParams, CronShowRunParams,
-    CronTriggerParams, CronUpdateParams, DeleteRecordParams, McpListParams,
-    QueryRecordsParams, SearchRecordsParams, StoreRecordParams, cron_run_to_json,
-    entry_to_json,
+    CronTriggerParams, CronUpdateParams, McpListParams, cron_run_to_json,
 };
 
 /// Connection cache keyed by agent name.
@@ -44,27 +42,6 @@ impl RightBackend {
     pub fn tools_list(&self) -> Vec<Tool> {
         static TOOLS: OnceLock<Vec<Tool>> = OnceLock::new();
         TOOLS.get_or_init(|| vec![
-            // Memory tools
-            Tool::new(
-                "store_record",
-                "Store a tagged record. Content is scanned for prompt injection. Use for structured data (cron results, audit entries, explicit facts) — not for general conversation context. Returns record ID.",
-                schema_for_type::<StoreRecordParams>(),
-            ),
-            Tool::new(
-                "query_records",
-                "Look up records by tag or keyword. Returns matching active records.",
-                schema_for_type::<QueryRecordsParams>(),
-            ),
-            Tool::new(
-                "search_records",
-                "Full-text search records using FTS5. Returns BM25-ranked results.",
-                schema_for_type::<SearchRecordsParams>(),
-            ),
-            Tool::new(
-                "delete_record",
-                "Soft-delete a record by ID. Entry is excluded from queries but preserved in audit log.",
-                schema_for_type::<DeleteRecordParams>(),
-            ),
             // Cron tools
             Tool::new(
                 "cron_create",
@@ -129,10 +106,6 @@ impl RightBackend {
         args: serde_json::Value,
     ) -> Result<CallToolResult, anyhow::Error> {
         match tool_name {
-            "store_record" => self.call_store_record(agent_name, &args),
-            "query_records" => self.call_query_records(agent_name, &args),
-            "search_records" => self.call_search_records(agent_name, &args),
-            "delete_record" => self.call_delete_record(agent_name, &args),
             "cron_create" => self.call_cron_create(agent_name, &args),
             "cron_update" => self.call_cron_update(agent_name, &args),
             "cron_delete" => self.call_cron_delete(agent_name, agent_dir, &args),
@@ -168,91 +141,6 @@ impl RightBackend {
         conn_arc
             .lock()
             .map_err(|e| anyhow::anyhow!("mutex poisoned: {e}"))
-    }
-
-    // ------------------------------------------------------------------
-    // Memory tools
-    // ------------------------------------------------------------------
-
-    fn call_store_record(
-        &self,
-        agent_name: &str,
-        args: &serde_json::Value,
-    ) -> Result<CallToolResult, anyhow::Error> {
-        let params: StoreRecordParams =
-            serde_json::from_value(args.clone()).context("invalid store_record params")?;
-        let conn_arc = self.get_conn(agent_name)?;
-        let conn = Self::lock_conn(&conn_arc)?;
-        match rightclaw::memory::store::store_memory(
-            &conn,
-            &params.content,
-            params.tags.as_deref(),
-            Some(agent_name),
-            Some("mcp:store_record"),
-        ) {
-            Ok(id) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "stored record id={id}"
-            ))])),
-            Err(rightclaw::memory::MemoryError::InjectionDetected) => {
-                Ok(CallToolResult::error(vec![Content::text(
-                    "content rejected: possible prompt injection detected",
-                )]))
-            }
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    fn call_query_records(
-        &self,
-        agent_name: &str,
-        args: &serde_json::Value,
-    ) -> Result<CallToolResult, anyhow::Error> {
-        let params: QueryRecordsParams =
-            serde_json::from_value(args.clone()).context("invalid query_records params")?;
-        let conn_arc = self.get_conn(agent_name)?;
-        let conn = Self::lock_conn(&conn_arc)?;
-        let entries = rightclaw::memory::store::recall_memories(&conn, &params.query)?;
-        let json_values: Vec<serde_json::Value> = entries.iter().map(entry_to_json).collect();
-        let output = serde_json::to_string_pretty(&json_values)?;
-        Ok(CallToolResult::success(vec![Content::text(output)]))
-    }
-
-    fn call_search_records(
-        &self,
-        agent_name: &str,
-        args: &serde_json::Value,
-    ) -> Result<CallToolResult, anyhow::Error> {
-        let params: SearchRecordsParams =
-            serde_json::from_value(args.clone()).context("invalid search_records params")?;
-        let conn_arc = self.get_conn(agent_name)?;
-        let conn = Self::lock_conn(&conn_arc)?;
-        let entries = rightclaw::memory::store::search_memories(&conn, &params.query)?;
-        let json_values: Vec<serde_json::Value> = entries.iter().map(entry_to_json).collect();
-        let output = serde_json::to_string_pretty(&json_values)?;
-        Ok(CallToolResult::success(vec![Content::text(output)]))
-    }
-
-    fn call_delete_record(
-        &self,
-        agent_name: &str,
-        args: &serde_json::Value,
-    ) -> Result<CallToolResult, anyhow::Error> {
-        let params: DeleteRecordParams =
-            serde_json::from_value(args.clone()).context("invalid delete_record params")?;
-        let id = params.id;
-        let conn_arc = self.get_conn(agent_name)?;
-        let conn = Self::lock_conn(&conn_arc)?;
-        match rightclaw::memory::store::forget_memory(&conn, id, Some(agent_name)) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "deleted record id={id}"
-            ))])),
-            Err(rightclaw::memory::MemoryError::NotFound(_)) => {
-                Ok(CallToolResult::error(vec![Content::text(format!(
-                    "record id={id} not found or already deleted"
-                ))]))
-            }
-            Err(e) => Err(e.into()),
-        }
     }
 
     // ------------------------------------------------------------------

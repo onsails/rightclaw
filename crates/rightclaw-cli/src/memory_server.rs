@@ -13,32 +13,6 @@ use serde::{Deserialize, Deserializer};
 // --- Parameter types ---
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct StoreRecordParams {
-    #[schemars(description = "Content to store as a record")]
-    pub content: String,
-    #[schemars(description = "Comma-separated tags for categorization")]
-    pub tags: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct QueryRecordsParams {
-    #[schemars(description = "Tag or keyword to search by")]
-    pub query: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct SearchRecordsParams {
-    #[schemars(description = "Full-text search query")]
-    pub query: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct DeleteRecordParams {
-    #[schemars(description = "Record ID to soft-delete")]
-    pub id: i64,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CronListRunsParams {
     #[schemars(description = "Filter by job name. Omit to return all jobs.")]
     pub job_name: Option<String>,
@@ -161,93 +135,6 @@ impl MemoryServer {
             agent_name,
             agent_dir,
             rightclaw_home,
-        }
-    }
-
-    #[tool(description = "Store a tagged record. Content is scanned for prompt injection. Use for structured data (cron results, audit entries, explicit facts) — not for general conversation context. Returns record ID.")]
-    async fn store_record(
-        &self,
-        Parameters(params): Parameters<StoreRecordParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("mutex poisoned: {e}"), None))?;
-        match rightclaw::memory::store::store_memory(
-            &conn,
-            &params.content,
-            params.tags.as_deref(),
-            Some(self.agent_name.as_str()),
-            Some("mcp:store_record"),
-        ) {
-            Ok(id) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "stored record id={id}"
-            ))])),
-            Err(rightclaw::memory::MemoryError::InjectionDetected) => Err(McpError::invalid_params(
-                "content rejected: possible prompt injection detected",
-                None,
-            )),
-            Err(e) => Err(McpError::internal_error(format!("{e:#}"), None)),
-        }
-    }
-
-    #[tool(description = "Look up records by tag or keyword. Returns matching active records.")]
-    async fn query_records(
-        &self,
-        Parameters(params): Parameters<QueryRecordsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("mutex poisoned: {e}"), None))?;
-        let entries = rightclaw::memory::store::recall_memories(&conn, &params.query)
-            .map_err(|e| McpError::internal_error(format!("{e:#}"), None))?;
-        let json_values: Vec<serde_json::Value> = entries.iter().map(entry_to_json).collect();
-        let output = serde_json::to_string_pretty(&json_values)
-            .map_err(|e| McpError::internal_error(format!("serialization error: {e:#}"), None))?;
-        Ok(CallToolResult::success(vec![Content::text(output)]))
-    }
-
-    #[tool(description = "Full-text search records using FTS5. Returns BM25-ranked results.")]
-    async fn search_records(
-        &self,
-        Parameters(params): Parameters<SearchRecordsParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("mutex poisoned: {e}"), None))?;
-        let entries = rightclaw::memory::store::search_memories(&conn, &params.query)
-            .map_err(|e| McpError::internal_error(format!("{e:#}"), None))?;
-        let json_values: Vec<serde_json::Value> = entries.iter().map(entry_to_json).collect();
-        let output = serde_json::to_string_pretty(&json_values)
-            .map_err(|e| McpError::internal_error(format!("serialization error: {e:#}"), None))?;
-        Ok(CallToolResult::success(vec![Content::text(output)]))
-    }
-
-    #[tool(description = "Soft-delete a record by ID. Entry is excluded from queries but preserved in audit log.")]
-    async fn delete_record(
-        &self,
-        Parameters(params): Parameters<DeleteRecordParams>,
-    ) -> Result<CallToolResult, McpError> {
-        let id = params.id;
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|e| McpError::internal_error(format!("mutex poisoned: {e}"), None))?;
-        match rightclaw::memory::store::forget_memory(
-            &conn,
-            id,
-            Some(self.agent_name.as_str()),
-        ) {
-            Ok(()) => Ok(CallToolResult::success(vec![Content::text(format!(
-                "deleted record id={id}"
-            ))])),
-            Err(rightclaw::memory::MemoryError::NotFound(_)) => Err(McpError::invalid_params(
-                format!("record id={id} not found or already deleted"),
-                None,
-            )),
-            Err(e) => Err(McpError::internal_error(format!("{e:#}"), None)),
         }
     }
 
@@ -497,11 +384,6 @@ impl rmcp::ServerHandler for MemoryServer {
             ))
             .with_instructions(
                 "RightClaw agent MCP server. CC exposes these tools with `mcp__right__` prefix.\n\n\
-                 ## Memory\n\
-                 - mcp__right__store_record: Store tagged records for persistent memory\n\
-                 - mcp__right__query_records: Query records by tag or keyword\n\
-                 - mcp__right__search_records: Full-text search with BM25 ranking\n\
-                 - mcp__right__delete_record: Soft-delete a record (preserves audit trail)\n\n\
                  ## Cron\n\
                  - mcp__right__cron_create: Create a new cron job spec\n\
                  - mcp__right__cron_update: Update an existing cron job spec (partial — only changed fields)\n\
@@ -516,17 +398,6 @@ impl rmcp::ServerHandler for MemoryServer {
                  - mcp__right__bootstrap_done: Signal onboarding completion. Verifies IDENTITY.md, SOUL.md, USER.md exist. Call AFTER creating all three files.",
             )
     }
-}
-
-/// Convert a MemoryEntry to a serde_json::Value for JSON output.
-pub(crate) fn entry_to_json(entry: &rightclaw::memory::store::MemoryEntry) -> serde_json::Value {
-    serde_json::json!({
-        "id": entry.id,
-        "content": entry.content,
-        "tags": entry.tags,
-        "stored_by": entry.stored_by,
-        "created_at": entry.created_at,
-    })
 }
 
 /// Convert a cron_runs row to JSON value.

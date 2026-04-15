@@ -28,11 +28,11 @@ fn create_agent_dir(agents_dir: &std::path::Path, name: &str) -> PathBuf {
 fn tools_list_returns_expected_count() {
     let (backend, _, _tmp) = make_backend();
     let tools = backend.tools_list();
-    // 4 memory + 7 cron + 1 mcp + 1 bootstrap = 13
+    // 7 cron + 1 mcp + 1 bootstrap = 9
     assert_eq!(
         tools.len(),
-        13,
-        "expected 13 tools, got {}: {:?}",
+        9,
+        "expected 9 tools, got {}: {:?}",
         tools.len(),
         tools.iter().map(|t| t.name.as_ref()).collect::<Vec<_>>()
     );
@@ -63,40 +63,6 @@ fn tools_list_all_have_descriptions() {
 }
 
 #[tokio::test]
-async fn store_and_query_roundtrip() {
-    let (backend, agents_dir, _tmp) = make_backend();
-    let agent_dir = create_agent_dir(&agents_dir, "test-agent");
-
-    // Store a record
-    let store_result = backend
-        .tools_call(
-            "test-agent",
-            &agent_dir,
-            "store_record",
-            json!({"content": "the sky is blue", "tags": "facts,sky"}),
-        )
-        .await
-        .expect("store_record should succeed");
-
-    let text = format!("{:?}", store_result);
-    assert!(text.contains("stored record id="), "got: {text}");
-
-    // Query it back
-    let query_result = backend
-        .tools_call(
-            "test-agent",
-            &agent_dir,
-            "query_records",
-            json!({"query": "sky"}),
-        )
-        .await
-        .expect("query_records should succeed");
-
-    let text = format!("{:?}", query_result);
-    assert!(text.contains("the sky is blue"), "got: {text}");
-}
-
-#[tokio::test]
 async fn unknown_tool_returns_error() {
     let (backend, agents_dir, _tmp) = make_backend();
     let agent_dir = create_agent_dir(&agents_dir, "test-agent");
@@ -113,46 +79,6 @@ async fn unknown_tool_returns_error() {
     assert!(result.is_err(), "unknown tool should return Err");
     let err_msg = format!("{:#}", result.unwrap_err());
     assert!(err_msg.contains("unknown tool"), "got: {err_msg}");
-}
-
-#[tokio::test]
-async fn store_and_delete_roundtrip() {
-    let (backend, agents_dir, _tmp) = make_backend();
-    let agent_dir = create_agent_dir(&agents_dir, "test-agent");
-
-    // Store
-    let store_result = backend
-        .tools_call(
-            "test-agent",
-            &agent_dir,
-            "store_record",
-            json!({"content": "temporary note"}),
-        )
-        .await
-        .expect("store should succeed");
-
-    // Extract ID from "stored record id=N"
-    let text = format!("{:?}", store_result);
-    let id_str = text
-        .split("stored record id=")
-        .nth(1)
-        .and_then(|s| s.split('"').next())
-        .expect("should contain id");
-    let id: i64 = id_str.parse().expect("id should be numeric");
-
-    // Delete
-    let delete_result = backend
-        .tools_call(
-            "test-agent",
-            &agent_dir,
-            "delete_record",
-            json!({"id": id}),
-        )
-        .await
-        .expect("delete should succeed");
-
-    let text = format!("{:?}", delete_result);
-    assert!(text.contains("deleted record"), "got: {text}");
 }
 
 #[tokio::test]
