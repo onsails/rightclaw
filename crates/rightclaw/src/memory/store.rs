@@ -209,8 +209,9 @@ pub fn forget_memory(
     id: i64,
     actor: Option<&str>,
 ) -> Result<(), MemoryError> {
-    // Verify the row exists and is not already deleted
-    let exists: bool = conn
+    let tx = conn.unchecked_transaction()?;
+    // Verify inside the transaction to avoid TOCTOU with concurrent connections.
+    let exists: bool = tx
         .query_row(
             "SELECT 1 FROM memories WHERE id = ?1 AND deleted_at IS NULL",
             [id],
@@ -221,7 +222,6 @@ pub fn forget_memory(
     if !exists {
         return Err(MemoryError::NotFound(id));
     }
-    let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE memories SET deleted_at = datetime('now') WHERE id = ?1",
         [id],
