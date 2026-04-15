@@ -1,14 +1,11 @@
 pub mod error;
 pub mod guard;
 pub mod hindsight;
+pub mod prefetch;
 pub mod store;
 pub(crate) mod migrations;
 
 pub use error::MemoryError;
-pub use store::{
-    forget_memory, hard_delete_memory, list_memories, recall_memories, search_memories,
-    search_memories_paged, store_memory, MemoryEntry,
-};
 
 /// Opens (or creates) the per-agent SQLite memory database at `agent_path/data.db`.
 ///

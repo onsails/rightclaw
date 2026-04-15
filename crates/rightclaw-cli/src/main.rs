@@ -2329,7 +2329,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let agent_dir = make_agent_dir(&tmp, "agent-skills");
 
-        rightclaw::codegen::install_builtin_skills(&agent_dir)
+        rightclaw::codegen::install_builtin_skills(&agent_dir, "file")
             .expect("install_builtin_skills should succeed");
 
         let skills_dir = agent_dir.join(".claude").join("skills");
@@ -2512,14 +2512,35 @@ fn cmd_memory_list(
     json: bool,
 ) -> miette::Result<()> {
     let conn = resolve_agent_db(home, agent)?;
-    let entries = rightclaw::memory::list_memories(&conn, limit, offset)
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, content, tags, stored_by, created_at \
+             FROM memories \
+             WHERE deleted_at IS NULL \
+             ORDER BY created_at DESC, id DESC \
+             LIMIT ?1 OFFSET ?2",
+        )
+        .map_err(|e| miette::miette!("failed to list memories: {e:#}"))?;
+    let entries: Vec<(i64, String, Option<String>, Option<String>, String)> = stmt
+        .query_map(rusqlite::params![limit, offset], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        })
+        .map_err(|e| miette::miette!("failed to list memories: {e:#}"))?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(|e| miette::miette!("failed to list memories: {e:#}"))?;
 
     if json {
-        for entry in &entries {
+        for (id, content, tags, stored_by, created_at) in &entries {
+            let obj = serde_json::json!({
+                "id": id,
+                "content": content,
+                "tags": tags,
+                "stored_by": stored_by,
+                "created_at": created_at,
+            });
             println!(
                 "{}",
-                serde_json::to_string(entry)
+                serde_json::to_string(&obj)
                     .map_err(|e| miette::miette!("JSON serialization failed: {e:#}"))?
             );
         }
@@ -2532,12 +2553,12 @@ fn cmd_memory_list(
     }
 
     println!("{:<6} {:<61} {:<20} CREATED_AT", "ID", "CONTENT", "STORED_BY");
-    for entry in &entries {
-        let truncated = truncate_content(&entry.content, 60);
-        let stored_by = entry.stored_by.as_deref().unwrap_or("(unknown)");
+    for (id, content, _tags, stored_by, created_at) in &entries {
+        let truncated = truncate_content(content, 60);
+        let stored_by = stored_by.as_deref().unwrap_or("(unknown)");
         println!(
             "{:<6} {:<61} {:<20} {}",
-            entry.id, truncated, stored_by, entry.created_at
+            id, truncated, stored_by, created_at
         );
     }
 
@@ -2610,20 +2631,46 @@ fn cmd_memory_search(
     json: bool,
 ) -> miette::Result<()> {
     let conn = resolve_agent_db(home, agent)?;
-    let entries = rightclaw::memory::search_memories_paged(&conn, query, limit, offset)
-        .map_err(|e| {
-            // FTS5 query syntax errors are common — give a helpful hint.
-            miette::miette!(
-                help = "FTS5 syntax: use simple words or phrases. Avoid special chars like * at start.",
-                "search failed: {e:#}"
-            )
-        })?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT m.id, m.content, m.tags, m.stored_by, m.created_at \
+             FROM memories m \
+             JOIN memories_fts f ON m.id = f.rowid \
+             WHERE memories_fts MATCH ?1 \
+               AND m.deleted_at IS NULL \
+             ORDER BY bm25(memories_fts) \
+             LIMIT ?2 OFFSET ?3",
+        )
+        .map_err(|e| miette::miette!(
+            help = "FTS5 syntax: use simple words or phrases. Avoid special chars like * at start.",
+            "search failed: {e:#}"
+        ))?;
+    let entries: Vec<(i64, String, Option<String>, Option<String>, String)> = stmt
+        .query_map(rusqlite::params![query, limit, offset], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        })
+        .map_err(|e| miette::miette!(
+            help = "FTS5 syntax: use simple words or phrases. Avoid special chars like * at start.",
+            "search failed: {e:#}"
+        ))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| miette::miette!(
+            help = "FTS5 syntax: use simple words or phrases. Avoid special chars like * at start.",
+            "search failed: {e:#}"
+        ))?;
 
     if json {
-        for entry in &entries {
+        for (id, content, tags, stored_by, created_at) in &entries {
+            let obj = serde_json::json!({
+                "id": id,
+                "content": content,
+                "tags": tags,
+                "stored_by": stored_by,
+                "created_at": created_at,
+            });
             println!(
                 "{}",
-                serde_json::to_string(entry)
+                serde_json::to_string(&obj)
                     .map_err(|e| miette::miette!("JSON serialization failed: {e:#}"))?
             );
         }
@@ -2636,12 +2683,12 @@ fn cmd_memory_search(
     }
 
     println!("{:<6} {:<61} {:<20} CREATED_AT", "ID", "CONTENT", "STORED_BY");
-    for entry in &entries {
-        let truncated = truncate_content(&entry.content, 60);
-        let stored_by = entry.stored_by.as_deref().unwrap_or("(unknown)");
+    for (id, content, _tags, stored_by, created_at) in &entries {
+        let truncated = truncate_content(content, 60);
+        let stored_by = stored_by.as_deref().unwrap_or("(unknown)");
         println!(
             "{:<6} {:<61} {:<20} {}",
-            entry.id, truncated, stored_by, entry.created_at
+            id, truncated, stored_by, created_at
         );
     }
 
@@ -2698,12 +2745,12 @@ fn cmd_memory_delete(home: &Path, agent: &str, id: i64) -> miette::Result<()> {
         return Ok(());
     }
 
-    rightclaw::memory::hard_delete_memory(&conn, id).map_err(|e| match e {
-        rightclaw::memory::MemoryError::NotFound(n) => {
-            miette::miette!("memory entry {n} not found for agent '{agent}'")
-        }
-        other => miette::miette!("failed to delete memory: {other:#}"),
-    })?;
+    let deleted = conn
+        .execute("DELETE FROM memories WHERE id = ?1", [id])
+        .map_err(|e| miette::miette!("failed to delete memory: {e:#}"))?;
+    if deleted == 0 {
+        return Err(miette::miette!("memory entry {id} not found for agent '{agent}'"));
+    }
 
     println!("Deleted memory entry {id}.");
     Ok(())
