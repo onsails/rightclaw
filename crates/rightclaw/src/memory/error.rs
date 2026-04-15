@@ -12,4 +12,10 @@ pub enum MemoryError {
 
     #[error("memory not found: id {0}")]
     NotFound(i64),
+
+    #[error("hindsight API error (HTTP {status}): {body}")]
+    Hindsight { status: u16, body: String },
+
+    #[error("hindsight request failed: {0}")]
+    HindsightRequest(String),
 }
