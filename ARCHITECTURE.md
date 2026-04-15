@@ -162,7 +162,7 @@ rightclaw down
 
 ### OpenShell Sandbox Architecture
 
-Sandboxes are **persistent** — never deleted automatically. Survive bot restarts.
+Sandboxes are **persistent** — never deleted automatically. They live as long as the agent lives and survive bot restarts.
 
 ```
 Bot startup:
@@ -303,8 +303,10 @@ args manually.
 ### Stream Logging
 
 CC is invoked with `--verbose --output-format stream-json`. Worker reads stdout
-line-by-line via `tokio::io::AsyncBufReadExt`. Each event is written to a per-session
-NDJSON log at `~/.rightclaw/logs/streams/<session-uuid>.ndjson`.
+line-by-line via `tokio::io::AsyncBufReadExt`. For cron jobs, stdout is tee'd into
+an NDJSON log inside the sandbox at `/sandbox/crons/logs/{job_name}-{run_id}.ndjson`
+(agents can read these directly via `Read`). Per-job retention keeps the last 10 logs.
+Worker sessions do not write stream logs.
 
 When `show_thinking: true` (default), a live thinking message in Telegram shows
 the last 5 events (tool calls, text) with turn counter and cost. Updated every 2s
