@@ -18,14 +18,7 @@ pub use store::{
 /// Only the MCP aggregator should pass `migrate: true`. Bot processes must
 /// pass `migrate: false` — they depend on the aggregator starting first.
 pub fn open_db(agent_path: &std::path::Path, migrate: bool) -> Result<(), MemoryError> {
-    let db_path = agent_path.join("data.db");
-    let mut conn = rusqlite::Connection::open(&db_path)?;
-    conn.pragma_update(None, "journal_mode", "WAL")?;
-    conn.pragma_update(None, "busy_timeout", 5000)?;
-    if migrate {
-        migrations::MIGRATIONS.to_latest(&mut conn)?;
-    }
-    Ok(())
+    open_connection(agent_path, migrate).map(drop)
 }
 
 /// Opens (or creates) the per-agent SQLite memory database and returns the live connection.
