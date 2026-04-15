@@ -101,11 +101,142 @@ pub(crate) fn split_prefix(tool_name: &str) -> Option<(&str, &str)> {
     tool_name.split_once("__")
 }
 
+/// MCP backend for Hindsight memory tools.
+pub(crate) struct HindsightBackend {
+    client: rightclaw::memory::hindsight::HindsightClient,
+}
+
+impl HindsightBackend {
+    pub fn new(client: rightclaw::memory::hindsight::HindsightClient) -> Self {
+        Self { client }
+    }
+
+    /// Convert a `serde_json::Value::Object` into a `serde_json::Map` for `Tool::new`.
+    fn json_map(v: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        match v {
+            serde_json::Value::Object(m) => m,
+            _ => unreachable!("expected JSON object"),
+        }
+    }
+
+    pub fn tools_list() -> Vec<Tool> {
+        vec![
+            Tool::new(
+                "memory_retain",
+                "Store information to long-term memory. Hindsight automatically extracts \
+                 structured facts, resolves entities, and indexes for retrieval.",
+                Self::json_map(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "content": {
+                            "type": "string",
+                            "description": "The information to store."
+                        },
+                        "context": {
+                            "type": "string",
+                            "description": "Short label (e.g. 'user preference', 'api format', 'mistake to avoid')."
+                        }
+                    },
+                    "required": ["content"]
+                })),
+            ),
+            Tool::new(
+                "memory_recall",
+                "Search long-term memory. Returns memories ranked by relevance using \
+                 semantic search, keyword matching, entity graph traversal, and reranking.",
+                Self::json_map(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "What to search for."
+                        }
+                    },
+                    "required": ["query"]
+                })),
+            ),
+            Tool::new(
+                "memory_reflect",
+                "Synthesize a reasoned answer from long-term memories. Unlike recall, \
+                 this reasons across all stored memories to produce a coherent response.",
+                Self::json_map(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "The question to reflect on."
+                        }
+                    },
+                    "required": ["query"]
+                })),
+            ),
+        ]
+    }
+
+    pub async fn tools_call(
+        &self,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> Result<CallToolResult, anyhow::Error> {
+        match tool_name {
+            "memory_retain" => {
+                let content = args["content"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing required param: content"))?;
+                let context = args["context"].as_str();
+                let result = self
+                    .client
+                    .retain(content, context)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e:#}"))?;
+                let json = serde_json::json!({
+                    "status": "accepted",
+                    "operation_id": result.operation_id,
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&json)?,
+                )]))
+            }
+            "memory_recall" => {
+                let query = args["query"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing required param: query"))?;
+                let results = self
+                    .client
+                    .recall(query)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e:#}"))?;
+                let json = serde_json::json!({ "results": results });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&json)?,
+                )]))
+            }
+            "memory_reflect" => {
+                let query = args["query"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing required param: query"))?;
+                let result = self
+                    .client
+                    .reflect(query)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e:#}"))?;
+                let json = serde_json::json!({ "text": result.text });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&json)?,
+                )]))
+            }
+            other => bail!("unknown hindsight tool: {other}"),
+        }
+    }
+}
+
 /// Per-agent backend management: built-in tools + external proxy backends.
 pub(crate) struct BackendRegistry {
     pub right: RightBackend,
     pub proxies: Arc<tokio::sync::RwLock<HashMap<String, Arc<ProxyBackend>>>>,
     pub agent_dir: PathBuf,
+    /// Hindsight memory backend (present only when agent has memory.provider=hindsight).
+    pub hindsight: Option<Arc<HindsightBackend>>,
 }
 
 impl BackendRegistry {
@@ -191,7 +322,15 @@ impl ToolDispatcher {
 
         match split_prefix(tool_name) {
             None => {
-                // Unprefixed → RightBackend
+                // Unprefixed → check if it's a hindsight tool first, then RightBackend
+                if let Some(ref hs) = registry.hindsight {
+                    if matches!(
+                        tool_name,
+                        "memory_retain" | "memory_recall" | "memory_reflect"
+                    ) {
+                        return hs.tools_call(tool_name, args).await;
+                    }
+                }
                 registry
                     .right
                     .tools_call(agent_name, &registry.agent_dir, tool_name, args)
@@ -215,6 +354,11 @@ impl ToolDispatcher {
         };
 
         let mut tools = registry.right.tools_list();
+
+        // Add hindsight memory tools if configured
+        if registry.hindsight.is_some() {
+            tools.extend(HindsightBackend::tools_list());
+        }
 
         // Add rightmeta__mcp_list
         tools.push(BackendRegistry::mcp_list_tool_def());
@@ -292,7 +436,11 @@ impl rmcp::ServerHandler for Aggregator {
             .with_server_info(Implementation::new("rightclaw", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "RightClaw MCP Aggregator — routes tool calls to built-in RightClaw tools \
-                 and connected external MCP servers via prefix-based dispatch.",
+                 and connected external MCP servers via prefix-based dispatch.\n\n\
+                 Memory tools (when Hindsight is configured):\n\
+                 - memory_retain: Store facts to long-term memory\n\
+                 - memory_recall: Search memory by relevance\n\
+                 - memory_reflect: Synthesize reasoned answers from memory",
             )
     }
 
@@ -432,6 +580,7 @@ mod tests {
             right,
             proxies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             agent_dir,
+            hindsight: None,
         }
     }
 

@@ -73,6 +73,7 @@ mod tests {
             secret: None,
             attachments: Default::default(),
             show_thinking: true,
+            memory: None,
         }
     }
 

@@ -5,17 +5,26 @@ use include_dir::{Dir, include_dir};
 const SKILL_RIGHTSKILLS: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../skills/rightskills");
 const SKILL_RIGHTCRON: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../skills/rightcron");
 const SKILL_RIGHTMCP: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../skills/rightmcp");
+const SKILL_RIGHTMEMORY_FILE: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../skills/rightmemory-file");
+const SKILL_RIGHTMEMORY_HINDSIGHT: Dir =
+    include_dir!("$CARGO_MANIFEST_DIR/../../skills/rightmemory-hindsight");
 
 /// Install RightClaw built-in skills into an agent's `.claude/skills/` directory.
 ///
 /// Writes all files from each embedded skill directory (SKILL.md, YAML configs, etc.).
 /// Always overwrites — ensures agents get the latest built-in skill content after upgrades.
 /// Only writes to named built-in paths; other directories under `.claude/skills/` are untouched.
-pub fn install_builtin_skills(agent_path: &Path) -> miette::Result<()> {
+pub fn install_builtin_skills(agent_path: &Path, memory_provider: &str) -> miette::Result<()> {
+    let rightmemory_dir: &Dir = if memory_provider == "hindsight" {
+        &SKILL_RIGHTMEMORY_HINDSIGHT
+    } else {
+        &SKILL_RIGHTMEMORY_FILE
+    };
     let skills: &[(&str, &Dir)] = &[
         ("rightskills", &SKILL_RIGHTSKILLS),
         ("rightcron", &SKILL_RIGHTCRON),
         ("rightmcp", &SKILL_RIGHTMCP),
+        ("rightmemory", rightmemory_dir),
     ];
     let claude_skills_dir = agent_path.join(".claude").join("skills");
 
@@ -58,7 +67,7 @@ mod tests {
     #[test]
     fn installs_skills_skill() {
         let dir = tempdir().unwrap();
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
         assert!(
             dir.path().join(".claude/skills/rightskills/SKILL.md").exists(),
             "rightskills/SKILL.md should exist"
@@ -68,7 +77,7 @@ mod tests {
     #[test]
     fn installs_rightcron_skill() {
         let dir = tempdir().unwrap();
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
         assert!(
             dir.path().join(".claude/skills/rightcron/SKILL.md").exists(),
             "rightcron/SKILL.md should exist"
@@ -78,7 +87,7 @@ mod tests {
     #[test]
     fn installs_rightmcp_skill() {
         let dir = tempdir().unwrap();
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
         assert!(
             dir.path().join(".claude/skills/rightmcp/SKILL.md").exists(),
             "rightmcp/SKILL.md should exist"
@@ -88,7 +97,7 @@ mod tests {
     #[test]
     fn rightmcp_includes_known_endpoints_yaml() {
         let dir = tempdir().unwrap();
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
         let yaml_path = dir.path().join(".claude/skills/rightmcp/known-endpoints.yaml");
         assert!(yaml_path.exists(), "known-endpoints.yaml should exist");
         let content = std::fs::read_to_string(&yaml_path).unwrap();
@@ -101,7 +110,7 @@ mod tests {
     #[test]
     fn installs_installed_json() {
         let dir = tempdir().unwrap();
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
         let content =
             std::fs::read_to_string(dir.path().join(".claude/skills/installed.json")).unwrap();
         assert_eq!(content, "{}");
@@ -110,9 +119,9 @@ mod tests {
     #[test]
     fn install_is_idempotent() {
         let dir = tempdir().unwrap();
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
         // Second call must not error
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
         assert!(dir.path().join(".claude/skills/rightskills/SKILL.md").exists());
         assert!(dir.path().join(".claude/skills/rightcron/SKILL.md").exists());
     }
@@ -120,14 +129,14 @@ mod tests {
     #[test]
     fn installed_json_preserves_existing_content() {
         let dir = tempdir().unwrap();
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
 
         // Simulate user installing a skill (modifies installed.json)
         let installed_path = dir.path().join(".claude/skills/installed.json");
         std::fs::write(&installed_path, r#"{"my-skill":"1.0"}"#).unwrap();
 
         // Second call must NOT overwrite
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
 
         let content = std::fs::read_to_string(&installed_path).unwrap();
         assert_eq!(
@@ -142,7 +151,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let installed_path = dir.path().join(".claude/skills/installed.json");
         assert!(!installed_path.exists(), "should not exist before first call");
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
         let content = std::fs::read_to_string(&installed_path).unwrap();
         assert_eq!(content, "{}", "first call should create installed.json with empty object");
     }
@@ -155,7 +164,7 @@ mod tests {
         std::fs::create_dir_all(&user_skill_dir).unwrap();
         std::fs::write(user_skill_dir.join("SKILL.md"), "my custom skill").unwrap();
 
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
 
         assert!(
             dir.path()
@@ -170,13 +179,20 @@ mod tests {
     #[test]
     fn all_source_skill_files_are_installed() {
         let dir = tempdir().unwrap();
-        install_builtin_skills(dir.path()).unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
 
-        for skill_name in &["rightskills", "rightcron", "rightmcp"] {
+        // (source_dir_name, installed_dir_name)
+        let skills: &[(&str, &str)] = &[
+            ("rightskills", "rightskills"),
+            ("rightcron", "rightcron"),
+            ("rightmcp", "rightmcp"),
+            ("rightmemory-file", "rightmemory"),
+        ];
+        for (source_name, installed_name) in skills {
             let source_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../skills")
-                .join(skill_name);
-            let target_dir = dir.path().join(".claude/skills").join(skill_name);
+                .join(source_name);
+            let target_dir = dir.path().join(".claude/skills").join(installed_name);
 
             for entry in walkdir::WalkDir::new(&source_dir) {
                 let entry = entry.unwrap();
@@ -187,10 +203,46 @@ mod tests {
                 let installed = target_dir.join(rel);
                 assert!(
                     installed.exists(),
-                    "skill file {skill_name}/{} not installed",
+                    "skill file {source_name}/{} not installed at {installed_name}/",
                     rel.display()
                 );
             }
         }
+    }
+
+    #[test]
+    fn installs_rightmemory_file_variant() {
+        let dir = tempdir().unwrap();
+        install_builtin_skills(dir.path(), "file").unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join(".claude/skills/rightmemory/SKILL.md"),
+        )
+        .unwrap();
+        assert!(
+            content.contains("MEMORY.md"),
+            "file variant must reference MEMORY.md"
+        );
+        assert!(
+            !content.contains("memory_retain"),
+            "file variant must NOT reference MCP tools"
+        );
+    }
+
+    #[test]
+    fn installs_rightmemory_hindsight_variant() {
+        let dir = tempdir().unwrap();
+        install_builtin_skills(dir.path(), "hindsight").unwrap();
+        let content = std::fs::read_to_string(
+            dir.path().join(".claude/skills/rightmemory/SKILL.md"),
+        )
+        .unwrap();
+        assert!(
+            content.contains("memory_retain"),
+            "hindsight variant must reference MCP tools"
+        );
+        assert!(
+            !content.contains("Edit and Write tools to manage MEMORY.md"),
+            "hindsight variant must NOT reference Edit/Write for MEMORY.md"
+        );
     }
 }

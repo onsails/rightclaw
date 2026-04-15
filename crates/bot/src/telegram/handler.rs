@@ -82,6 +82,10 @@ pub struct AgentSettings {
     pub model: Option<String>,
     /// Resolved sandbox name (None when running without sandbox).
     pub resolved_sandbox: Option<String>,
+    /// Hindsight memory client (None when using file-based memory).
+    pub hindsight: Option<std::sync::Arc<rightclaw::memory::hindsight::HindsightClient>>,
+    /// Prefetch cache for Hindsight recall results.
+    pub prefetch_cache: Option<rightclaw::memory::prefetch::PrefetchCache>,
 }
 
 /// Convert an arbitrary error into `RequestError::Io` so it propagates through `ResponseResult`.
@@ -220,6 +224,8 @@ pub async fn handle_message(
                     stop_tokens: Arc::clone(&stop_tokens),
                     idle_timestamp: Arc::clone(&idle_ts.0),
                     internal_client: Arc::clone(&internal_api.0),
+                    hindsight: settings.hindsight.clone(),
+                    prefetch_cache: settings.prefetch_cache.clone(),
                 };
                 let tx = spawn_worker(key, ctx, Arc::clone(&worker_map));
                 worker_map.insert(key, tx.clone());

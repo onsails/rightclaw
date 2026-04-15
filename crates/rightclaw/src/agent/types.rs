@@ -119,6 +119,71 @@ impl Default for SandboxConfig {
     }
 }
 
+/// Memory provider for an agent.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryProvider {
+    /// File-based memory (MEMORY.md) — default.
+    #[default]
+    File,
+    /// Hindsight Cloud API.
+    Hindsight,
+}
+
+/// Recall budget level (maps to Hindsight API budget parameter).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecallBudget {
+    Low,
+    #[default]
+    Mid,
+    High,
+}
+
+impl std::fmt::Display for RecallBudget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecallBudget::Low => write!(f, "low"),
+            RecallBudget::Mid => write!(f, "mid"),
+            RecallBudget::High => write!(f, "high"),
+        }
+    }
+}
+
+fn default_recall_max_tokens() -> u32 {
+    4096
+}
+
+/// Memory configuration for an agent.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MemoryConfig {
+    /// Which memory backend to use.
+    #[serde(default)]
+    pub provider: MemoryProvider,
+    /// Hindsight API key (required when provider=hindsight).
+    pub api_key: Option<String>,
+    /// Memory bank ID (defaults to agent name).
+    pub bank_id: Option<String>,
+    /// Recall budget level.
+    #[serde(default)]
+    pub recall_budget: RecallBudget,
+    /// Maximum tokens for recall results.
+    #[serde(default = "default_recall_max_tokens")]
+    pub recall_max_tokens: u32,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            provider: MemoryProvider::default(),
+            api_key: None,
+            bank_id: None,
+            recall_budget: RecallBudget::default(),
+            recall_max_tokens: default_recall_max_tokens(),
+        }
+    }
+}
+
 /// Parsed `agent.yaml` configuration for a single agent.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +236,10 @@ pub struct AgentConfig {
     /// Show live thinking indicator in Telegram during CC execution.
     #[serde(default = "default_show_thinking")]
     pub show_thinking: bool,
+
+    /// Memory configuration (optional — defaults to file-based MEMORY.md).
+    #[serde(default)]
+    pub memory: Option<MemoryConfig>,
 }
 
 impl Default for AgentConfig {
@@ -188,6 +257,7 @@ impl Default for AgentConfig {
             secret: None,
             attachments: AttachmentsConfig::default(),
             show_thinking: default_show_thinking(),
+            memory: None,
         }
     }
 }

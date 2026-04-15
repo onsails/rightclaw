@@ -557,10 +557,36 @@ async fn main() -> miette::Result<()> {
                 let proxies_snapshot: Vec<(String, std::sync::Arc<rightclaw::mcp::proxy::ProxyBackend>)> =
                     proxies.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
+                // Wire up HindsightBackend if memory provider is configured.
+                let hindsight = match rightclaw::agent::discovery::parse_agent_config(&agent_dir) {
+                    Ok(Some(ref agent_config)) => {
+                        if let Some(ref mem_config) = agent_config.memory {
+                            if mem_config.provider == rightclaw::agent::types::MemoryProvider::Hindsight {
+                                if let Some(ref api_key) = mem_config.api_key {
+                                    let bank_id = mem_config.bank_id.as_deref().unwrap_or(agent_name.as_str());
+                                    let budget = mem_config.recall_budget.to_string();
+                                    let client = rightclaw::memory::hindsight::HindsightClient::new(
+                                        api_key, bank_id, &budget, mem_config.recall_max_tokens, None,
+                                    );
+                                    Some(std::sync::Arc::new(aggregator::HindsightBackend::new(client)))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+
                 let registry = aggregator::BackendRegistry {
                     right,
                     proxies: std::sync::Arc::new(tokio::sync::RwLock::new(proxies)),
                     agent_dir: agent_dir.clone(),
+                    hindsight,
                 };
                 dispatcher.agents.insert(agent_name.clone(), registry);
 
@@ -1007,6 +1033,13 @@ fn cmd_agent_init(
             allowed_chat_ids: config.allowed_chat_ids,
             model: config.model,
             env: config.env,
+            memory_provider: config
+                .memory
+                .as_ref()
+                .map(|m| m.provider.clone())
+                .unwrap_or_default(),
+            memory_api_key: config.memory.as_ref().and_then(|m| m.api_key.clone()),
+            memory_bank_id: config.memory.as_ref().and_then(|m| m.bank_id.clone()),
         }
     } else {
         // Fresh init: optionally restore from backup or run wizard.
@@ -1073,6 +1106,9 @@ fn cmd_agent_init(
             allowed_chat_ids: chat_ids,
             model: None,
             env: std::collections::HashMap::new(),
+            memory_provider: rightclaw::agent::types::MemoryProvider::File,
+            memory_api_key: None,
+            memory_bank_id: None,
         }
     };
 

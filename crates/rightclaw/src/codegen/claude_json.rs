@@ -147,6 +147,7 @@ mod tests {
                 secret: None,
                 attachments: Default::default(),
                 show_thinking: true,
+                memory: None,
             }),
             soul_path: None,
             user_path: None,
