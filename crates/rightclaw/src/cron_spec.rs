@@ -2,13 +2,41 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 
+use chrono::{DateTime, Utc};
+
 /// Default budget cap per cron invocation (USD).
 pub const DEFAULT_CRON_BUDGET_USD: f64 = 2.0;
+
+/// How a cron job is scheduled.
+#[derive(Debug, Clone)]
+pub enum ScheduleKind {
+    /// 5-field cron expression, fires repeatedly.
+    Recurring(String),
+    /// 5-field cron expression, fires once then auto-deletes.
+    OneShotCron(String),
+    /// Absolute UTC time, fires once then auto-deletes.
+    RunAt(DateTime<Utc>),
+}
+
+impl ScheduleKind {
+    /// Extract the cron schedule string, if this is a cron-based variant.
+    pub fn cron_schedule(&self) -> Option<&str> {
+        match self {
+            Self::Recurring(s) | Self::OneShotCron(s) => Some(s),
+            Self::RunAt(_) => None,
+        }
+    }
+
+    /// Whether this is a one-shot job (fires once then deletes).
+    pub fn is_one_shot(&self) -> bool {
+        matches!(self, Self::OneShotCron(_) | Self::RunAt(_))
+    }
+}
 
 /// A cron job specification loaded from the database.
 #[derive(Debug, Clone)]
 pub struct CronSpec {
-    pub schedule: String,
+    pub schedule_kind: ScheduleKind,
     pub prompt: String,
     pub lock_ttl: Option<String>,
     pub max_budget_usd: f64,
@@ -21,10 +49,21 @@ pub struct CronSpec {
 /// trigger because the in-memory snapshot differs from the DB snapshot.
 impl PartialEq for CronSpec {
     fn eq(&self, other: &Self) -> bool {
-        self.schedule == other.schedule
+        self.schedule_kind_eq(&other.schedule_kind)
             && self.prompt == other.prompt
             && self.lock_ttl == other.lock_ttl
             && self.max_budget_usd == other.max_budget_usd
+    }
+}
+
+impl CronSpec {
+    fn schedule_kind_eq(&self, other: &ScheduleKind) -> bool {
+        match (&self.schedule_kind, other) {
+            (ScheduleKind::Recurring(a), ScheduleKind::Recurring(b)) => a == b,
+            (ScheduleKind::OneShotCron(a), ScheduleKind::OneShotCron(b)) => a == b,
+            (ScheduleKind::RunAt(a), ScheduleKind::RunAt(b)) => a == b,
+            _ => false,
+        }
     }
 }
 
@@ -122,6 +161,34 @@ fn validate_spec_inputs(
     Ok(schedule_warning)
 }
 
+/// Resolve schedule/recurring/run_at into DB column values.
+///
+/// Returns `(schedule_str, recurring_int, run_at_str, optional_warning)`.
+fn resolve_schedule_fields(
+    schedule: Option<&str>,
+    recurring: Option<bool>,
+    run_at: Option<&str>,
+) -> Result<(String, i64, Option<String>, Option<String>), String> {
+    match (schedule, run_at) {
+        (Some(_), Some(_)) => {
+            Err("schedule and run_at are mutually exclusive — provide one or the other".into())
+        }
+        (None, None) => {
+            Err("one of schedule or run_at must be provided".into())
+        }
+        (Some(sched), None) => {
+            let warning = validate_schedule(sched)?;
+            let rec = if recurring.unwrap_or(true) { 1 } else { 0 };
+            Ok((sched.to_string(), rec, None, warning))
+        }
+        (None, Some(rat)) => {
+            rat.parse::<DateTime<Utc>>()
+                .map_err(|e| format!("invalid run_at datetime '{rat}': {e}"))?;
+            Ok(("".to_string(), 0, Some(rat.to_string()), None))
+        }
+    }
+}
+
 /// Insert a new cron spec into DB. Returns error message if job exists.
 pub fn create_spec(
     conn: &rusqlite::Connection,
@@ -139,6 +206,58 @@ pub fn create_spec(
         "INSERT INTO cron_specs (job_name, schedule, prompt, lock_ttl, max_budget_usd, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![job_name, schedule, prompt, lock_ttl, budget, now, now],
+    );
+
+    match result {
+        Ok(_) => Ok(CronSpecResult {
+            message: format!("Created cron job '{job_name}'."),
+            warning: schedule_warning,
+        }),
+        Err(rusqlite::Error::SqliteFailure(err, _))
+            if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation =>
+        {
+            Err(format!("job '{job_name}' already exists"))
+        }
+        Err(e) => Err(format!("insert failed: {e:#}")),
+    }
+}
+
+/// Create a cron spec with one-shot support.
+///
+/// Exactly one of `schedule`/`run_at` must be provided.
+/// `run_at` implies `recurring=false`.
+pub fn create_spec_v2(
+    conn: &rusqlite::Connection,
+    job_name: &str,
+    schedule: Option<&str>,
+    prompt: &str,
+    lock_ttl: Option<&str>,
+    max_budget_usd: Option<f64>,
+    recurring: Option<bool>,
+    run_at: Option<&str>,
+) -> Result<CronSpecResult, String> {
+    validate_job_name(job_name)?;
+    if prompt.trim().is_empty() {
+        return Err("prompt must not be empty".into());
+    }
+    if let Some(ttl) = lock_ttl {
+        validate_lock_ttl(ttl)?;
+    }
+    if let Some(budget) = max_budget_usd {
+        if budget <= 0.0 {
+            return Err("max_budget_usd must be greater than 0".into());
+        }
+    }
+
+    let (db_schedule, db_recurring, db_run_at, schedule_warning) =
+        resolve_schedule_fields(schedule, recurring, run_at)?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let budget = max_budget_usd.unwrap_or(DEFAULT_CRON_BUDGET_USD);
+    let result = conn.execute(
+        "INSERT INTO cron_specs (job_name, schedule, prompt, lock_ttl, max_budget_usd, recurring, run_at, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![job_name, db_schedule, prompt, lock_ttl, budget, db_recurring, db_run_at, now, now],
     );
 
     match result {
@@ -186,6 +305,119 @@ pub fn update_spec(
     })
 }
 
+/// Update a cron spec partially — only provided fields are changed.
+///
+/// - `schedule` set → clears `run_at`, sets `recurring` (default true if not provided)
+/// - `run_at` set → clears `schedule`, forces `recurring=false`
+/// - Both set → error
+/// - No fields → error
+pub fn update_spec_partial(
+    conn: &rusqlite::Connection,
+    job_name: &str,
+    schedule: Option<&str>,
+    run_at: Option<&str>,
+    prompt: Option<&str>,
+    recurring: Option<bool>,
+    lock_ttl: Option<&str>,
+    max_budget_usd: Option<f64>,
+) -> Result<CronSpecResult, String> {
+    validate_job_name(job_name)?;
+
+    if schedule.is_none()
+        && run_at.is_none()
+        && prompt.is_none()
+        && recurring.is_none()
+        && lock_ttl.is_none()
+        && max_budget_usd.is_none()
+    {
+        return Err("at least one field must be provided to update".into());
+    }
+
+    if schedule.is_some() && run_at.is_some() {
+        return Err("schedule and run_at are mutually exclusive — provide one or the other".into());
+    }
+
+    let mut schedule_warning = None;
+    if let Some(sched) = schedule {
+        schedule_warning = validate_schedule(sched)?;
+    }
+    if let Some(rat) = run_at {
+        rat.parse::<DateTime<Utc>>()
+            .map_err(|e| format!("invalid run_at datetime '{rat}': {e}"))?;
+    }
+    if let Some(p) = prompt {
+        if p.trim().is_empty() {
+            return Err("prompt must not be empty".into());
+        }
+    }
+    if let Some(ttl) = lock_ttl {
+        validate_lock_ttl(ttl)?;
+    }
+    if let Some(budget) = max_budget_usd {
+        if budget <= 0.0 {
+            return Err("max_budget_usd must be greater than 0".into());
+        }
+    }
+
+    // Build dynamic UPDATE
+    let mut sets = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    if let Some(sched) = schedule {
+        sets.push("schedule = ?");
+        params.push(Box::new(sched.to_string()));
+        sets.push("run_at = NULL");
+        let rec = if recurring.unwrap_or(true) { 1i64 } else { 0i64 };
+        sets.push("recurring = ?");
+        params.push(Box::new(rec));
+    } else if let Some(rat) = run_at {
+        sets.push("run_at = ?");
+        params.push(Box::new(rat.to_string()));
+        sets.push("schedule = ''");
+        sets.push("recurring = 0");
+    } else if let Some(rec) = recurring {
+        sets.push("recurring = ?");
+        params.push(Box::new(if rec { 1i64 } else { 0i64 }));
+    }
+
+    if let Some(p) = prompt {
+        sets.push("prompt = ?");
+        params.push(Box::new(p.to_string()));
+    }
+    if let Some(ttl) = lock_ttl {
+        sets.push("lock_ttl = ?");
+        params.push(Box::new(ttl.to_string()));
+    }
+    if let Some(budget) = max_budget_usd {
+        sets.push("max_budget_usd = ?");
+        params.push(Box::new(budget));
+    }
+
+    sets.push("updated_at = ?");
+    params.push(Box::new(chrono::Utc::now().to_rfc3339()));
+
+    params.push(Box::new(job_name.to_string()));
+
+    let sql = format!(
+        "UPDATE cron_specs SET {} WHERE job_name = ?",
+        sets.join(", ")
+    );
+
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = conn
+        .execute(&sql, param_refs.as_slice())
+        .map_err(|e| format!("update failed: {e:#}"))?;
+
+    if rows == 0 {
+        return Err(format!("job '{job_name}' not found"));
+    }
+
+    Ok(CronSpecResult {
+        message: format!("Updated cron job '{job_name}'."),
+        warning: schedule_warning,
+    })
+}
+
 /// Delete a cron spec and its lock file. Returns error if not found.
 pub fn delete_spec(
     conn: &rusqlite::Connection,
@@ -221,7 +453,7 @@ pub fn delete_spec(
 pub fn list_specs(conn: &rusqlite::Connection) -> Result<String, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT job_name, schedule, prompt, lock_ttl, max_budget_usd, created_at, updated_at \
+            "SELECT job_name, schedule, prompt, lock_ttl, max_budget_usd, created_at, updated_at, recurring, run_at \
              FROM cron_specs ORDER BY job_name",
         )
         .map_err(|e| format!("prepare failed: {e:#}"))?;
@@ -235,6 +467,8 @@ pub fn list_specs(conn: &rusqlite::Connection) -> Result<String, String> {
                 "max_budget_usd": row.get::<_, f64>(4)?,
                 "created_at": row.get::<_, String>(5)?,
                 "updated_at": row.get::<_, String>(6)?,
+                "recurring": row.get::<_, i64>(7)? != 0,
+                "run_at": row.get::<_, Option<String>>(8)?,
             }))
         })
         .map_err(|e| format!("query failed: {e:#}"))?
@@ -261,7 +495,7 @@ pub fn load_specs_from_db(
 ) -> Result<HashMap<String, CronSpec>, rusqlite::Error> {
     let mut specs = HashMap::new();
     let mut stmt = conn.prepare(
-        "SELECT job_name, schedule, prompt, lock_ttl, max_budget_usd, triggered_at FROM cron_specs",
+        "SELECT job_name, schedule, prompt, lock_ttl, max_budget_usd, triggered_at, recurring, run_at FROM cron_specs",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -272,20 +506,35 @@ pub fn load_specs_from_db(
             row.get::<_, Option<String>>(3)?,
             row.get::<_, f64>(4)?,
             row.get::<_, Option<String>>(5)?,
+            row.get::<_, i64>(6)?,
+            row.get::<_, Option<String>>(7)?,
         ))
     })?;
 
     for row in rows {
-        let (job_name, schedule, prompt, lock_ttl, max_budget_usd, triggered_at) = row?;
+        let (job_name, schedule, prompt, lock_ttl, max_budget_usd, triggered_at, recurring, run_at) = row?;
 
-        if let Ok(Some(warning)) = validate_schedule(&schedule) {
-            tracing::warn!(job = %job_name, "{warning}");
-        }
+        let schedule_kind = if let Some(ref rat) = run_at {
+            match rat.parse::<DateTime<Utc>>() {
+                Ok(dt) => ScheduleKind::RunAt(dt),
+                Err(e) => {
+                    tracing::error!(job = %job_name, "invalid run_at in DB: {e:#}");
+                    continue;
+                }
+            }
+        } else if recurring == 0 {
+            ScheduleKind::OneShotCron(schedule)
+        } else {
+            if let Ok(Some(warning)) = validate_schedule(&schedule) {
+                tracing::warn!(job = %job_name, "{warning}");
+            }
+            ScheduleKind::Recurring(schedule)
+        };
 
         specs.insert(
             job_name,
             CronSpec {
-                schedule,
+                schedule_kind,
                 prompt,
                 lock_ttl,
                 max_budget_usd,
@@ -344,6 +593,8 @@ pub struct CronSpecDetail {
     pub triggered_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub recurring: bool,
+    pub run_at: Option<String>,
 }
 
 /// Fetch full detail for a single cron spec by name.
@@ -352,7 +603,7 @@ pub fn get_spec_detail(
     job_name: &str,
 ) -> Result<Option<CronSpecDetail>, String> {
     let result = conn.query_row(
-        "SELECT job_name, schedule, prompt, lock_ttl, max_budget_usd, triggered_at, created_at, updated_at \
+        "SELECT job_name, schedule, prompt, lock_ttl, max_budget_usd, triggered_at, created_at, updated_at, recurring, run_at \
          FROM cron_specs WHERE job_name = ?1",
         rusqlite::params![job_name],
         |row| {
@@ -365,6 +616,8 @@ pub fn get_spec_detail(
                 triggered_at: row.get(5)?,
                 created_at: row.get(6)?,
                 updated_at: row.get(7)?,
+                recurring: row.get::<_, i64>(8)? != 0,
+                run_at: row.get(9)?,
             })
         },
     );
@@ -614,7 +867,7 @@ mod tests {
         .unwrap();
         let specs = load_specs_from_db(&conn).unwrap();
         assert_eq!(specs.len(), 2);
-        assert_eq!(specs["job1"].schedule, "*/5 * * * *");
+        assert_eq!(specs["job1"].schedule_kind.cron_schedule().unwrap(), "*/5 * * * *");
         assert_eq!(specs["job1"].max_budget_usd, 0.5);
         assert_eq!(specs["job2"].lock_ttl.as_deref(), Some("1h"));
     }
@@ -757,7 +1010,7 @@ mod tests {
     #[test]
     fn triggered_at_does_not_affect_equality() {
         let base = CronSpec {
-            schedule: "*/5 * * * *".into(),
+            schedule_kind: ScheduleKind::Recurring("*/5 * * * *".into()),
             prompt: "do stuff".into(),
             lock_ttl: None,
             max_budget_usd: 1.0,
@@ -773,14 +1026,14 @@ mod tests {
     #[test]
     fn spec_equality_detects_real_changes() {
         let base = CronSpec {
-            schedule: "*/5 * * * *".into(),
+            schedule_kind: ScheduleKind::Recurring("*/5 * * * *".into()),
             prompt: "do stuff".into(),
             lock_ttl: None,
             max_budget_usd: 1.0,
             triggered_at: None,
         };
         let changed_schedule = CronSpec {
-            schedule: "*/10 * * * *".into(),
+            schedule_kind: ScheduleKind::Recurring("*/10 * * * *".into()),
             ..base.clone()
         };
         let changed_prompt = CronSpec {
@@ -803,5 +1056,134 @@ mod tests {
         trigger_spec(&conn, "tr-load").unwrap();
         let specs = load_specs_from_db(&conn).unwrap();
         assert!(specs["tr-load"].triggered_at.is_some());
+    }
+
+    #[test]
+    fn create_spec_v2_with_run_at_succeeds() {
+        let conn = setup_db();
+        let result = create_spec_v2(
+            &conn, "run-at-job", None, "do stuff at specific time",
+            None, None, None, Some("2026-12-25T15:30:00Z"),
+        ).unwrap();
+        assert!(result.message.contains("Created"));
+    }
+
+    #[test]
+    fn create_spec_v2_with_both_schedule_and_run_at_fails() {
+        let conn = setup_db();
+        let err = create_spec_v2(
+            &conn, "both-job", Some("*/5 * * * *"), "prompt",
+            None, None, None, Some("2026-12-25T15:30:00Z"),
+        ).unwrap_err();
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn create_spec_v2_with_neither_schedule_nor_run_at_fails() {
+        let conn = setup_db();
+        let err = create_spec_v2(
+            &conn, "neither-job", None, "prompt",
+            None, None, None, None,
+        ).unwrap_err();
+        assert!(err.contains("one of"));
+    }
+
+    #[test]
+    fn create_spec_v2_with_invalid_run_at_fails() {
+        let conn = setup_db();
+        let err = create_spec_v2(
+            &conn, "bad-time", None, "prompt",
+            None, None, None, Some("not-a-datetime"),
+        ).unwrap_err();
+        assert!(err.contains("invalid"));
+    }
+
+    #[test]
+    fn create_spec_v2_with_past_run_at_succeeds() {
+        let conn = setup_db();
+        let result = create_spec_v2(
+            &conn, "past-job", None, "prompt",
+            None, None, None, Some("2020-01-01T00:00:00Z"),
+        ).unwrap();
+        assert!(result.message.contains("Created"));
+    }
+
+    #[test]
+    fn create_spec_v2_recurring_false_stored_as_one_shot_cron() {
+        let conn = setup_db();
+        create_spec_v2(
+            &conn, "oneshot-cron", Some("30 15 * * *"), "prompt",
+            None, None, Some(false), None,
+        ).unwrap();
+        let specs = load_specs_from_db(&conn).unwrap();
+        assert!(matches!(specs["oneshot-cron"].schedule_kind, ScheduleKind::OneShotCron(_)));
+    }
+
+    #[test]
+    fn load_specs_round_trips_all_schedule_kinds() {
+        let conn = setup_db();
+        create_spec_v2(&conn, "recurring", Some("*/5 * * * *"), "p", None, None, None, None).unwrap();
+        create_spec_v2(&conn, "oneshot", Some("17 15 * * *"), "p", None, None, Some(false), None).unwrap();
+        create_spec_v2(&conn, "runat", None, "p", None, None, None, Some("2026-12-25T15:30:00Z")).unwrap();
+
+        let specs = load_specs_from_db(&conn).unwrap();
+        assert!(matches!(specs["recurring"].schedule_kind, ScheduleKind::Recurring(_)));
+        assert!(matches!(specs["oneshot"].schedule_kind, ScheduleKind::OneShotCron(_)));
+        assert!(matches!(specs["runat"].schedule_kind, ScheduleKind::RunAt(_)));
+    }
+
+    #[test]
+    fn update_spec_partial_prompt_only() {
+        let conn = setup_db();
+        create_spec_v2(&conn, "partial", Some("*/5 * * * *"), "old", None, Some(1.5), None, None).unwrap();
+        update_spec_partial(&conn, "partial", None, None, Some("new prompt"), None, None, None).unwrap();
+        let detail = get_spec_detail(&conn, "partial").unwrap().unwrap();
+        assert_eq!(detail.prompt, "new prompt");
+        assert_eq!(detail.schedule, "*/5 * * * *");
+        assert!((detail.max_budget_usd - 1.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn update_spec_partial_schedule_clears_run_at() {
+        let conn = setup_db();
+        create_spec_v2(&conn, "switch", None, "p", None, None, None, Some("2026-12-25T15:30:00Z")).unwrap();
+        update_spec_partial(&conn, "switch", Some("*/10 * * * *"), None, None, None, None, None).unwrap();
+        let specs = load_specs_from_db(&conn).unwrap();
+        assert!(matches!(specs["switch"].schedule_kind, ScheduleKind::Recurring(_)));
+    }
+
+    #[test]
+    fn update_spec_partial_run_at_clears_schedule() {
+        let conn = setup_db();
+        create_spec_v2(&conn, "switch2", Some("*/5 * * * *"), "p", None, None, None, None).unwrap();
+        update_spec_partial(&conn, "switch2", None, Some("2026-12-25T15:30:00Z"), None, None, None, None).unwrap();
+        let specs = load_specs_from_db(&conn).unwrap();
+        assert!(matches!(specs["switch2"].schedule_kind, ScheduleKind::RunAt(_)));
+    }
+
+    #[test]
+    fn update_spec_partial_both_schedule_and_run_at_fails() {
+        let conn = setup_db();
+        create_spec_v2(&conn, "both", Some("*/5 * * * *"), "p", None, None, None, None).unwrap();
+        let err = update_spec_partial(
+            &conn, "both", Some("*/10 * * * *"), Some("2026-12-25T15:30:00Z"),
+            None, None, None, None,
+        ).unwrap_err();
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn update_spec_partial_no_fields_fails() {
+        let conn = setup_db();
+        create_spec_v2(&conn, "empty", Some("*/5 * * * *"), "p", None, None, None, None).unwrap();
+        let err = update_spec_partial(&conn, "empty", None, None, None, None, None, None).unwrap_err();
+        assert!(err.contains("at least one"));
+    }
+
+    #[test]
+    fn update_spec_partial_not_found() {
+        let conn = setup_db();
+        let err = update_spec_partial(&conn, "ghost", None, None, Some("p"), None, None, None).unwrap_err();
+        assert!(err.contains("not found"));
     }
 }
