@@ -1,5 +1,6 @@
 pub mod error;
 pub mod guard;
+pub mod hindsight;
 pub mod store;
 pub(crate) mod migrations;
 
