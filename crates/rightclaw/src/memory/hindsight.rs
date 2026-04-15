@@ -82,6 +82,10 @@ struct QueryRequest {
     query: String,
     budget: String,
     max_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags_match: Option<String>,
 }
 
 /// Join recall results into a single string separated by double newlines.
@@ -178,7 +182,12 @@ impl HindsightClient {
     }
 
     /// Recall memories relevant to a query.
-    pub async fn recall(&self, query: &str) -> Result<Vec<RecallResult>, MemoryError> {
+    pub async fn recall(
+        &self,
+        query: &str,
+        tags: Option<&[String]>,
+        tags_match: Option<&str>,
+    ) -> Result<Vec<RecallResult>, MemoryError> {
         let url = format!(
             "{}/v1/default/banks/{}/memories/recall",
             self.base_url, self.bank_id
@@ -187,6 +196,8 @@ impl HindsightClient {
             query: query.to_owned(),
             budget: self.budget.clone(),
             max_tokens: self.max_tokens,
+            tags: tags.map(|t| t.to_vec()),
+            tags_match: tags_match.map(|s| s.to_owned()),
         };
 
         let resp = self
@@ -222,6 +233,8 @@ impl HindsightClient {
             query: query.to_owned(),
             budget: self.budget.clone(),
             max_tokens: self.max_tokens,
+            tags: None,
+            tags_match: None,
         };
 
         let resp = self
@@ -453,7 +466,7 @@ mod tests {
         .await;
 
         let client = test_client(&url);
-        let results = client.recall("what does user prefer").await.unwrap();
+        let results = client.recall("what does user prefer", None, None).await.unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].text, "user likes dark mode");
@@ -480,8 +493,48 @@ mod tests {
         .await;
 
         let client = test_client(&url);
-        let results = client.recall("nonexistent topic").await.unwrap();
+        let results = client.recall("nonexistent topic", None, None).await.unwrap();
         assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn recall_with_tags() {
+        let (handle, url) = mock_hindsight_server(
+            r#"{"results": [{"text": "user likes dark mode", "score": 0.9}]}"#,
+            200,
+        )
+        .await;
+
+        let client = test_client(&url);
+        let tags = vec!["chat:12345".to_string()];
+        let results = client
+            .recall("preferences", Some(&tags), Some("any"))
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+
+        let (_method, _auth, body) = handle.await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["tags"][0], "chat:12345");
+        assert_eq!(parsed["tags_match"], "any");
+    }
+
+    #[tokio::test]
+    async fn recall_without_tags_omits_fields() {
+        let (handle, url) = mock_hindsight_server(
+            r#"{"results": []}"#,
+            200,
+        )
+        .await;
+
+        let client = test_client(&url);
+        client.recall("test query", None, None).await.unwrap();
+
+        let (_method, _auth, body) = handle.await.unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(parsed.get("tags").is_none());
+        assert!(parsed.get("tags_match").is_none());
     }
 
     // --- reflect tests ---
