@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write as _;
 use std::sync::Arc;
 use tokio::io::AsyncBufReadExt as _;
 use tokio::io::AsyncReadExt as _;
@@ -140,14 +139,17 @@ async fn execute_job(
     // Prepare run record
     let run_id = uuid::Uuid::new_v4().to_string();
     let started_at = chrono::Utc::now().to_rfc3339();
-    let log_dir = agent_dir.join("crons").join("logs");
-    if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        tracing::error!(job = %job_name, "failed to create log dir: {e:#}");
-        std::fs::remove_file(&lock_path).ok();
-        return;
-    }
-    let log_path = log_dir.join(format!("{job_name}-{run_id}.txt"));
-    let log_path_str = log_path.display().to_string();
+
+    // Compute sandbox-relative log path (agents read this via Read tool).
+    // For sandbox mode: /sandbox/crons/logs/{job_name}-{run_id}.ndjson
+    // For no-sandbox: {agent_dir}/crons/logs/{job_name}-{run_id}.ndjson
+    let log_filename = format!("{job_name}-{run_id}.ndjson");
+    let sandbox_log_dir = if ssh_config_path.is_some() {
+        "/sandbox/crons/logs".to_owned()
+    } else {
+        agent_dir.join("crons").join("logs").to_string_lossy().into_owned()
+    };
+    let log_path_str = format!("{sandbox_log_dir}/{log_filename}");
 
     // DB insert: status='running' (D-04)
     // Open connection per-job — rusqlite::Connection is !Send
@@ -236,6 +238,9 @@ async fn execute_job(
             let escaped = token.replace('\'', "'\\''");
             assembly_script = format!("export CLAUDE_CODE_OAUTH_TOKEN='{escaped}'\n{assembly_script}");
         }
+        assembly_script = format!(
+            "mkdir -p /sandbox/crons/logs\n{assembly_script} | tee /sandbox/crons/logs/{log_filename}"
+        );
         let ssh_host = rightclaw::openshell::ssh_host(agent_name);
         let mut c = tokio::process::Command::new("ssh");
         c.arg("-F").arg(ssh_config);
@@ -263,6 +268,13 @@ async fn execute_job(
             std::fs::remove_file(&lock_path).ok();
             return;
         }
+        let host_log_dir = agent_dir.join("crons").join("logs");
+        if let Err(e) = std::fs::create_dir_all(&host_log_dir) {
+            tracing::error!(job = %job_name, "failed to create log dir: {e:#}");
+            std::fs::remove_file(&lock_path).ok();
+            return;
+        }
+        let assembly_script = format!("{assembly_script} | tee {sandbox_log_dir}/{log_filename}");
         let mut c = tokio::process::Command::new("bash");
         c.arg("-c");
         c.arg(&assembly_script);
@@ -296,37 +308,12 @@ async fn execute_job(
         Ok(c) => c,
     };
 
-    // Stream stdout line-by-line into NDJSON log and collected_lines vec.
+    // Stream stdout line-by-line; tee inside the subprocess writes the NDJSON log.
     let stdout = child.stdout.take().expect("stdout piped");
     let mut lines = tokio::io::BufReader::new(stdout).lines();
 
-    let stream_log_dir = agent_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap_or(agent_dir)
-        .join("logs")
-        .join("streams");
-    if let Err(e) = std::fs::create_dir_all(&stream_log_dir) {
-        tracing::warn!(job = %job_name, "failed to create stream log dir: {e:#}");
-    }
-    let stream_log_path = stream_log_dir.join(format!("{job_name}-{run_id}.ndjson"));
-    let mut stream_log = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&stream_log_path)
-    {
-        Ok(f) => Some(f),
-        Err(e) => {
-            tracing::warn!(job = %job_name, "failed to open stream log: {e:#}");
-            None
-        }
-    };
-
     let mut collected_lines: Vec<String> = Vec::new();
     while let Ok(Some(line)) = lines.next_line().await {
-        if let Some(ref mut log) = stream_log {
-            let _ = writeln!(log, "{line}");
-        }
         collected_lines.push(line);
     }
 
@@ -351,18 +338,6 @@ async fn execute_job(
         Vec::new()
     };
     let stderr_str = String::from_utf8_lossy(&stderr_bytes);
-
-    // Write text log file (D-04)
-    let mut log_content = String::new();
-    log_content.push_str(&format!("=== stream log: {} ===\n", stream_log_path.display()));
-    if !stderr_str.is_empty() {
-        log_content.push_str("=== stderr ===\n");
-        log_content.push_str(&stderr_str);
-    }
-    if let Err(e) = std::fs::write(&log_path, &log_content) {
-        tracing::error!(job = %job_name, "failed to write log file: {e:#}");
-        // Continue — still update DB even if log write fails
-    }
 
     // Determine status (D-02)
     let exit_code = exit_status.code();
