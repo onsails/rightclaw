@@ -473,8 +473,8 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_ref()).collect();
 
         // RightBackend tools present (unprefixed)
-        assert!(names.contains(&"store_record"), "missing store_record");
-        assert!(names.contains(&"query_records"), "missing query_records");
+        assert!(names.contains(&"cron_create"), "missing cron_create");
+        assert!(names.contains(&"bootstrap_done"), "missing bootstrap_done");
 
         // Meta tool present
         assert!(

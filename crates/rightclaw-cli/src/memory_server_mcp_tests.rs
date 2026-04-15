@@ -224,25 +224,17 @@ async fn test_mcp_list_empty() {
 }
 
 #[test]
-fn test_get_info_mentions_record_tools() {
+fn test_get_info_mentions_cron_and_mcp_tools() {
     let (server, _dir) = setup_server_with_dir();
     let info = server.get_info();
     let instructions = info.instructions.unwrap_or_default();
     assert!(
-        instructions.contains("store_record"),
-        "instructions should mention store_record: {instructions}"
+        !instructions.contains("store_record"),
+        "instructions should NOT mention removed store_record: {instructions}"
     );
     assert!(
-        instructions.contains("query_records"),
-        "instructions should mention query_records: {instructions}"
-    );
-    assert!(
-        instructions.contains("search_records"),
-        "instructions should mention search_records: {instructions}"
-    );
-    assert!(
-        instructions.contains("delete_record"),
-        "instructions should mention delete_record: {instructions}"
+        instructions.contains("cron_create"),
+        "instructions should mention cron_create: {instructions}"
     );
     assert!(
         instructions.contains("mcp_list"),
