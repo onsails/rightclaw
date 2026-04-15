@@ -350,7 +350,10 @@ pub fn spawn_worker(
             // Invoke claude -p (D-13, D-14)
             // Pass first message text for session label (truncated 60 chars).
             let first_text = batch.first().and_then(|m| m.text.as_deref());
-            let reply_result = invoke_cc(&input, first_text, chat_id, eff_thread_id, &ctx).await;
+            let (reply_result, session_uuid) = match invoke_cc(&input, first_text, chat_id, eff_thread_id, &ctx).await {
+                Ok((output, uuid)) => (Ok(output), uuid),
+                Err(e) => (Err(e), String::new()),
+            };
 
             // Reverse sync .md changes from sandbox.
             // Bootstrap mode: BLOCK so files are on host for completion check.
@@ -522,11 +525,23 @@ pub fn spawn_worker(
                     let hs_retain = Arc::clone(hs);
                     let retain_input = input.clone();
                     let retain_response = reply_text.clone();
+                    let retain_doc_id = session_uuid.clone();
+                    let retain_tags = vec![format!("chat:{chat_id}")];
+                    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                     tokio::spawn(async move {
-                        let content =
-                            format!("User: {retain_input}\nAssistant: {retain_response}");
-                        if let Err(e) =
-                            hs_retain.retain(&content, Some("conversation"), None, None, None).await
+                        let content = serde_json::json!([
+                            {"role": "user", "content": retain_input, "timestamp": now},
+                            {"role": "assistant", "content": retain_response, "timestamp": now},
+                        ]).to_string();
+                        if let Err(e) = hs_retain
+                            .retain(
+                                &content,
+                                Some("conversation between RightClaw Agent and the User"),
+                                Some(&retain_doc_id),
+                                Some("append"),
+                                Some(&retain_tags),
+                            )
+                            .await
                         {
                             tracing::warn!("auto-retain failed: {e:#}");
                         }
@@ -677,7 +692,7 @@ fn spawn_token_request(
 
 /// Invoke `claude -p` and parse the reply tool call from its JSON output.
 ///
-/// Returns `Ok(Some(ReplyOutput))` on success,
+/// Returns `Ok((Some(ReplyOutput), session_uuid))` on success,
 /// `Err(error_message_for_telegram)` on subprocess failure or missing reply tool.
 async fn invoke_cc(
     input: &str,
@@ -685,16 +700,17 @@ async fn invoke_cc(
     chat_id: i64,
     eff_thread_id: i64,
     ctx: &WorkerContext,
-) -> Result<Option<ReplyOutput>, String> {
+) -> Result<(Option<ReplyOutput>, String), String> {
     // Open per-worker DB connection (rusqlite is !Send — each worker opens its own)
     let conn = rightclaw::memory::open_connection(&ctx.agent_dir, false)
         .map_err(|e| format!("⚠️ Agent error: DB open failed: {:#}", e))?;
 
     // Session lookup / create (SES-02, SES-03)
-    let (cmd_args, is_first_call) = match get_active_session(&conn, chat_id, eff_thread_id) {
+    let (cmd_args, is_first_call, session_uuid) = match get_active_session(&conn, chat_id, eff_thread_id) {
         Ok(Some(SessionRow { root_session_id, .. })) => {
             // Resume: --resume <root_session_id>
-            (vec!["--resume".to_string(), root_session_id], false)
+            let uuid = root_session_id.clone();
+            (vec!["--resume".to_string(), root_session_id], false, uuid)
         }
         Ok(None) => {
             // First message: generate UUID, --session-id <uuid>
@@ -702,7 +718,8 @@ async fn invoke_cc(
             let label = first_text.map(truncate_label);
             create_session(&conn, chat_id, eff_thread_id, &new_uuid, label)
                 .map_err(|e| format!("⚠️ Agent error: session create failed: {:#}", e))?;
-            (vec!["--session-id".to_string(), new_uuid], true)
+            let uuid = new_uuid.clone();
+            (vec!["--session-id".to_string(), new_uuid], true, uuid)
         }
         Err(e) => {
             return Err(format!("⚠️ Agent error: session lookup failed: {:#}", e));
@@ -1162,7 +1179,7 @@ async fn invoke_cc(
     // Handle user-initiated stop.
     if stopped {
         tracing::info!(?chat_id, "CC session stopped by user");
-        return Ok(None); // No reply to send — thinking message already updated.
+        return Ok((None, session_uuid)); // No reply to send — thinking message already updated.
     }
 
     // Handle timeout.
@@ -1218,10 +1235,10 @@ async fn invoke_cc(
                     spawn_token_request(ctx, tg_chat_id, ctx.effective_thread_id);
                     // Return Ok(None) — the initial message above is sufficient,
                     // don't send a second error message before instructions arrive.
-                    return Ok(None);
+                    return Ok((None, session_uuid));
                 } else {
                     // Token request already running — silent, don't spam.
-                    return Ok(None);
+                    return Ok((None, session_uuid));
                 }
             } else {
                 // No-sandbox: also use token request flow.
@@ -1238,9 +1255,9 @@ async fn invoke_cc(
                         tracing::warn!(?chat_id, "failed to send auth error notification: {e:#}");
                     }
                     spawn_token_request(ctx, tg_chat_id, ctx.effective_thread_id);
-                    return Ok(None);
+                    return Ok((None, session_uuid));
                 } else {
-                    return Ok(None);
+                    return Ok((None, session_uuid));
                 }
             }
         }
@@ -1282,7 +1299,7 @@ async fn invoke_cc(
             // Bootstrap completion is now detected by file presence after
             // reverse_sync in spawn_worker — no bootstrap_complete field needed.
 
-            Ok(Some(reply_output))
+            Ok((Some(reply_output), session_uuid))
         }
         Err(reason) => {
             // D-05: parse failure → error reply
