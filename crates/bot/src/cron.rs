@@ -100,6 +100,68 @@ pub fn is_lock_fresh(agent_dir: &std::path::Path, job_name: &str, lock_ttl_str: 
     chrono::Utc::now() - lock.heartbeat < ttl
 }
 
+/// Delete old cron log files for a job, keeping the most recent `keep` files.
+async fn cleanup_old_logs(
+    job_name: &str,
+    log_dir: &str,
+    keep: usize,
+    ssh_config_path: Option<&std::path::Path>,
+    agent_name: &str,
+) {
+    if let Some(ssh_config) = ssh_config_path {
+        let ssh_host = rightclaw::openshell::ssh_host(agent_name);
+        let cleanup_cmd = format!(
+            "ls -1t {log_dir}/{job_name}-*.ndjson 2>/dev/null | tail -n +{} | xargs rm -f",
+            keep + 1
+        );
+        let output = tokio::process::Command::new("ssh")
+            .arg("-F").arg(ssh_config)
+            .arg(&ssh_host)
+            .arg("--")
+            .arg(&cleanup_cmd)
+            .output()
+            .await;
+        match output {
+            Ok(o) if !o.status.success() => {
+                tracing::warn!(
+                    job = %job_name,
+                    "log cleanup via SSH failed: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                );
+            }
+            Err(e) => {
+                tracing::warn!(job = %job_name, "log cleanup SSH command failed: {e:#}");
+            }
+            _ => {}
+        }
+    } else {
+        let pattern = format!("{job_name}-");
+        let dir = match std::fs::read_dir(log_dir) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        let mut files: Vec<std::path::PathBuf> = dir
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&pattern) && n.ends_with(".ndjson"))
+            })
+            .collect();
+        files.sort_by(|a, b| {
+            let ma = a.metadata().and_then(|m| m.modified()).ok();
+            let mb = b.metadata().and_then(|m| m.modified()).ok();
+            mb.cmp(&ma)
+        });
+        for old in files.into_iter().skip(keep) {
+            if let Err(e) = std::fs::remove_file(&old) {
+                tracing::warn!(job = %job_name, path = %old.display(), "failed to delete old log: {e:#}");
+            }
+        }
+    }
+}
+
 /// Execute one cron job: lock check → DB insert → subprocess → log write → DB update → lock delete.
 ///
 /// Per D-02: subprocess failures log `tracing::error` only, do not propagate.
@@ -357,6 +419,9 @@ async fn execute_job(
 
     // Delete lock on completion (CRON-04)
     std::fs::remove_file(&lock_path).ok();
+
+    // Retention: keep last 10 log files per job
+    cleanup_old_logs(job_name, &sandbox_log_dir, 10, ssh_config_path, agent_name).await;
 
     tracing::info!(job = %job_name, run_id = %run_id, %status, "cron job completed");
 
