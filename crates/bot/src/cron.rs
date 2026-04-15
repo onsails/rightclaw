@@ -722,7 +722,8 @@ fn reconcile_jobs(
                 .await;
         });
         handles.insert(name.clone(), (spec.clone(), handle));
-        tracing::info!(job = %name, schedule = %spec.schedule, "cron job scheduled");
+        let sched_display = spec.schedule_kind.cron_schedule().unwrap_or("<run_at>");
+        tracing::info!(job = %name, schedule = %sched_display, "cron job scheduled");
     }
 
     // Check for triggered jobs (manual trigger via cron_trigger MCP tool)
@@ -779,11 +780,18 @@ async fn run_job_loop(
     use cron::Schedule;
     use std::str::FromStr;
 
-    let seven_field = to_7field(&spec.schedule);
+    let cron_expr = match spec.schedule_kind.cron_schedule() {
+        Some(s) => s,
+        None => {
+            tracing::error!(job = %job_name, "run_job_loop called for RunAt spec — should not happen");
+            return;
+        }
+    };
+    let seven_field = to_7field(cron_expr);
     let schedule = match Schedule::from_str(&seven_field) {
         Ok(s) => s,
         Err(e) => {
-            tracing::error!(job = %job_name, "invalid cron schedule '{}': {e:#}", spec.schedule);
+            tracing::error!(job = %job_name, "invalid cron schedule '{cron_expr}': {e:#}");
             return;
         }
     };
