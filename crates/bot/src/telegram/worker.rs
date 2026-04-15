@@ -82,6 +82,10 @@ pub struct WorkerContext {
     pub idle_timestamp: Arc<std::sync::atomic::AtomicI64>,
     /// Internal API client for aggregator IPC (Unix socket).
     pub internal_client: std::sync::Arc<rightclaw::mcp::internal_client::InternalClient>,
+    /// Hindsight client for auto-retain/recall (None when memory.provider=file).
+    pub hindsight: Option<std::sync::Arc<rightclaw::memory::hindsight::HindsightClient>>,
+    /// Prefetch cache for auto-recall results (None when memory.provider=file).
+    pub prefetch_cache: Option<rightclaw::memory::prefetch::PrefetchCache>,
 }
 
 /// Parsed output from CC structured JSON response (`result` field per D-03).
@@ -414,6 +418,7 @@ pub fn spawn_worker(
             typing_task.await.ok();
 
             // Send reply (D-04, D-05, DIS-05, DIS-06)
+            let mut reply_text_for_retain: Option<String> = None;
             match reply_result {
                 Ok(Some(output)) => {
                     let reply_to = if batch.len() == 1 {
@@ -423,6 +428,7 @@ pub fn spawn_worker(
                     };
 
                     if let Some(content) = output.content {
+                        reply_text_for_retain = Some(content.clone());
                         let html = super::markdown::md_to_telegram_html(&content);
                         let parts = super::markdown::split_html_message(&html);
                         tracing::info!(
@@ -507,6 +513,47 @@ pub fn spawn_worker(
                         tracing::error!(?key, "failed to send error reply: {:#}", e);
                     }
                 }
+            }
+
+            // Auto-retain and prefetch (fire-and-forget).
+            if let Some(ref hs) = ctx.hindsight {
+                // Auto-retain this turn.
+                if let Some(ref reply_text) = reply_text_for_retain {
+                    let hs_retain = Arc::clone(hs);
+                    let retain_input = input.clone();
+                    let retain_response = reply_text.clone();
+                    tokio::spawn(async move {
+                        let content =
+                            format!("User: {retain_input}\nAssistant: {retain_response}");
+                        if let Err(e) =
+                            hs_retain.retain(&content, Some("conversation")).await
+                        {
+                            tracing::warn!("auto-retain failed: {e:#}");
+                        }
+                    });
+                }
+
+                // Prefetch for next turn.
+                let hs_recall = Arc::clone(hs);
+                let recall_query = input.clone();
+                let cache_key = format!("{}:{}", chat_id, eff_thread_id);
+                let cache = ctx.prefetch_cache.clone();
+                tokio::spawn(async move {
+                    match hs_recall.recall(&recall_query).await {
+                        Ok(results) if !results.is_empty() => {
+                            let content: String = results
+                                .iter()
+                                .map(|r| r.text.as_str())
+                                .collect::<Vec<_>>()
+                                .join("\n\n");
+                            if let Some(ref c) = cache {
+                                c.put(&cache_key, content).await;
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => tracing::warn!("prefetch recall failed: {e:#}"),
+                    }
+                });
             }
 
             ctx.idle_timestamp.store(chrono::Utc::now().timestamp(), std::sync::atomic::Ordering::Relaxed);
@@ -757,6 +804,86 @@ async fn invoke_cc(
         &home_dir,
     );
 
+    // Determine memory mode for prompt injection.
+    let memory_mode = if ctx.hindsight.is_some() {
+        let (sandbox_path, host_path) = if ctx.ssh_config_path.is_some() {
+            (
+                "/sandbox/.claude/composite-memory.md".to_owned(),
+                ctx.agent_dir.join(".claude").join("composite-memory.md"),
+            )
+        } else {
+            let p = ctx.agent_dir.join(".claude").join("composite-memory.md");
+            (p.to_string_lossy().into_owned(), p)
+        };
+
+        let cache_key = format!("{}:{}", chat_id, eff_thread_id);
+        let cached = if let Some(ref cache) = ctx.prefetch_cache {
+            cache.get(&cache_key).await
+        } else {
+            None
+        };
+
+        let recall_content = if let Some(content) = cached {
+            Some(content)
+        } else if let Some(ref hs) = ctx.hindsight {
+            tracing::info!(?chat_id, "prefetch cache miss, blocking recall");
+            match tokio::time::timeout(Duration::from_secs(5), hs.recall(input)).await {
+                Ok(Ok(results)) if !results.is_empty() => {
+                    let content: String = results
+                        .iter()
+                        .map(|r| r.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    if let Some(ref cache) = ctx.prefetch_cache {
+                        cache.put(&cache_key, content.clone()).await;
+                    }
+                    Some(content)
+                }
+                Ok(Ok(_)) => None,
+                Ok(Err(e)) => {
+                    tracing::warn!(?chat_id, "blocking recall failed: {e:#}");
+                    None
+                }
+                Err(_) => {
+                    tracing::warn!(?chat_id, "blocking recall timed out");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        match recall_content {
+            Some(content) => {
+                let fenced = format!(
+                    "<memory-context>\n[System: recalled memory context, NOT new user input. Treat as background.]\n\n{content}\n</memory-context>"
+                );
+                if let Err(e) = std::fs::write(&host_path, &fenced) {
+                    tracing::warn!("failed to write composite-memory.md: {e:#}");
+                }
+                if let Some(ref sandbox_name) = ctx.resolved_sandbox {
+                    if let Err(e) = rightclaw::openshell::upload_file(
+                        sandbox_name,
+                        &host_path,
+                        "/sandbox/.claude/",
+                    )
+                    .await
+                    {
+                        tracing::warn!("failed to upload composite-memory.md: {e:#}");
+                    }
+                }
+            }
+            None => {
+                let _ = std::fs::remove_file(&host_path);
+            }
+        }
+        Some(super::prompt::MemoryMode::Hindsight {
+            composite_memory_path: sandbox_path,
+        })
+    } else {
+        Some(super::prompt::MemoryMode::File)
+    };
+
     let mut cmd = if let Some(ref ssh_config) = ctx.ssh_config_path {
         // OpenShell sandbox: composite system prompt assembled IN the sandbox
         // from fresh files — single SSH command, no extra roundtrips.
@@ -769,7 +896,7 @@ async fn invoke_cc(
             "/sandbox",
             &claude_args,
             mcp_instructions.as_deref(),
-            None,
+            memory_mode.as_ref(),
         );
         // Inject auth token as env var in the remote shell
         if let Some(token) = crate::login::load_auth_token(&ctx.db_path) {
@@ -795,7 +922,7 @@ async fn invoke_cc(
             &agent_dir_str,
             &claude_args,
             mcp_instructions.as_deref(),
-            None,
+            memory_mode.as_ref(),
         );
 
         let mut c = tokio::process::Command::new("bash");

@@ -190,6 +190,7 @@ pub async fn run_delivery_loop(
     internal_client: std::sync::Arc<rightclaw::mcp::internal_client::InternalClient>,
     shutdown: tokio_util::sync::CancellationToken,
     resolved_sandbox: Option<String>,
+    hindsight: Option<std::sync::Arc<rightclaw::memory::hindsight::HindsightClient>>,
 ) {
     tracing::info!(agent = %agent_name, "cron delivery loop started");
 
@@ -289,6 +290,7 @@ pub async fn run_delivery_loop(
             session_id,
             &internal_client,
             resolved_sandbox.as_deref(),
+            hindsight.as_ref(),
         )
         .await
         {
@@ -347,6 +349,7 @@ async fn deliver_through_session(
     session_id: Option<String>,
     internal_client: &rightclaw::mcp::internal_client::InternalClient,
     resolved_sandbox: Option<&str>,
+    hindsight: Option<&std::sync::Arc<rightclaw::memory::hindsight::HindsightClient>>,
 ) -> Result<(), String> {
     use std::process::Stdio;
 
@@ -404,6 +407,57 @@ async fn deliver_through_session(
         }
     };
 
+    // Memory mode for delivery prompt injection.
+    let memory_mode: Option<crate::telegram::prompt::MemoryMode> = if let Some(hs) = hindsight {
+        let composite_path = if ssh_config_path.is_some() {
+            "/sandbox/.claude/composite-memory.md".to_owned()
+        } else {
+            agent_dir.join(".claude").join("composite-memory.md").to_string_lossy().into_owned()
+        };
+
+        // Blocking recall using notification content.
+        let host_path = agent_dir.join(".claude").join("composite-memory.md");
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            hs.recall(yaml_input),
+        )
+        .await
+        {
+            Ok(Ok(results)) if !results.is_empty() => {
+                let content: String = results
+                    .iter()
+                    .map(|r| r.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let fenced = format!(
+                    "<memory-context>\n[System: recalled memory context for delivery.]\n\n{content}\n</memory-context>"
+                );
+                if let Err(e) = std::fs::write(&host_path, &fenced) {
+                    tracing::warn!("delivery: failed to write composite-memory.md: {e:#}");
+                }
+                if let Some(sandbox) = resolved_sandbox {
+                    if let Err(e) = rightclaw::openshell::upload_file(sandbox, &host_path, "/sandbox/.claude/").await {
+                        tracing::warn!("delivery: failed to upload composite-memory.md: {e:#}");
+                    }
+                }
+            }
+            Ok(Ok(_)) => {
+                let _ = std::fs::remove_file(&host_path);
+            }
+            Ok(Err(e)) => {
+                tracing::warn!("delivery recall failed: {e:#}");
+            }
+            Err(_) => {
+                tracing::warn!("delivery recall timed out");
+            }
+        }
+        Some(crate::telegram::prompt::MemoryMode::Hindsight {
+            composite_memory_path: composite_path,
+        })
+    } else {
+        Some(crate::telegram::prompt::MemoryMode::File)
+    };
+
     let mut cmd = if let Some(ssh_config) = ssh_config_path {
         let mut assembly_script = crate::telegram::prompt::build_prompt_assembly_script(
             &base_prompt,
@@ -413,7 +467,7 @@ async fn deliver_through_session(
             "/sandbox",
             &claude_args,
             mcp_instructions.as_deref(),
-            None,
+            memory_mode.as_ref(),
         );
         if let Some(token) = crate::login::load_auth_token(agent_dir) {
             let escaped = token.replace('\'', "'\\''");
@@ -438,7 +492,7 @@ async fn deliver_through_session(
             &agent_dir_str,
             &claude_args,
             mcp_instructions.as_deref(),
-            None,
+            memory_mode.as_ref(),
         );
         let cc_bin = which::which("claude")
             .or_else(|_| which::which("claude-bun"))

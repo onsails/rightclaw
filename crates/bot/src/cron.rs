@@ -186,6 +186,8 @@ async fn execute_job(
     ssh_config_path: Option<&std::path::Path>,
     internal_client: &rightclaw::mcp::internal_client::InternalClient,
     resolved_sandbox: Option<&str>,
+    hindsight: Option<&Arc<rightclaw::memory::hindsight::HindsightClient>>,
+    prefetch_cache: Option<&rightclaw::memory::prefetch::PrefetchCache>,
 ) {
     use std::process::Stdio;
 
@@ -296,6 +298,59 @@ async fn execute_job(
         }
     };
 
+    // Memory mode for cron job prompt injection.
+    let memory_mode: Option<crate::telegram::prompt::MemoryMode> = if hindsight.is_some() {
+        let composite_path = if ssh_config_path.is_some() {
+            "/sandbox/.claude/composite-memory.md".to_owned()
+        } else {
+            agent_dir.join(".claude").join("composite-memory.md").to_string_lossy().into_owned()
+        };
+
+        // Blocking recall using cron prompt text.
+        if let Some(hs) = hindsight {
+            let host_path = agent_dir.join(".claude").join("composite-memory.md");
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                hs.recall(&spec.prompt),
+            )
+            .await
+            {
+                Ok(Ok(results)) if !results.is_empty() => {
+                    let content: String = results
+                        .iter()
+                        .map(|r| r.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    let fenced = format!(
+                        "<memory-context>\n[System: recalled memory context for cron job.]\n\n{content}\n</memory-context>"
+                    );
+                    if let Err(e) = std::fs::write(&host_path, &fenced) {
+                        tracing::warn!(job = %job_name, "failed to write composite-memory.md: {e:#}");
+                    }
+                    if let Some(sandbox) = resolved_sandbox {
+                        if let Err(e) = rightclaw::openshell::upload_file(sandbox, &host_path, "/sandbox/.claude/").await {
+                            tracing::warn!(job = %job_name, "failed to upload composite-memory.md: {e:#}");
+                        }
+                    }
+                }
+                Ok(Ok(_)) => {
+                    let _ = std::fs::remove_file(agent_dir.join(".claude").join("composite-memory.md"));
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!(job = %job_name, "cron recall failed: {e:#}");
+                }
+                Err(_) => {
+                    tracing::warn!(job = %job_name, "cron recall timed out");
+                }
+            }
+        }
+        Some(crate::telegram::prompt::MemoryMode::Hindsight {
+            composite_memory_path: composite_path,
+        })
+    } else {
+        Some(crate::telegram::prompt::MemoryMode::File)
+    };
+
     let mut cmd = if let Some(ssh_config) = ssh_config_path {
         // Sandbox mode: assemble system prompt via shell script (same as worker).
         let mut assembly_script = crate::telegram::prompt::build_prompt_assembly_script(
@@ -306,7 +361,7 @@ async fn execute_job(
             "/sandbox",
             &claude_args,
             mcp_instructions.as_deref(),
-            None,
+            memory_mode.as_ref(),
         );
         if let Some(token) = crate::login::load_auth_token(agent_dir) {
             let escaped = token.replace('\'', "'\\''");
@@ -335,7 +390,7 @@ async fn execute_job(
             &agent_dir_str,
             &claude_args,
             mcp_instructions.as_deref(),
-            None,
+            memory_mode.as_ref(),
         );
         if which::which("claude").is_err() && which::which("claude-bun").is_err() {
             tracing::error!(job = %job_name, "claude binary not found in PATH");
@@ -531,6 +586,23 @@ async fn execute_job(
                     no_notify_reason = cron_output.no_notify_reason.as_deref().unwrap_or("-"),
                     "cron output persisted to DB"
                 );
+
+                // Hindsight: auto-retain cron summary and invalidate worker prefetch cache.
+                if let Some(hs) = hindsight {
+                    let hs_retain = Arc::clone(hs);
+                    let summary = cron_output.summary.clone();
+                    let context = format!("cron:{job_name}");
+                    let cache_to_clear = prefetch_cache.cloned();
+                    tokio::spawn(async move {
+                        if let Err(e) = hs_retain.retain(&summary, Some(&context)).await {
+                            tracing::warn!("cron auto-retain failed: {e:#}");
+                        }
+                        // Invalidate worker prefetch cache — cron output may change recall results.
+                        if let Some(ref c) = cache_to_clear {
+                            c.clear().await;
+                        }
+                    });
+                }
             }
             Err(reason) => {
                 tracing::warn!(job = %job_name, reason, "failed to parse cron output");
@@ -639,6 +711,8 @@ pub async fn run_cron_task(
     internal_client: Arc<rightclaw::mcp::internal_client::InternalClient>,
     shutdown: CancellationToken,
     resolved_sandbox: Option<String>,
+    hindsight: Option<Arc<rightclaw::memory::hindsight::HindsightClient>>,
+    prefetch_cache: Option<rightclaw::memory::prefetch::PrefetchCache>,
 ) {
     tracing::info!(agent = %agent_name, "cron task started");
 
@@ -657,12 +731,12 @@ pub async fn run_cron_task(
     interval.tick().await; // consume immediate first tick
 
     // Run immediately on startup too
-    reconcile_jobs(&mut handles, &mut triggered_handles, &conn, &agent_dir, &agent_name, &model, &ssh_config_path, &internal_client, &execute_handles, &resolved_sandbox);
+    reconcile_jobs(&mut handles, &mut triggered_handles, &conn, &agent_dir, &agent_name, &model, &ssh_config_path, &internal_client, &execute_handles, &resolved_sandbox, &hindsight, &prefetch_cache);
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                reconcile_jobs(&mut handles, &mut triggered_handles, &conn, &agent_dir, &agent_name, &model, &ssh_config_path, &internal_client, &execute_handles, &resolved_sandbox);
+                reconcile_jobs(&mut handles, &mut triggered_handles, &conn, &agent_dir, &agent_name, &model, &ssh_config_path, &internal_client, &execute_handles, &resolved_sandbox, &hindsight, &prefetch_cache);
             }
             _ = shutdown.cancelled() => {
                 tracing::info!(agent = %agent_name, "cron shutdown: stopping reconciler");
@@ -756,6 +830,8 @@ fn reconcile_jobs(
     internal_client: &Arc<rightclaw::mcp::internal_client::InternalClient>,
     execute_handles: &ExecuteHandles,
     resolved_sandbox: &Option<String>,
+    hindsight: &Option<Arc<rightclaw::memory::hindsight::HindsightClient>>,
+    prefetch_cache: &Option<rightclaw::memory::prefetch::PrefetchCache>,
 ) {
     // Clean up finished triggered handles
     triggered_handles.retain(|h| !h.is_finished());
@@ -791,8 +867,10 @@ fn reconcile_jobs(
         let sc = ssh_config_path.clone();
         let ic = Arc::clone(internal_client);
         let rs = resolved_sandbox.clone();
+        let hs = hindsight.clone();
+        let pc = prefetch_cache.clone();
         let handle = tokio::spawn(async move {
-            execute_job(&jn, &sp, &ad, &an, md.as_deref(), sc.as_deref(), &ic, rs.as_deref()).await;
+            execute_job(&jn, &sp, &ad, &an, md.as_deref(), sc.as_deref(), &ic, rs.as_deref(), hs.as_ref(), pc.as_ref()).await;
             delete_one_shot_spec(&ad, &jn);
         });
         if let Ok(mut guard) = execute_handles.lock() {
@@ -834,9 +912,11 @@ fn reconcile_jobs(
         let job_execute_handles = Arc::clone(execute_handles);
         let job_internal_client = Arc::clone(internal_client);
         let job_sandbox = resolved_sandbox.clone();
+        let job_hindsight = hindsight.clone();
+        let job_prefetch = prefetch_cache.clone();
 
         let handle = tokio::spawn(async move {
-            run_job_loop(job_name, job_spec, job_agent_dir, job_agent_name, job_model, job_ssh_config, job_internal_client, job_execute_handles, job_sandbox)
+            run_job_loop(job_name, job_spec, job_agent_dir, job_agent_name, job_model, job_ssh_config, job_internal_client, job_execute_handles, job_sandbox, job_hindsight, job_prefetch)
                 .await;
         });
         handles.insert(name.clone(), (spec.clone(), handle));
@@ -868,10 +948,12 @@ fn reconcile_jobs(
             let sc = ssh_config_path.clone();
             let ic = Arc::clone(internal_client);
             let rs = resolved_sandbox.clone();
+            let hs = hindsight.clone();
+            let pc = prefetch_cache.clone();
             tracing::info!(job = %name, "executing triggered job");
             let trigger_name = name.clone();
             let handle = tokio::spawn(async move {
-                execute_job(&jn, &sp, &ad, &an, md.as_deref(), sc.as_deref(), &ic, rs.as_deref()).await;
+                execute_job(&jn, &sp, &ad, &an, md.as_deref(), sc.as_deref(), &ic, rs.as_deref(), hs.as_ref(), pc.as_ref()).await;
             });
             // Register for shutdown tracking
             if let Ok(mut guard) = execute_handles.lock() {
@@ -896,6 +978,8 @@ async fn run_job_loop(
     internal_client: Arc<rightclaw::mcp::internal_client::InternalClient>,
     execute_handles: ExecuteHandles,
     resolved_sandbox: Option<String>,
+    hindsight: Option<Arc<rightclaw::memory::hindsight::HindsightClient>>,
+    prefetch_cache: Option<rightclaw::memory::prefetch::PrefetchCache>,
 ) {
     use cron::Schedule;
     use std::str::FromStr;
@@ -939,8 +1023,10 @@ async fn run_job_loop(
         let sc = ssh_config_path.clone();
         let ic = Arc::clone(&internal_client);
         let rs = resolved_sandbox.clone();
+        let hs = hindsight.clone();
+        let pc = prefetch_cache.clone();
         let handle = tokio::spawn(async move {
-            execute_job(&jn, &sp, &ad, &an, md.as_deref(), sc.as_deref(), &ic, rs.as_deref()).await;
+            execute_job(&jn, &sp, &ad, &an, md.as_deref(), sc.as_deref(), &ic, rs.as_deref(), hs.as_ref(), pc.as_ref()).await;
         });
         if spec.schedule_kind.is_one_shot() {
             // Wait for execution, then delete and exit loop
@@ -1199,6 +1285,8 @@ mod tests {
             None,
             ic,
             shutdown_clone,
+            None,
+            None,
             None,
         ));
 

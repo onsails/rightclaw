@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::agent::types::{NetworkPolicy, SandboxMode};
+use crate::agent::types::{MemoryProvider, NetworkPolicy, SandboxMode};
 
 /// Preserved config from a previous agent, used during `--force` re-init.
 pub struct InitOverrides {
@@ -11,6 +11,9 @@ pub struct InitOverrides {
     pub allowed_chat_ids: Vec<i64>,
     pub model: Option<String>,
     pub env: HashMap<String, String>,
+    pub memory_provider: MemoryProvider,
+    pub memory_api_key: Option<String>,
+    pub memory_bank_id: Option<String>,
 }
 
 const DEFAULT_AGENTS: &str = include_str!("../../../templates/right/agent/AGENTS.md");
@@ -39,6 +42,9 @@ pub fn init_agent(
         allowed_chat_ids: vec![],
         model: None,
         env: HashMap::new(),
+        memory_provider: MemoryProvider::File,
+        memory_api_key: None,
+        memory_bank_id: None,
     };
     let ov = overrides.unwrap_or(&default_overrides);
 
@@ -68,7 +74,7 @@ pub fn init_agent(
 
     // Install built-in skills into .claude/skills/ (standard Agent Skills path).
     // Claude Code discovers skills from .claude/skills/ relative to cwd.
-    crate::codegen::install_builtin_skills(&agents_dir)?;
+    crate::codegen::install_builtin_skills(&agents_dir, "file")?;
 
     // Resolve host HOME once, before any HOME env manipulation (Phase 8).
     let host_home = dirs::home_dir()
@@ -135,6 +141,18 @@ pub fn init_agent(
             }
         }
 
+        // Memory provider (only written for non-default providers).
+        if matches!(ov.memory_provider, MemoryProvider::Hindsight) {
+            let mut memory_section = String::from("\nmemory:\n  provider: hindsight\n");
+            if let Some(ref key) = ov.memory_api_key {
+                memory_section.push_str(&format!("  api_key: \"{key}\"\n"));
+            }
+            if let Some(ref bank) = ov.memory_bank_id {
+                memory_section.push_str(&format!("  bank_id: \"{bank}\"\n"));
+            }
+            yaml.push_str(&memory_section);
+        }
+
         std::fs::write(&agent_yaml_path, &yaml)
             .map_err(|e| miette::miette!("Failed to update agent.yaml: {}", e))?;
     }
@@ -198,6 +216,9 @@ pub fn init_rightclaw_home(
         allowed_chat_ids: telegram_allowed_chat_ids.to_vec(),
         model: None,
         env: HashMap::new(),
+        memory_provider: MemoryProvider::File,
+        memory_api_key: None,
+        memory_bank_id: None,
     };
     let _agents_dir = init_agent(&agents_parent, "right", Some(&overrides))?;
 
@@ -311,7 +332,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::*;
-    use crate::agent::types::{NetworkPolicy, SandboxMode};
+    use crate::agent::types::{MemoryProvider, NetworkPolicy, SandboxMode};
 
     #[test]
     fn init_creates_default_agent_files() {
@@ -619,6 +640,9 @@ mod tests {
             allowed_chat_ids: vec![],
             model: None,
             env: HashMap::new(),
+            memory_provider: MemoryProvider::File,
+            memory_api_key: None,
+            memory_bank_id: None,
         };
         init_agent(
             &dir.path().join("agents"),
@@ -648,6 +672,9 @@ mod tests {
             allowed_chat_ids: vec![],
             model: None,
             env: HashMap::new(),
+            memory_provider: MemoryProvider::File,
+            memory_api_key: None,
+            memory_bank_id: None,
         };
         init_agent(
             &dir.path().join("agents"),
@@ -672,6 +699,9 @@ mod tests {
             allowed_chat_ids: vec![],
             model: None,
             env: HashMap::new(),
+            memory_provider: MemoryProvider::File,
+            memory_api_key: None,
+            memory_bank_id: None,
         };
         init_agent(
             &dir.path().join("agents"),
@@ -700,6 +730,9 @@ mod tests {
             allowed_chat_ids: vec![111, 222],
             model: Some("opus".to_string()),
             env,
+            memory_provider: MemoryProvider::File,
+            memory_api_key: None,
+            memory_bank_id: None,
         };
         init_agent(
             &dir.path().join("agents"),

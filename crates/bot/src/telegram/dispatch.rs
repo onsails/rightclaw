@@ -72,6 +72,8 @@ pub async fn run_telegram(
     idle_ts: Arc<IdleTimestamp>,
     internal_client: Arc<rightclaw::mcp::internal_client::InternalClient>,
     resolved_sandbox: Option<String>,
+    hindsight_client: Option<std::sync::Arc<rightclaw::memory::hindsight::HindsightClient>>,
+    prefetch_cache: Option<rightclaw::memory::prefetch::PrefetchCache>,
 ) -> miette::Result<()> {
     let bot = build_bot(token);
 
@@ -104,6 +106,8 @@ pub async fn run_telegram(
         show_thinking,
         model,
         resolved_sandbox,
+        hindsight: hindsight_client,
+        prefetch_cache,
     });
     let stop_tokens: super::StopTokens = Arc::new(DashMap::new());
 

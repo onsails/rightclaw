@@ -100,8 +100,61 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
             attachments: Default::default(),
             network_policy: Default::default(),
             show_thinking: true,
+            memory: None,
         }
     });
+
+    // Memory: initialize HindsightClient and prefetch cache if configured.
+    let memory_provider = config
+        .memory
+        .as_ref()
+        .map(|m| &m.provider)
+        .cloned()
+        .unwrap_or_default();
+
+    let (hindsight_client, prefetch_cache): (
+        Option<Arc<rightclaw::memory::hindsight::HindsightClient>>,
+        Option<rightclaw::memory::prefetch::PrefetchCache>,
+    ) = match &memory_provider {
+        rightclaw::agent::types::MemoryProvider::Hindsight => {
+            let mem_config = config.memory.as_ref().unwrap();
+            let api_key = mem_config.api_key.as_deref().ok_or_else(|| {
+                miette::miette!(
+                    help = "Add `memory.api_key` to agent.yaml or switch to `memory.provider: file`",
+                    "Hindsight memory provider requires an API key"
+                )
+            })?;
+            let bank_id = mem_config.bank_id.as_deref().unwrap_or(&args.agent);
+            let budget = mem_config.recall_budget.to_string();
+            let client = rightclaw::memory::hindsight::HindsightClient::new(
+                api_key,
+                bank_id,
+                &budget,
+                mem_config.recall_max_tokens,
+                None,
+            );
+            match client.get_or_create_bank().await {
+                Ok(profile) => {
+                    tracing::info!(agent = %args.agent, bank_id = %profile.bank_id, "Hindsight memory bank ready");
+                }
+                Err(e) => {
+                    return Err(miette::miette!(
+                        "Hindsight bank init failed: {e:#}. Check api_key in agent.yaml."
+                    ));
+                }
+            }
+            let cache = rightclaw::memory::prefetch::PrefetchCache::new();
+            (Some(Arc::new(client)), Some(cache))
+        }
+        rightclaw::agent::types::MemoryProvider::File => (None, None),
+    };
+
+    // Re-install skills with correct memory variant.
+    let provider_str = match &memory_provider {
+        rightclaw::agent::types::MemoryProvider::Hindsight => "hindsight",
+        rightclaw::agent::types::MemoryProvider::File => "file",
+    };
+    rightclaw::codegen::skills::install_builtin_skills(&agent_dir, provider_str)?;
 
     let is_sandboxed = matches!(config.sandbox_mode(), rightclaw::agent::types::SandboxMode::Openshell);
 
@@ -362,8 +415,10 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
     let cron_internal_client = Arc::clone(&internal_client);
     let cron_shutdown = shutdown.clone();
     let cron_sandbox = resolved_sandbox.clone();
+    let cron_hindsight = hindsight_client.clone();
+    let cron_prefetch = prefetch_cache.clone();
     let cron_handle = tokio::spawn(async move {
-        cron::run_cron_task(cron_agent_dir, cron_agent_name, cron_model, cron_ssh_config, cron_internal_client, cron_shutdown, cron_sandbox).await;
+        cron::run_cron_task(cron_agent_dir, cron_agent_name, cron_model, cron_ssh_config, cron_internal_client, cron_shutdown, cron_sandbox, cron_hindsight, cron_prefetch).await;
     });
 
     // Shared idle timestamp: tracks last handler/worker interaction for cron delivery gating.
@@ -382,6 +437,7 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
     let delivery_internal_client = Arc::clone(&internal_client);
     let delivery_shutdown = shutdown.clone();
     let delivery_sandbox = resolved_sandbox.clone();
+    let delivery_hindsight = hindsight_client.clone();
     let delivery_handle = tokio::spawn(async move {
         cron_delivery::run_delivery_loop(
             delivery_agent_dir,
@@ -393,6 +449,7 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
             delivery_internal_client,
             delivery_shutdown,
             delivery_sandbox,
+            delivery_hindsight,
         ).await;
     });
 
@@ -420,6 +477,8 @@ async fn run_async(args: BotArgs) -> miette::Result<bool> {
             Arc::clone(&idle_timestamp),
             Arc::clone(&internal_client),
             resolved_sandbox,
+            hindsight_client,
+            prefetch_cache,
         ) => result,
         result = axum_handle => result
             .map_err(|e| miette::miette!("axum task panicked: {e:#}"))?,

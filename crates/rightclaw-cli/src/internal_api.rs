@@ -594,6 +594,7 @@ mod tests {
             right,
             proxies: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             agent_dir,
+            hindsight: None,
         };
 
         let agents = DashMap::new();

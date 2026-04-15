@@ -93,6 +93,7 @@ mod tests {
             attachments: Default::default(),
             network_policy: Default::default(),
             show_thinking: true,
+            memory: None,
         }
     }
 
