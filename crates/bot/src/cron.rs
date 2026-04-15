@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io::Write as _;
 use std::sync::Arc;
 use tokio::io::AsyncBufReadExt as _;
 use tokio::io::AsyncReadExt as _;
@@ -101,6 +100,78 @@ pub fn is_lock_fresh(agent_dir: &std::path::Path, job_name: &str, lock_ttl_str: 
     chrono::Utc::now() - lock.heartbeat < ttl
 }
 
+/// Delete old cron log files for a job, keeping the most recent `keep` files.
+async fn cleanup_old_logs(
+    job_name: &str,
+    log_dir: &str,
+    keep: usize,
+    ssh_config_path: Option<&std::path::Path>,
+    agent_name: &str,
+) {
+    // Defense-in-depth: job names should be alphanumeric + hyphens only (validated at creation).
+    if !job_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        tracing::error!(job = %job_name, "job name contains unsafe characters, skipping log cleanup");
+        return;
+    }
+    if let Some(ssh_config) = ssh_config_path {
+        let ssh_host = rightclaw::openshell::ssh_host(agent_name);
+        // List matching files sorted newest-first, skip `keep`, delete the rest.
+        // Using find+stat avoids ls parsing pitfalls with special characters in filenames.
+        let cleanup_cmd = format!(
+            "find {log_dir} -maxdepth 1 -name '{job_name}-*.ndjson' -printf '%T@ %p\\n' 2>/dev/null | sort -rn | tail -n +{} | cut -d' ' -f2- | xargs -r rm -f",
+            keep + 1
+        );
+        let output = tokio::process::Command::new("ssh")
+            .arg("-F").arg(ssh_config)
+            .arg(&ssh_host)
+            .arg("--")
+            .arg(&cleanup_cmd)
+            .output()
+            .await;
+        match output {
+            Ok(o) if !o.status.success() => {
+                tracing::warn!(
+                    job = %job_name,
+                    "log cleanup via SSH failed: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                );
+            }
+            Err(e) => {
+                tracing::warn!(job = %job_name, "log cleanup SSH command failed: {e:#}");
+            }
+            _ => {}
+        }
+    } else {
+        let pattern = format!("{job_name}-");
+        let dir = match std::fs::read_dir(log_dir) {
+            Ok(d) => d,
+            Err(_) => return,
+        };
+        let mut files: Vec<(std::path::PathBuf, std::time::SystemTime)> = dir
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|n| n.starts_with(&pattern) && n.ends_with(".ndjson"))
+            })
+            .filter_map(|e| {
+                let path = e.path();
+                let mtime = e.metadata().ok()?.modified().ok()?;
+                Some((path, mtime))
+            })
+            .collect();
+        files.sort_by(|a, b| b.1.cmp(&a.1));
+        for (old, _) in files.into_iter().skip(keep) {
+            if let Err(e) = std::fs::remove_file(&old) {
+                tracing::warn!(job = %job_name, path = %old.display(), "failed to delete old log: {e:#}");
+            }
+        }
+    }
+}
+
 /// Execute one cron job: lock check → DB insert → subprocess → log write → DB update → lock delete.
 ///
 /// Per D-02: subprocess failures log `tracing::error` only, do not propagate.
@@ -140,14 +211,17 @@ async fn execute_job(
     // Prepare run record
     let run_id = uuid::Uuid::new_v4().to_string();
     let started_at = chrono::Utc::now().to_rfc3339();
-    let log_dir = agent_dir.join("crons").join("logs");
-    if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        tracing::error!(job = %job_name, "failed to create log dir: {e:#}");
-        std::fs::remove_file(&lock_path).ok();
-        return;
-    }
-    let log_path = log_dir.join(format!("{job_name}-{run_id}.txt"));
-    let log_path_str = log_path.display().to_string();
+
+    // Compute sandbox-relative log path (agents read this via Read tool).
+    // For sandbox mode: /sandbox/crons/logs/{job_name}-{run_id}.ndjson
+    // For no-sandbox: {agent_dir}/crons/logs/{job_name}-{run_id}.ndjson
+    let log_filename = format!("{job_name}-{run_id}.ndjson");
+    let sandbox_log_dir = if ssh_config_path.is_some() {
+        "/sandbox/crons/logs".to_owned()
+    } else {
+        agent_dir.join("crons").join("logs").to_string_lossy().into_owned()
+    };
+    let log_path_str = format!("{sandbox_log_dir}/{log_filename}");
 
     // DB insert: status='running' (D-04)
     // Open connection per-job — rusqlite::Connection is !Send
@@ -236,6 +310,9 @@ async fn execute_job(
             let escaped = token.replace('\'', "'\\''");
             assembly_script = format!("export CLAUDE_CODE_OAUTH_TOKEN='{escaped}'\n{assembly_script}");
         }
+        assembly_script = format!(
+            "set -o pipefail\nmkdir -p /sandbox/crons/logs\n{assembly_script} | tee /sandbox/crons/logs/{log_filename}"
+        );
         let ssh_host = rightclaw::openshell::ssh_host(agent_name);
         let mut c = tokio::process::Command::new("ssh");
         c.arg("-F").arg(ssh_config);
@@ -263,6 +340,13 @@ async fn execute_job(
             std::fs::remove_file(&lock_path).ok();
             return;
         }
+        let host_log_dir = agent_dir.join("crons").join("logs");
+        if let Err(e) = std::fs::create_dir_all(&host_log_dir) {
+            tracing::error!(job = %job_name, "failed to create log dir: {e:#}");
+            std::fs::remove_file(&lock_path).ok();
+            return;
+        }
+        let assembly_script = format!("set -o pipefail\n{assembly_script} | tee {sandbox_log_dir}/{log_filename}");
         let mut c = tokio::process::Command::new("bash");
         c.arg("-c");
         c.arg(&assembly_script);
@@ -296,37 +380,12 @@ async fn execute_job(
         Ok(c) => c,
     };
 
-    // Stream stdout line-by-line into NDJSON log and collected_lines vec.
+    // Stream stdout line-by-line; tee inside the subprocess writes the NDJSON log.
     let stdout = child.stdout.take().expect("stdout piped");
     let mut lines = tokio::io::BufReader::new(stdout).lines();
 
-    let stream_log_dir = agent_dir
-        .parent()
-        .and_then(|p| p.parent())
-        .unwrap_or(agent_dir)
-        .join("logs")
-        .join("streams");
-    if let Err(e) = std::fs::create_dir_all(&stream_log_dir) {
-        tracing::warn!(job = %job_name, "failed to create stream log dir: {e:#}");
-    }
-    let stream_log_path = stream_log_dir.join(format!("{job_name}-{run_id}.ndjson"));
-    let mut stream_log = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&stream_log_path)
-    {
-        Ok(f) => Some(f),
-        Err(e) => {
-            tracing::warn!(job = %job_name, "failed to open stream log: {e:#}");
-            None
-        }
-    };
-
     let mut collected_lines: Vec<String> = Vec::new();
     while let Ok(Some(line)) = lines.next_line().await {
-        if let Some(ref mut log) = stream_log {
-            let _ = writeln!(log, "{line}");
-        }
         collected_lines.push(line);
     }
 
@@ -352,18 +411,6 @@ async fn execute_job(
     };
     let stderr_str = String::from_utf8_lossy(&stderr_bytes);
 
-    // Write text log file (D-04)
-    let mut log_content = String::new();
-    log_content.push_str(&format!("=== stream log: {} ===\n", stream_log_path.display()));
-    if !stderr_str.is_empty() {
-        log_content.push_str("=== stderr ===\n");
-        log_content.push_str(&stderr_str);
-    }
-    if let Err(e) = std::fs::write(&log_path, &log_content) {
-        tracing::error!(job = %job_name, "failed to write log file: {e:#}");
-        // Continue — still update DB even if log write fails
-    }
-
     // Determine status (D-02)
     let exit_code = exit_status.code();
     let status = if exit_status.success() {
@@ -382,6 +429,15 @@ async fn execute_job(
 
     // Delete lock on completion (CRON-04)
     std::fs::remove_file(&lock_path).ok();
+
+    // Retention: keep last 10 log files per job (fire-and-forget to avoid SSH overhead on hot path)
+    let job_name_owned = job_name.to_owned();
+    let log_dir_owned = sandbox_log_dir.clone();
+    let ssh_config_owned = ssh_config_path.map(|p| p.to_owned());
+    let agent_name_owned = agent_name.to_owned();
+    tokio::spawn(async move {
+        cleanup_old_logs(&job_name_owned, &log_dir_owned, 10, ssh_config_owned.as_deref(), &agent_name_owned).await;
+    });
 
     tracing::info!(job = %job_name, run_id = %run_id, %status, "cron job completed");
 
