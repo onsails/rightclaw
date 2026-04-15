@@ -526,7 +526,7 @@ pub fn spawn_worker(
                         let content =
                             format!("User: {retain_input}\nAssistant: {retain_response}");
                         if let Err(e) =
-                            hs_retain.retain(&content, Some("conversation")).await
+                            hs_retain.retain(&content, Some("conversation"), None, None, None).await
                         {
                             tracing::warn!("auto-retain failed: {e:#}");
                         }
@@ -539,7 +539,7 @@ pub fn spawn_worker(
                 let cache_key = format!("{}:{}", chat_id, eff_thread_id);
                 let cache = ctx.prefetch_cache.clone();
                 tokio::spawn(async move {
-                    match hs_recall.recall(&recall_query).await {
+                    match hs_recall.recall(&recall_query, None, None).await {
                         Ok(results) if !results.is_empty() => {
                             let content = rightclaw::memory::hindsight::join_recall_texts(&results);
                             if let Some(ref c) = cache {
@@ -822,7 +822,7 @@ async fn invoke_cc(
             Some(content)
         } else if let Some(ref hs) = ctx.hindsight {
             tracing::info!(?chat_id, "prefetch cache miss, blocking recall");
-            match tokio::time::timeout(Duration::from_secs(5), hs.recall(input)).await {
+            match tokio::time::timeout(Duration::from_secs(5), hs.recall(input, None, None)).await {
                 Ok(Ok(results)) if !results.is_empty() => {
                     let content = rightclaw::memory::hindsight::join_recall_texts(&results);
                     if let Some(ref cache) = ctx.prefetch_cache {
