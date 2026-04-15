@@ -4,8 +4,8 @@ description: >-
   Manages cron jobs for this RightClaw agent via MCP tools. Creates, updates,
   and deletes cron specs stored in the agent database. The Rust runtime handles
   scheduling and execution automatically. Use when the user mentions cron
-  jobs, scheduled tasks, RightCron, or recurring tasks.
-version: 2.0.0
+  jobs, scheduled tasks, reminders, one-shot tasks, or recurring tasks.
+version: 3.0.0
 ---
 
 # /rightcron -- Cron Job Manager
@@ -13,8 +13,9 @@ version: 2.0.0
 ## When to Activate
 
 Activate this skill when:
-- The user mentions "cron", "cron jobs", "scheduled tasks", or "RightCron"
-- The user asks to schedule, create, remove, or change a recurring task
+- The user mentions "cron", "cron jobs", "scheduled tasks", "reminders", or "RightCron"
+- The user asks to schedule, create, remove, or change a recurring or one-shot task
+- The user asks to run something at a specific time or after a delay
 - The user asks about cron run history or why a job failed
 
 ## How It Works
@@ -25,7 +26,9 @@ Cron specs are stored in the agent database. The Rust runtime polls specs every 
 
 **Always ask the user for `max_budget_usd` before creating or updating a job.** Do not silently use the default. Explain that this is the maximum dollar spend per invocation — Claude stops gracefully when the budget is reached. Suggest a value based on the task complexity (e.g. $0.30–$0.50 for simple checks, $1–$3 for multi-step research).
 
-Use the `mcp__right__cron_create` MCP tool:
+Three job types are supported:
+
+### Recurring (default)
 
 ```
 mcp__right__cron_create(
@@ -36,20 +39,47 @@ mcp__right__cron_create(
 )
 ```
 
+### One-shot cron (fire once at next match, then auto-delete)
+
+```
+mcp__right__cron_create(
+  job_name: "deploy-check",
+  schedule: "30 15 * * *",
+  recurring: false,
+  prompt: "Verify deployment completed successfully",
+  max_budget_usd: 0.30
+)
+```
+
+### Run at specific time (fire once, then auto-delete)
+
+```
+mcp__right__cron_create(
+  job_name: "remind-deploy",
+  run_at: "2026-04-15T15:30:00Z",
+  prompt: "Remind the user to review PR #42",
+  max_budget_usd: 0.30
+)
+```
+
 Confirm to the user: "Job created. The runtime picks up new specs within ~60 seconds."
 
 ## Editing a Cron Job
 
-Use the `mcp__right__cron_update` MCP tool (full replacement — all fields required):
+Use the `mcp__right__cron_update` MCP tool. Only pass the fields you want to change — unspecified fields keep their current values.
 
 ```
-mcp__right__cron_update(
-  job_name: "health-check",
-  schedule: "43 */4 * * *",
-  prompt: "Check system health, alert on degradation",
-  max_budget_usd: 0.75
-)
+# Change only the prompt
+mcp__right__cron_update(job_name: "health-check", prompt: "New check prompt")
+
+# Change only the schedule
+mcp__right__cron_update(job_name: "health-check", schedule: "43 */4 * * *")
+
+# Switch from recurring to one-shot run_at
+mcp__right__cron_update(job_name: "health-check", run_at: "2026-04-16T10:00:00Z")
 ```
+
+Setting `schedule` clears `run_at`. Setting `run_at` clears `schedule` and forces `recurring=false`.
 
 Confirm: "Job updated. Changes take effect within ~60 seconds."
 
@@ -83,17 +113,26 @@ Use the `mcp__right__cron_list` MCP tool to see all configured jobs:
 mcp__right__cron_list()
 ```
 
-Returns: job_name, schedule, prompt, lock_ttl, max_budget_usd for each job.
+Returns: job_name, schedule, prompt, lock_ttl, max_budget_usd, recurring, run_at for each job.
 
 ## Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `job_name` | string | Yes | - | Lowercase alphanumeric and hyphens (e.g. `health-check`). |
-| `schedule` | string | Yes | - | Standard 5-field cron expression (minute hour day-of-month month day-of-week). Evaluated in **UTC**. |
+| `schedule` | string | Conditional | - | 5-field cron expression (minute hour day-of-month month day-of-week) in **UTC**. Required if `run_at` not set. Mutually exclusive with `run_at`. |
+| `run_at` | string | Conditional | - | ISO8601 UTC datetime (e.g. `2026-04-15T15:30:00Z`). Fire once at this time, then auto-delete. Required if `schedule` not set. Mutually exclusive with `schedule`. |
+| `recurring` | boolean | No | `true` | If `false` with `schedule`, fires once at next match then auto-deletes. Ignored if `run_at` is set. |
 | `prompt` | string | Yes | - | The task prompt that Claude executes when the cron fires. |
 | `lock_ttl` | string | No | `30m` | Duration after which a lock is considered stale (e.g. `10m`, `1h`). |
 | `max_budget_usd` | number | No | `2.0` | Maximum dollar spend per invocation. Claude stops gracefully when budget is reached. |
+
+## One-Shot Job Behavior
+
+One-shot jobs (both `run_at` and `recurring: false`) auto-delete from `cron_specs` after execution.
+- `cron_list` shows pending one-shot specs until they fire
+- `cron_list_runs` shows execution history (runs are preserved even after spec deletion)
+- If the bot was offline when `run_at` passed, the job fires on the next startup
 
 ### Schedule Guidelines
 
