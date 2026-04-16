@@ -234,6 +234,11 @@ pub fn parse_reply_output(raw_json: &str) -> Result<(ReplyOutput, Option<String>
     Ok((output, session_id))
 }
 
+/// Build the chat-scoped tag list for Hindsight retain/recall.
+fn chat_tags(chat_id: i64) -> Vec<String> {
+    vec![format!("chat:{chat_id}")]
+}
+
 /// Truncate a string to at most `max` bytes on a valid UTF-8 char boundary.
 fn truncate_to_char_boundary(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -541,7 +546,7 @@ pub fn spawn_worker(
                     let retain_input = input.clone();
                     let retain_response = reply_text.clone();
                     let retain_doc_id = session_uuid.clone();
-                    let retain_tags = vec![format!("chat:{chat_id}")];
+                    let retain_tags = chat_tags(chat_id);
                     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                     tokio::spawn(async move {
                         let content = serde_json::json!([
@@ -566,7 +571,7 @@ pub fn spawn_worker(
                 // Prefetch for next turn.
                 let hs_recall = Arc::clone(hs);
                 let recall_query = truncate_to_char_boundary(&input, RECALL_MAX_INPUT_CHARS).to_owned();
-                let recall_tags = vec![format!("chat:{chat_id}")];
+                let recall_tags = chat_tags(chat_id);
                 let cache_key = format!("{}:{}", chat_id, eff_thread_id);
                 let cache = ctx.prefetch_cache.clone();
                 tokio::spawn(async move {
@@ -856,7 +861,7 @@ async fn invoke_cc(
         } else if let Some(ref hs) = ctx.hindsight {
             tracing::info!(?chat_id, "prefetch cache miss, blocking recall");
             let truncated_query = truncate_to_char_boundary(input, RECALL_MAX_INPUT_CHARS);
-            let recall_tags = vec![format!("chat:{}", chat_id)];
+            let recall_tags = chat_tags(chat_id);
             match tokio::time::timeout(
                 Duration::from_secs(5),
                 hs.recall(truncated_query, Some(&recall_tags), Some("any")),
