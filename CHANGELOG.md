@@ -1,4 +1,94 @@
 # Changelog
+## [0.2.11] - 2026-05-07
+
+
+### Bug Fixes
+
+- **right-db**: Add chrono dev dependency for migration tests
+- **stage-b**: Satisfy clippy after right-core extraction
+- **bot**: Separate markdown lists from following paragraph
+- **bot**: Cron picks up /model changes; callback gate fails secure
+- **bot**: Use right-db for startup db open
+- **bot**: Open login token db through right-db
+- **bot**: Clean up right-db callsite leftovers
+- **bot**: Document cc module scaffold
+- **stage-d**: Tighten compatibility re-export visibility
+- **stage-f**: Remove stale right-agent config import
+- **stage-b**: Forward right-agent test-support feature
+
+### Documentation
+
+- **template**: Document model field with /model alternative
+- **right-agent**: Clarify staged db error wrapper
+
+### Features
+
+- **right-db**: Scaffold new crate for SQLite plumbing
+- **right-core**: Scaffold new platform-foundation crate
+- **bot**: MODEL_CHOICES + menu rendering for /model
+- **bot**: Handle_model opens the /model menu
+- **bot**: Handle_model_callback persists and hot-swaps
+- **bot**: Wire /model command + callback into dispatcher
+- **bot**: Smart-diff config watcher — hot-reload model-only changes
+- **bot**: Scaffold cc module
+- **prompt**: Narrow MCP auth-error rule, trust upstream diagnostics
+- **right-agent**: Write_agent_yaml_model helper
+
+### Miscellaneous
+
+- **stage-f**: Pin publish = false on new internal crates
+
+### Refactor
+
+- **bot**: AgentSettings/WorkerContext model use ArcSwap
+- **bot**: Address review-loop feedback (2 iterations)
+- **bot**: Switch to right-db and mcp::credentials auth helpers
+- **bot**: Move telegram cc plumbing modules
+- **bot**: Extract outbound attachment dto
+- **bot**: Extract markdown utils to cc
+- **bot**: Extract worker reply parsing to cc
+- **bot**: Point cc shared callsites at cc modules
+- **right-db**: Move SQL migration files from right-agent
+- **right-db**: Move migrations.rs from right-agent::memory
+- **right-agent**: Delegate db plumbing to right-db
+- **right-agent**: Move auth_token helpers to mcp::credentials
+- **right-agent**: Switch internal callsites to right-db
+- **right-core**: Move independent foundation modules
+- **right-core**: Move shared agent type definitions
+- **right-mcp**: Extract mcp subsystem from right-agent
+- **right-core**: Move runtime state primitives
+- **right-codegen**: Extract codegen subsystem from right-agent
+- **right-memory**: Extract memory subsystem from right-agent
+- **stage-f**: Drop unused right-core re-exports from right-agent
+- **stage-f**: Switch right-agent internal callers to right_core::error
+- **stage-f**: Switch right-agent internal callers to right_core::ui
+- **stage-f**: Switch right-agent internal callers to right_core::config
+- **stage-f**: Switch right-agent internal callers to right_core::openshell{,_proto}
+- **stage-f**: Switch right-agent internal callers to right_core::stt
+- **stage-f**: Drop right-agent::mcp shim, switch internal callers to right_mcp
+- **stage-f**: Drop right-agent::codegen shim, switch internal callers to right_codegen
+- **stage-f**: Drop right-agent::memory shim, switch internal callers to right_db/right_memory
+- **right**: Switch CLI to right-db
+- **right-core**: Move openshell proto and client
+- **right-core**: Move sandbox platform and test support
+- **right-core**: Move stt helpers and shared time constants
+- **stage-b**: Switch direct callsites to right-core
+- **stage-c**: Switch external callsites to leaf crates
+
+### Testing
+
+- **right-db**: Add open + migration smoke tests
+- **right-db**: Cover open_connection invariants
+- **right-db**: Port 8 missed schema/trigger tests from pre-split memory module
+- **bot**: Integration test for /model flow
+- **right-agent**: Switch integration tests to right-db
+
+### Deps
+
+- **bot**: Add arc-swap 1.7 for model hot-swap
+- **right-agent**: Add right-db path dep
+- Wire right-core path dep into agent, bot, cli
+
 ## [0.2.10] - 2026-05-06
 
 
